@@ -11,6 +11,8 @@ extends RefCounted
 ##  2. lay off single hand cards onto existing table melds,
 ##  3. rearrange the table: borrow one card from a meld (only when the meld
 ##     left behind is still valid) to complete a new meld with 2+ hand cards.
+## Steps 2 and 3 respect the opening rule: until the AI has laid down a valid
+## meld purely from its own hand, it will not touch other melds on the table.
 
 static func take_turn(gm: GameManager) -> void:
 	var played_any := false
@@ -42,6 +44,10 @@ static func plan_move(gm: GameManager) -> Dictionary:
 	if not meld.is_empty():
 		return {"cards": meld, "dest": null,
 			"text": "lays down %s" % _cards_text(meld)}
+	# Not yet opened (no valid own meld on the table): the rules forbid
+	# touching other melds, so there is nothing more to plan.
+	if not gm.current_player_is_open():
+		return {}
 	# 2. Single-card lay-off onto an existing meld.
 	for c in hand:
 		for m in gm.board.melds:
@@ -75,10 +81,14 @@ static func plan_move(gm: GameManager) -> Dictionary:
 static func apply_move(gm: GameManager, move: Dictionary) -> void:
 	var cards: Array[Card] = move["cards"]
 	var dest: CardSet = move["dest"]
+	var err := ""
 	if dest == null:
-		gm.move_cards_to_new_meld(cards)
+		err = gm.move_cards_to_new_meld(cards)
 	else:
-		gm.add_cards_to_meld(cards, dest)
+		err = gm.add_cards_to_meld(cards, dest)
+	if err != "":
+		# Should be unreachable: plan_move only proposes legal moves.
+		push_warning("GreedyAI staged an illegal move (%s)" % err)
 
 ## Largest complete meld (set or run) that can be formed from the given cards.
 ## Returns an empty array if none exists.

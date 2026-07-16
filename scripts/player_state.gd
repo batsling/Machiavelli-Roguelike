@@ -8,6 +8,10 @@ extends Resource
 @export var gold: int = 0              # unused by the vanilla engine; roguelike layer
 @export var hand: Array[Card] = []
 @export var is_finished: bool = false  # true once hand is emptied — enters phantom-turn state
+# True once the player has "opened": committed a turn containing at least one
+# valid meld built entirely from their own hand. Until then they may not add
+# to or take from other melds on the table.
+@export var has_opened: bool = false
 
 func take_damage(amount: int) -> void:
 	health = max(0, health - amount)
