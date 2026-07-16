@@ -1,52 +1,92 @@
 class_name GreedyAI
 extends RefCounted
 
-## Baseline opponent AI. Greedy and table-blind on purpose:
-##  - lays down any complete meld it holds (largest first),
-##  - lays off single cards onto existing table melds,
-##  - never rearranges the table (that is the human's edge for now),
-##  - draws when it cannot play.
-## Deterministic given the same game state, so seeded games replay exactly.
+## Baseline opponent AI. Greedy and deterministic given the same game state,
+## so seeded games replay exactly.
+##
+## Moves are produced one at a time via plan_move() so the UI can show each
+## play as it happens; take_turn() drives a whole turn at once for headless
+## play and tests. In priority order the AI will:
+##  1. lay down any complete meld it holds (largest first),
+##  2. lay off single hand cards onto existing table melds,
+##  3. rearrange the table: borrow one card from a meld (only when the meld
+##     left behind is still valid) to complete a new meld with 2+ hand cards.
 
 static func take_turn(gm: GameManager) -> void:
 	var played_any := false
-	while _play_one(gm):
+	while true:
+		var move := plan_move(gm)
+		if move.is_empty():
+			break
+		apply_move(gm, move)
 		played_any = true
 	if not played_any:
 		gm.draw_and_end_turn()
 		return
 	var err := gm.commit_turn()
 	if err != "":
-		# Should be unreachable: the AI only stages hand-only, pre-validated
-		# melds. Fail safe by drawing rather than wedging the game.
+		# Should be unreachable: every planned move leaves the table valid.
+		# Fail safe by drawing rather than wedging the game.
 		push_warning("GreedyAI staged an illegal turn (%s); drawing instead." % err)
 		gm.draw_and_end_turn()
 
-## Stage a single play if one exists. Returns true if something was played.
-static func _play_one(gm: GameManager) -> bool:
+## Plan the next single move for the current player. Returns {} when no move
+## exists, otherwise a Dictionary with:
+##   cards: Array[Card]   every card that moves (from hand and/or table)
+##   dest:  CardSet|null  existing meld to extend, or null for a new group
+##   text:  String        human-readable description ("<name> " + text)
+static func plan_move(gm: GameManager) -> Dictionary:
 	var hand := gm.current_player().hand
-	var meld := _find_meld_in_hand(hand)
+	# 1. Complete meld straight from hand.
+	var meld := _find_meld(hand)
 	if not meld.is_empty():
-		gm.move_cards_to_new_meld(meld)
-		return true
-	# Single-card lay-off onto an existing meld.
+		return {"cards": meld, "dest": null,
+			"text": "lays down %s" % _cards_text(meld)}
+	# 2. Single-card lay-off onto an existing meld.
 	for c in hand:
 		for m in gm.board.melds:
 			var candidate: Array[Card] = m.cards.duplicate()
 			candidate.append(c)
 			if Rules.is_valid_meld(candidate):
 				var single: Array[Card] = [c]
-				gm.add_cards_to_meld(single, m)
-				return true
-	return false
+				return {"cards": single, "dest": m,
+					"text": "adds %s to %s" % [c.label(), _cards_text(m.cards)]}
+	# 3. Rearrange the table: borrow one card from a meld to finish a new meld
+	# together with hand cards. Only cards whose removal leaves a valid meld
+	# behind are candidates.
+	for m in gm.board.melds:
+		for t in m.cards:
+			var rest: Array[Card] = m.cards.duplicate()
+			rest.erase(t)
+			if not Rules.is_valid_meld(rest):
+				continue
+			var pool: Array[Card] = hand.duplicate()
+			pool.append(t)
+			var combo := _find_meld(pool)
+			if combo.is_empty():
+				continue
+			# Step 1 found no hand-only meld, so combo necessarily uses t and
+			# therefore plays at least two hand cards.
+			return {"cards": combo, "dest": null,
+				"text": "takes %s from the table to build %s" % [t.label(), _cards_text(combo)]}
+	return {}
 
-## Largest complete meld (set or run) that can be formed from hand cards alone.
+## Apply a move produced by plan_move() to the (staged) game state.
+static func apply_move(gm: GameManager, move: Dictionary) -> void:
+	var cards: Array[Card] = move["cards"]
+	var dest: CardSet = move["dest"]
+	if dest == null:
+		gm.move_cards_to_new_meld(cards)
+	else:
+		gm.add_cards_to_meld(cards, dest)
+
+## Largest complete meld (set or run) that can be formed from the given cards.
 ## Returns an empty array if none exists.
-static func _find_meld_in_hand(hand: Array[Card]) -> Array[Card]:
+static func _find_meld(pool: Array[Card]) -> Array[Card]:
 	var best: Array[Card] = []
 	# Sets: same rank, distinct suits (two decks mean duplicate suits exist).
 	var by_rank := {}
-	for c in hand:
+	for c in pool:
 		if not by_rank.has(c.rank):
 			by_rank[c.rank] = {}
 		var suits: Dictionary = by_rank[c.rank]
@@ -66,7 +106,7 @@ static func _find_meld_in_hand(hand: Array[Card]) -> Array[Card]:
 	# Runs: per suit, dedupe ranks, treat the ace as rank 1 and rank 14, then
 	# take the longest chain of consecutive ranks.
 	var by_suit := {}
-	for c in hand:
+	for c in pool:
 		if not by_suit.has(c.suit):
 			by_suit[c.suit] = {}
 		var ranks: Dictionary = by_suit[c.suit]
@@ -90,3 +130,9 @@ static func _find_meld_in_hand(hand: Array[Card]) -> Array[Card]:
 		if chain.size() > best.size() and Rules.is_valid_meld(chain):
 			best = chain.duplicate()
 	return best
+
+static func _cards_text(cards: Array[Card]) -> String:
+	var parts := PackedStringArray()
+	for c in Rules.display_order(cards):
+		parts.append(c.label())
+	return " ".join(parts)

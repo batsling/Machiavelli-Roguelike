@@ -21,10 +21,14 @@ layer (card effects, health/gold, encounters) will be built on.
 Open the project in Godot 4.6 and press Run (`F5`). On your turn:
 
 1. Click cards to select them — from your hand **and** from any group on the table.
-2. **Selected → new group** starts a new group; a group's **+** button moves the
-   selection into that group.
+   Selected cards turn blue.
+2. The **+ New group** zone on the table starts a new group; a group's **+** button
+   moves the selection into that group. Groups outline green when valid, red when not.
 3. **End turn** validates the table and commits. **Undo turn** puts everything back.
 4. **Draw & end turn** if you can't or won't play (this also abandons staged moves).
+
+Enemy turns play out move by move on screen: every card an enemy lays down, lays
+off, or takes from the table is highlighted in gold, and the log narrates each move.
 
 ## Layout
 
@@ -40,9 +44,11 @@ Open the project in Godot 4.6 and press Run (`F5`). On your turn:
 - `scripts/game_manager.gd` — `GameManager`: deal, staged turns, commit validation,
   draw/pass, win detection; emits signals the UI listens to
 - `scripts/greedy_ai.gd` — `GreedyAI`: baseline opponent — plays complete melds from
-  hand and single-card lay-offs; never rearranges the table (deliberately: that's
-  the human's edge, and the future solver-AI's job)
-- `scripts/main_ui.gd` + `scenes/main.tscn` — minimal click-to-play UI, built in code
+  hand, single-card lay-offs, and simple table rearrangements (borrows one card
+  from a group, when the leftover group stays valid, to complete a new meld with
+  hand cards); produces one move at a time so the UI can animate enemy turns
+- `scripts/main_ui.gd` + `scenes/main.tscn` — click-to-play UI, built in code:
+  styled cards, felt table, per-group validity outlines, animated enemy turns
 - `tests/smoke_test.gd` — headless AI-vs-AI smoke test
 
 ## Headless smoke test
@@ -56,7 +62,8 @@ godot --headless --path . --script res://tests/smoke_test.gd    # plays 25 seede
 
 - The turn model is *staged*: moves mutate state immediately, `commit_turn()` is the
   only legality gate, `reset_turn()` rolls the whole turn back. Same as physical play.
-- The AI is greedy and table-blind on purpose. A strong AI (and a "hint" feature)
+- The AI is greedy and only does single-card table rearrangements. A strong AI
+  (and a "hint" feature)
   should use the ILP formulation from Den Hertog & Hulshof, *Solving Rummikub
   Problems by Integer Linear Programming* — see
   [cduck/machiavelli](https://github.com/cduck/machiavelli) (MIT) and
