@@ -1,12 +1,23 @@
-extends Resource
 class_name CardSet
+extends Resource
 
-## A "set" on the board — a run of cards placed together (per real-world Machiavelli
-## rules: same rank, or a run of a suit). Track membership here so Sticky, Bomb, and
-## Trigger effects have a concrete place to hook into.
+## A "meld" on the table — a group of cards placed together (per real-world
+## Machiavelli rules: a set of one rank, or a run of one suit). Membership is
+## tracked here so the roguelike effects (Sticky, Bomb, Trigger) have a
+## concrete place to hook into later; the vanilla engine only uses is_valid().
 
 @export var cards: Array[Card] = []
-@export var board_tile_effect: String = ""  # id of a board tile effect applied to this set's space, if any
+# id of a board tile effect applied to this set's space, if any
+@export var board_tile_effect: String = ""
+
+func is_valid() -> bool:
+	return Rules.is_valid_meld(cards)
+
+func size() -> int:
+	return cards.size()
+
+func is_empty() -> bool:
+	return cards.is_empty()
 
 func add_card(card: Card, index: int = -1) -> void:
 	if index < 0 or index > cards.size():
@@ -14,6 +25,9 @@ func add_card(card: Card, index: int = -1) -> void:
 	else:
 		cards.insert(index, card)
 	_resolve_triggers(card)
+
+func remove_card(card: Card) -> void:
+	cards.erase(card)
 
 func _resolve_triggers(played_card: Card) -> void:
 	# OPEN QUESTION: resolution order when a set has more than one TRIGGER card.
@@ -26,7 +40,7 @@ func _resolve_triggers(played_card: Card) -> void:
 
 func _fire_trigger(trigger_card: Card, played_card: Card) -> void:
 	# TODO: hook into damage/heal system once that exists.
-	print("Trigger fired: %s reacting to %s" % [trigger_card.resource_name, played_card.resource_name])
+	print("Trigger fired: %s reacting to %s" % [trigger_card.label(), played_card.label()])
 
 func sticky_cluster(start_card: Card) -> Array[Card]:
 	# Returns the connected cluster of cards bound together by Sticky, starting
