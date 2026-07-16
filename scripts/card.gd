@@ -1,9 +1,10 @@
-extends Resource
 class_name Card
+extends Resource
 
 ## Core data for a single Machiavelli card.
 ## Effects are modeled as flags/data rather than subclasses so a card can carry
 ## more than one effect at once (e.g. Sticky + Spiked) without a class explosion.
+## The vanilla engine ignores effects entirely; they are kept for the roguelike layer.
 
 enum Effect {
 	NONE,
@@ -17,13 +18,21 @@ enum Effect {
 	MIRRORED,    # 4-sided card; belongs to two sets at once
 }
 
-@export var suit: String = ""        # e.g. "hearts", "spades" — follows source Machiavelli suits
-@export var rank: int = 0            # 1-13
+const SUIT_SYMBOLS := {"hearts": "♥", "diamonds": "♦", "clubs": "♣", "spades": "♠"}
+const RANK_NAMES := {1: "A", 11: "J", 12: "Q", 13: "K"}
+
+@export var suit: String = ""        # "hearts", "diamonds", "clubs", "spades"
+@export var rank: int = 0            # 1-13 (ace = 1)
 @export var owner_id: int = -1       # which player/opponent this card currently belongs to
 @export var effects: Array[Effect] = []
 
 # Tracks whether a Brittle card has already used its one move.
 var has_moved: bool = false
+
+func label() -> String:
+	var rank_text: String = RANK_NAMES.get(rank, str(rank))
+	var suit_text: String = SUIT_SYMBOLS.get(suit, suit)
+	return "%s%s" % [rank_text, suit_text]
 
 func has_effect(e: Effect) -> bool:
 	return effects.has(e)
