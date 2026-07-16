@@ -11,6 +11,13 @@ run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=920
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
 [layout]
 
 default_gui_embed_subwindows=true

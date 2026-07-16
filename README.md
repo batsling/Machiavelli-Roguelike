@@ -13,6 +13,10 @@ layer (card effects, health/gold, encounters) will be built on.
 - On your turn: play **at least one card from your hand**, or draw one card.
   While playing you may freely rearrange *everything* on the table — the signature
   Machiavelli move — as long as every group is valid when you end the turn.
+- **Opening rule** (applies to every player, human and AI): until you have laid
+  down at least one valid group built *only* from your own hand, you may not add
+  cards to other groups or take cards from them. Laying your own valid group
+  unlocks the table immediately, even mid-turn.
 - First to empty their hand wins. If the stock runs dry and a full round passes,
   fewest cards wins.
 
@@ -20,11 +24,15 @@ layer (card effects, health/gold, encounters) will be built on.
 
 Open the project in Godot 4.6 and press Run (`F5`). On your turn:
 
-1. Click cards to select them — from your hand **and** from any group on the table.
-   Selected cards turn blue.
-2. The **+ New group** zone on the table starts a new group; a group's **+** button
-   moves the selection into that group. Groups outline green when valid, red when not.
-3. **End turn** validates the table and commits. **Undo turn** puts everything back.
+1. **Drag** cards — from your hand and from any group on the table. Drop them on a
+   group (or any card in it) to add them there, or on empty felt / the
+   **+ New group** zone to start a new group. Dragging a selected card drags the
+   whole selection.
+2. Clicking works too: click cards to select them (they turn blue), then click a
+   group's **+** button or **+ New group**. Groups outline green when valid, red
+   when not. Table cards are greyed out until you've opened.
+3. **End turn** validates the table and commits. **Undo action** takes back just
+   the last staged move; **Undo turn** puts the whole turn back.
 4. **Draw & end turn** if you can't or won't play (this also abandons staged moves).
 
 Enemy turns play out move by move on screen: every card an enemy lays down, lays
@@ -41,14 +49,17 @@ off, or takes from the table is highlighted in gold, and the log narrates each m
 - `scripts/board.gd` — `Board`: the melds on the table, with snapshot/restore so a
   whole turn's rearrangement can be rolled back
 - `scripts/player_state.gd` — `PlayerState`: hand (+ roguelike health/gold, unused)
-- `scripts/game_manager.gd` — `GameManager`: deal, staged turns, commit validation,
-  draw/pass, win detection; emits signals the UI listens to
+- `scripts/game_manager.gd` — `GameManager`: deal, staged turns, per-move undo,
+  the opening rule, commit validation, draw/pass, win detection; emits signals
+  the UI listens to
 - `scripts/greedy_ai.gd` — `GreedyAI`: baseline opponent — plays complete melds from
   hand, single-card lay-offs, and simple table rearrangements (borrows one card
   from a group, when the leftover group stays valid, to complete a new meld with
-  hand cards); produces one move at a time so the UI can animate enemy turns
-- `scripts/main_ui.gd` + `scenes/main.tscn` — click-to-play UI, built in code:
-  styled cards, felt table, per-group validity outlines, animated enemy turns
+  hand cards); respects the opening rule; produces one move at a time so the UI
+  can animate enemy turns
+- `scripts/main_ui.gd` + `scenes/main.tscn` — drag-and-drop (or click-to-play) UI,
+  built in code: styled cards, felt table, per-group validity outlines, animated
+  enemy turns
 - `tests/smoke_test.gd` — headless AI-vs-AI smoke test
 
 ## Headless smoke test
