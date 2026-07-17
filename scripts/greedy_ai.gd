@@ -154,14 +154,17 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 		if budget <= 0:
 			return {}
 	var hand := gm.current_player().hand
-	# Once the endgame is close the AI stops denying and blocking and simply
-	# races to empty its hand.
-	var pressure := _under_pressure_smart(gm)
+	# Race mode: stop denying/blocking and simply push to empty the hand. Two
+	# triggers — the endgame is close, or (accounting for how many cards the play
+	# cap still lets it play) the whole hand can actually go out this turn. When
+	# a finish is in reach the AI commits to it instead of sandbagging.
+	var race := _under_pressure_smart(gm) or _can_go_out_this_turn(gm, hand, budget)
 	var candidates: Array[Dictionary] = []
-	# 1. Complete meld straight from hand (respects the conservative opening gate).
+	# 1. Complete meld straight from hand. Conservative AIs sit on a small
+	# opening meld — unless a finish is in reach, in which case they lay it.
 	var meld := _find_meld(hand)
 	if not meld.is_empty() and (budget < 0 or meld.size() <= budget) \
-			and _will_lay_meld(gm, meld, profile):
+			and (race or _will_lay_meld(gm, meld, profile)):
 		candidates.append({"cards": meld, "dest": null,
 			"text": "lays down %s" % _cards_text(meld)})
 	if gm.current_player_is_open():
@@ -237,18 +240,19 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 	var best: Dictionary = {}
 	var best_score := 0.0  # hold and draw rather than play a net-negative move
 	for cand in candidates:
-		var score := _score_move(gm, cand, hand, pressure)
+		var score := _score_move(gm, cand, hand, race)
 		if score > best_score:
 			best_score = score
 			best = cand
 	return best
 
 ## Value of a candidate move. Own progress dominates (and going out trumps
-## everything); once the game is open but not yet under endgame pressure the AI
-## also rewards stealing jokers, penalizes handing opponents an open end, and
-## prefers to keep cards still useful in hand rather than dump them.
+## everything); when NOT racing (see _plan_smart_move) the AI also rewards
+## stealing jokers, penalizes handing opponents an open end, and prefers to keep
+## cards still useful in hand rather than dump them. In race mode it drops all
+## of that and simply maximizes cards played toward the finish.
 static func _score_move(gm: GameManager, move: Dictionary, hand: Array[Card],
-		pressure: bool) -> float:
+		race: bool) -> float:
 	var cards: Array[Card] = move["cards"]
 	var dest: CardSet = move["dest"]
 	var borrowed: Array = move.get("borrowed", [])
@@ -259,7 +263,7 @@ static func _score_move(gm: GameManager, move: Dictionary, hand: Array[Card],
 	for b: Card in borrowed:
 		if b.is_joker:
 			score += JOKER_STEAL_BONUS
-	if pressure:
+	if race:
 		return score
 	# The meld this move leaves on the table, whose open ends opponents inherit.
 	var result: Array[Card] = cards.duplicate()
@@ -378,6 +382,44 @@ static func _worth_holding(gm: GameManager, c: Card, rest: Array[Card]) -> bool:
 			if hi + 1 <= 13 and _unseen_copies(gm, hi + 1, c.suit) > 0:
 				return true
 	return false
+
+## Can the current player empty its whole hand THIS turn, given how many cards
+## the play cap still lets it play (budget, -1 = unlimited)? A quick, optimistic
+## greedy estimate: the play cap alone rules it out when the hand is bigger than
+## the budget; otherwise pull complete melds out of the hand and require every
+## leftover card to have a lay-off spot on the table. False negatives only cost
+## the AI an early race; false positives just mean it pushes and may draw with a
+## card or two left — never an illegal or wasted-cap play.
+static func _can_go_out_this_turn(gm: GameManager, hand: Array[Card], budget: int) -> bool:
+	if hand.is_empty():
+		return false
+	if budget >= 0 and hand.size() > budget:
+		return false  # the play cap alone means the hand can't all come down now
+	var remaining: Array[Card] = hand.duplicate()
+	# Repeatedly take the largest meld the hand can form (the opener, then more).
+	while true:
+		var m := _find_meld(remaining)
+		if m.is_empty():
+			break
+		for c in m:
+			remaining.erase(c)
+		if remaining.is_empty():
+			return true
+	# Whatever is left must each lay off onto some existing table meld — only
+	# possible once open, which a hand meld above (or a prior turn) provides.
+	if remaining.size() == hand.size() and not gm.current_player_is_open():
+		return false  # no opener and not yet open: can't touch the table
+	for c in remaining:
+		var laid := false
+		for meld in gm.board.melds:
+			var cand: Array[Card] = meld.cards.duplicate()
+			cand.append(c)
+			if Rules.is_valid_meld(cand):
+				laid = true
+				break
+		if not laid:
+			return false
+	return true
 
 ## The endgame is close enough that a smart AI stops sandbagging and denying and
 ## races to go out. Notices earlier than the baseline _under_pressure.
