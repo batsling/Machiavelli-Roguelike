@@ -19,9 +19,9 @@ extends Control
 ## start a fresh group. Cards you laid down this turn can be dragged back
 ## into your hand (or selected and sent back with the "Return to hand"
 ## button). Clicking still works too: click cards to select them (they lift
-## and turn blue), then click a group's "+" button or the "+ New group" zone —
-## both appear only while cards are selected, keeping the table clean.
-## Dragging a selected card drags the whole selection.
+## and turn blue), then click the "+ New group" zone — it appears only while
+## cards are selected, keeping the table clean. Adding to an existing group
+## is done by dragging. Dragging a selected card drags the whole selection.
 ##
 ## Opening rule: until you have laid down at least one valid group built only
 ## from your own hand, you cannot add to other groups or take cards from them
@@ -48,8 +48,10 @@ extends Control
 ## horizontal = quick→conservative; applies from the next enemy turn), the
 ## number of enemies (1-3, next game), cards drawn per turn (1-3, applies
 ## immediately), the max hand size (none, or 10-20 — drawing stops at the
-## cap and a draw on a full hand is a pass; applies immediately), and the
-## joker toggle (next game). Jokers (★) count as any
+## cap and a draw on a full hand is a pass; applies immediately), the max
+## cards played per turn (none, or 10-20 — only cards leaving your hand
+## count, rearranging the table is free; applies immediately, and binds the
+## AI too), and the joker toggle (next game). Jokers (★) count as any
 ## card; a joker in a valid group shows the card it currently stands for
 ## (e.g. ★7♥), and if you hold that exact card you can drop it on the joker
 ## to swap it out and take the wildcard into your hand. When a group leaves
@@ -69,10 +71,11 @@ const DRAG_TYPE := "machiavelli_cards"
 const MAX_PLAYERS := 4
 const ENEMY_NAMES := ["Rosso", "Nero", "Bianco"]
 
-const CARD_SIZE := Vector2(78, 108)
+const CARD_SIZE := Vector2(78, 108)  # hand cards
 const CARD_FONT_SIZE := 28
-const ADD_BTN_SIZE := Vector2(44, 108)
-const NEW_GROUP_SIZE := Vector2(150, 124)
+const BOARD_CARD_SIZE := Vector2(62, 86)  # table cards are smaller, so more groups fit
+const BOARD_CARD_FONT_SIZE := 22
+const NEW_GROUP_SIZE := Vector2(136, 102)
 const UI_FONT_SIZE := 17
 const BACK_SIZE_TOP := Vector2(46, 64)  # portrait backs for the seat opposite you
 const BACK_SIZE_SIDE := Vector2(64, 46)  # landscape backs for the left/right seats
@@ -120,6 +123,7 @@ var ai_style := 0.0       # 0 = quick, 1 = conservative
 var enemy_count := 2      # 1-3
 var draw_per_turn := 1    # 1-3
 var max_hand_size := 0    # 0 = no cap, otherwise 10-20
+var max_plays_per_turn := 0  # 0 = no cap, otherwise 10-20
 var include_jokers := false
 
 var game_root: VBoxContainer
@@ -170,6 +174,7 @@ func _new_game() -> void:
 	gm.setup(names, GameManager.DEFAULT_HAND_SIZE, -1, include_jokers)
 	gm.draw_per_turn = draw_per_turn
 	gm.max_hand_size = max_hand_size
+	gm.max_plays_per_turn = max_plays_per_turn
 	log_box.clear()
 	_set_status("Your turn. Drag cards to the table (or click to select) — "
 		+ "open by laying down a valid group from your hand.")
@@ -325,7 +330,7 @@ func _build_layout() -> void:
 
 	settings_btn = Button.new()
 	settings_btn.text = "Settings"
-	settings_btn.tooltip_text = "Enemy AI, enemy count, draw count, hand cap and jokers"
+	settings_btn.tooltip_text = "Enemy AI, enemy count, draw count, hand cap, play cap and jokers"
 	settings_btn.pressed.connect(_on_settings_pressed)
 	actions.add_child(settings_btn)
 
@@ -454,7 +459,18 @@ func _build_settings_dialog() -> void:
 		_on_enemy_count_changed))
 	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, draw_per_turn,
 		_on_draw_count_changed))
-	col.add_child(_make_hand_cap_row())
+	# Max hand size: with a cap, drawing stops at the cap and a draw attempted
+	# on a full hand becomes a pass. Applies immediately.
+	col.add_child(_make_cap_row("Max hand size:", max_hand_size,
+		func(v: int) -> void:
+			max_hand_size = v
+			gm.max_hand_size = v))
+	# Max cards played per turn: only cards leaving the hand count, and the
+	# same cap binds the AI. Applies immediately.
+	col.add_child(_make_cap_row("Max cards played per turn:", max_plays_per_turn,
+		func(v: int) -> void:
+			max_plays_per_turn = v
+			gm.max_plays_per_turn = v))
 
 	var joker_check := CheckBox.new()
 	joker_check.text = "Include 4 jokers — wildcards (next game)"
@@ -479,23 +495,22 @@ func _make_spin_row(text: String, minimum: int, maximum: int, value: int,
 	row.add_child(spin)
 	return row
 
-## Max hand size: "None" or 10-20. With a cap, drawing stops at the cap and a
-## draw attempted on a full hand becomes a pass. Applies immediately.
-func _make_hand_cap_row() -> HBoxContainer:
+## A "None or 10-20" dropdown row; `on_changed` gets the chosen value (0 for
+## "None"). Used for the hand cap and the play cap.
+func _make_cap_row(text: String, value: int, on_changed: Callable) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	var lbl := Label.new()
-	lbl.text = "Max hand size:"
+	lbl.text = text
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(lbl)
 	var opt := OptionButton.new()
 	opt.add_item("None", 0)
 	for v in range(10, 21):
 		opt.add_item(str(v), v)
-	opt.select(0 if max_hand_size == 0 else max_hand_size - 9)
+	opt.select(0 if value == 0 else value - 9)
 	opt.item_selected.connect(func(idx: int) -> void:
-		max_hand_size = opt.get_item_id(idx)
-		gm.max_hand_size = max_hand_size)
+		on_changed.call(opt.get_item_id(idx)))
 	row.add_child(opt)
 	return row
 
@@ -656,16 +671,6 @@ func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	panel.add_child(row)
 	for c in Rules.display_order(meld.cards):
 		row.add_child(_make_card_button(c, meld))
-	# The "+" target only appears while cards are selected and may land here.
-	if not selected.is_empty() and _is_human_turn() and not locked:
-		var add_btn := Button.new()
-		add_btn.text = "+"
-		add_btn.tooltip_text = "Move selected cards into this group"
-		add_btn.custom_minimum_size = ADD_BTN_SIZE
-		add_btn.pressed.connect(_on_add_to_meld_pressed.bind(meld))
-		add_btn.set_drag_forwarding(Callable(),
-			_can_drop_on_meld.bind(meld), _drop_on_meld.bind(meld))
-		row.add_child(add_btn)
 	return panel
 
 func _make_new_group_zone() -> Button:
@@ -738,12 +743,13 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	b.toggle_mode = true
 	b.text = c.label()
 	b.button_pressed = selected.has(c)
-	b.custom_minimum_size = CARD_SIZE
+	b.custom_minimum_size = BOARD_CARD_SIZE if on_board else CARD_SIZE
 	b.disabled = not _card_is_interactive(meld)
 	if on_board and b.disabled and _is_human_turn():
 		b.tooltip_text = "Locked until you open — lay down a valid group " \
 			+ "from your own hand first."
-	b.add_theme_font_size_override("font_size", CARD_FONT_SIZE)
+	b.add_theme_font_size_override("font_size",
+		BOARD_CARD_FONT_SIZE if on_board else CARD_FONT_SIZE)
 	b.focus_mode = Control.FOCUS_NONE
 
 	var font_col := COL_CARD_RED if RED_SUITS.has(c.suit) else COL_CARD_BLACK
@@ -1068,9 +1074,6 @@ func _on_card_toggled(pressed: bool, c: Card) -> void:
 func _on_new_meld_pressed() -> void:
 	_stage_move(selected.duplicate(), null)
 
-func _on_add_to_meld_pressed(meld: CardSet) -> void:
-	_play_on_meld(selected.duplicate(), meld)
-
 func _on_sort_rank_pressed() -> void:
 	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
 		if a.is_joker != b.is_joker:
@@ -1195,7 +1198,7 @@ func _run_ai_turns() -> void:
 	ai_running = false
 	if not gm.is_game_over:
 		_set_status("Your turn. Drag cards onto a group or empty felt — "
-			+ "or click to select, then use the + buttons.")
+			+ "or click to select, then use \"+ New group\".")
 	_refresh()
 
 # --- Enemy move animation --------------------------------------------------------
@@ -1216,8 +1219,8 @@ func _capture_card_positions(enemy: PlayerState, cards: Array[Card]) -> Dictiona
 func _enemy_hand_origin(enemy: PlayerState) -> Vector2:
 	var backs: Control = opponent_backs.get(enemy.player_id)
 	if backs != null and is_instance_valid(backs):
-		return backs.get_global_rect().get_center() - CARD_SIZE / 2.0
-	return get_global_rect().get_center() - CARD_SIZE / 2.0
+		return backs.get_global_rect().get_center() - BOARD_CARD_SIZE / 2.0
+	return get_global_rect().get_center() - BOARD_CARD_SIZE / 2.0
 
 ## Fly card faces from `sources` (Card -> screen position) to wherever the
 ## cards sit after the last refresh. Each destination button is hidden while
@@ -1247,19 +1250,19 @@ func _animate_cards(cards: Array[Card], sources: Dictionary) -> void:
 	if last_tween != null:
 		await last_tween.finished
 
-## A non-interactive card face used as an animation proxy; styled like the
-## gold highlight the card will carry once it lands.
+## A non-interactive card face used as an animation proxy; sized like the
+## board card it lands on and styled like the gold highlight it will carry.
 func _make_card_face(c: Card) -> Control:
 	var face := PanelContainer.new()
-	face.custom_minimum_size = CARD_SIZE
-	face.size = CARD_SIZE
+	face.custom_minimum_size = BOARD_CARD_SIZE
+	face.size = BOARD_CARD_SIZE
 	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	face.add_theme_stylebox_override("panel", _card_style(COL_HILITE_BG, COL_HILITE, 3))
 	var lbl := Label.new()
 	lbl.text = c.label()
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	lbl.add_theme_font_size_override("font_size", CARD_FONT_SIZE)
+	lbl.add_theme_font_size_override("font_size", BOARD_CARD_FONT_SIZE)
 	lbl.add_theme_color_override("font_color",
 		COL_CARD_RED if RED_SUITS.has(c.suit) else COL_CARD_BLACK)
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE

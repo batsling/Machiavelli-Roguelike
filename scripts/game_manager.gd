@@ -50,6 +50,10 @@ var draw_per_turn := 1
 ## at the cap, so a draw attempted with a full hand is a pass; a full round
 ## of passes still ends the game with fewest cards winning.
 var max_hand_size := 0
+## Optional cap on cards played per turn (0 = none, 10-20 from the settings
+## menu). Only cards leaving the hand count — rearranging the table is always
+## free — and returning a played card to the hand gives the play back.
+var max_plays_per_turn := 0
 
 # Staging state for the current turn. _hand_snapshot is the current player's
 # hand at the start of the turn; swap_joker() appends to it in place (the
@@ -195,6 +199,9 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	if not current_player_is_open() and not is_own_staged_meld(meld):
 		return "You can't touch the table before opening — " \
 			+ "lay down a valid group from your own hand first."
+	# The swap counts as playing a card, so it needs room under the play cap.
+	if max_plays_per_turn > 0 and cards_played_this_turn() >= max_plays_per_turn:
+		return "You can only play %d cards in a turn." % max_plays_per_turn
 	_push_undo()
 	meld.cards[meld.cards.find(joker)] = hand_card
 	p.hand.erase(hand_card)
@@ -237,11 +244,19 @@ func _staged_open_meld_exists() -> bool:
 			return true
 	return false
 
-## Why the staged move is illegal under the opening rule, or "" if it is fine.
+## Why the staged move is illegal under the play cap or the opening rule, or
+## "" if it is fine.
 func _stage_error(cards_to_move: Array[Card], dest: CardSet) -> String:
+	var p := current_player()
+	if max_plays_per_turn > 0:
+		var from_hand := 0
+		for c in cards_to_move:
+			if p.hand.has(c):
+				from_hand += 1
+		if from_hand > 0 and cards_played_this_turn() + from_hand > max_plays_per_turn:
+			return "You can only play %d cards in a turn." % max_plays_per_turn
 	if current_player_is_open():
 		return ""
-	var p := current_player()
 	for c in cards_to_move:
 		if not p.hand.has(c):
 			return "You can't take cards from the table before opening — " \
@@ -260,6 +275,11 @@ func commit_turn() -> String:
 	var p := current_player()
 	if cards_played_this_turn() <= 0:
 		return "You must play at least one card from your hand (or draw instead)."
+	# Normally unreachable (staging enforces the cap), but the cap can be
+	# lowered mid-turn from the settings dialog.
+	if max_plays_per_turn > 0 and cards_played_this_turn() > max_plays_per_turn:
+		return "You can only play %d cards in a turn — return some to your hand." \
+			% max_plays_per_turn
 	for c in p.hand:
 		if not _hand_snapshot.has(c):
 			return "Cards from the table cannot be taken into your hand."
