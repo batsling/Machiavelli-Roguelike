@@ -26,6 +26,8 @@ func _init() -> void:
 		failures += 1
 	if not _test_hand_cap():
 		failures += 1
+	if not _test_play_cap():
+		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
 			failures += 1
@@ -49,6 +51,9 @@ func _init() -> void:
 			failures += 1
 	for seed_value in 5:
 		if not _play_game(seed_value, "capped game", false, null, 1, 15):
+			failures += 1
+	for seed_value in 5:
+		if not _play_game(seed_value, "play-cap game", false, null, 1, 0, 10):
 			failures += 1
 	if failures == 0:
 		print("SMOKE TEST OK: all games completed cleanly")
@@ -97,6 +102,46 @@ func _test_hand_cap() -> bool:
 	gm.free()
 	if ok:
 		print("hand cap test OK")
+	return ok
+
+## With a play cap, staging more hand cards than the cap is rejected, table
+## rearranging stays free, returning a played card gives the play back, and
+## a cap lowered mid-turn is caught at commit.
+func _test_play_cap() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 9)
+	gm.max_plays_per_turn = 3
+	var p := gm.current_player()
+	p.has_opened = true
+	var three: Array[Card] = [p.hand[0], p.hand[1], p.hand[2]]
+	var fourth: Array[Card] = [p.hand[3]]
+	if gm.move_cards_to_new_meld(three) != "":
+		printerr("play cap: staging up to the cap was rejected")
+		ok = false
+	elif gm.add_cards_to_meld(fourth, gm.board.melds[0]) == "":
+		printerr("play cap: staging past the cap was allowed")
+		ok = false
+	# Rearranging cards already on the table costs nothing against the cap.
+	var borrow: Array[Card] = [three[0]]
+	if gm.move_cards_to_new_meld(borrow) != "":
+		printerr("play cap: moving table cards should not count against the cap")
+		ok = false
+	# Returning a played card frees room for another.
+	elif gm.return_cards_to_hand(borrow) != "":
+		printerr("play cap: returning a played card was rejected")
+		ok = false
+	elif gm.move_cards_to_new_meld(fourth) != "":
+		printerr("play cap: a play freed by a return was rejected")
+		ok = false
+	# 3 cards are played now; lowering the cap mid-turn must block the commit.
+	gm.max_plays_per_turn = 2
+	if ok and gm.commit_turn().find("only play") == -1:
+		printerr("play cap: committing more plays than the cap was allowed")
+		ok = false
+	gm.free()
+	if ok:
+		print("play cap test OK")
 	return ok
 
 ## Cards staged from the hand this turn can be taken back into the hand;
@@ -406,11 +451,13 @@ func _reassign_and_swap(gm: GameManager, hand_card: Card, joker: Card) -> bool:
 	return gm.swap_joker(hand_card, joker, gm.board.melds[0]) == ""
 
 func _play_game(seed_value: int, label: String, include_jokers := false,
-		profile: AIProfile = null, draw_per_turn := 1, max_hand_size := 0) -> bool:
+		profile: AIProfile = null, draw_per_turn := 1, max_hand_size := 0,
+		max_plays := 0) -> bool:
 	var gm := GameManager.new()
 	gm.setup(["P0", "P1", "P2"], 13, seed_value, include_jokers)
 	gm.draw_per_turn = draw_per_turn
 	gm.max_hand_size = max_hand_size
+	gm.max_plays_per_turn = max_plays
 	var total_cards := 108 if include_jokers else 104
 	var turns := 0
 	while not gm.is_game_over and turns < MAX_TURNS:

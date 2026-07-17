@@ -20,6 +20,8 @@ extends RefCounted
 ##     (not for weak AI).
 ## Steps 2-4 respect the opening rule: until the AI has laid down a valid
 ## meld purely from its own hand, it will not touch other melds on the table.
+## Every move also respects the play cap (GameManager.max_plays_per_turn):
+## moves that would play more hand cards than the turn has left are skipped.
 ##
 ## Style hooks: a conservative AI sits on its opening meld until the meld is
 ## big enough (or the game forces its hand) and won't lay off cards that
@@ -58,10 +60,18 @@ static func take_turn(gm: GameManager, profile: AIProfile = null) -> void:
 static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 	if profile != null and profile.misses_move():
 		return {}
+	# Cards still playable under the play cap this turn (-1 = unlimited).
+	# Every planned move stays within it, or staging would reject the move.
+	var budget := -1
+	if gm.max_plays_per_turn > 0:
+		budget = gm.max_plays_per_turn - gm.cards_played_this_turn()
+		if budget <= 0:
+			return {}
 	var hand := gm.current_player().hand
 	# 1. Complete meld straight from hand.
 	var meld := _find_meld(hand)
-	if not meld.is_empty() and _will_lay_meld(gm, meld, profile):
+	if not meld.is_empty() and (budget < 0 or meld.size() <= budget) \
+			and _will_lay_meld(gm, meld, profile):
 		return {"cards": meld, "dest": null,
 			"text": "lays down %s" % _cards_text(meld)}
 	# Not yet opened (no valid own meld on the table): the rules forbid
@@ -81,7 +91,7 @@ static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 				return {"cards": single, "dest": m,
 					"text": "adds %s to %s" % [c.label(), _cards_text(m.cards)]}
 	# 3. Two-card lay-off (strong AI): both cards land on the same meld.
-	if profile == null or profile.sees_pair_layoffs():
+	if (profile == null or profile.sees_pair_layoffs()) and (budget < 0 or budget >= 2):
 		for i in hand.size():
 			for j in range(i + 1, hand.size()):
 				var a := hand[i]
@@ -110,6 +120,8 @@ static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 				pool.append(t)
 				var combo := _find_meld(pool)
 				if combo.is_empty():
+					continue
+				if budget >= 0 and combo.size() - 1 > budget:
 					continue
 				# Step 1 found no hand-only meld, so combo necessarily uses t and
 				# therefore plays at least two hand cards.
