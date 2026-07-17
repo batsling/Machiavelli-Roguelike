@@ -38,7 +38,11 @@ health/gold, encounters) will be built on.
 
 ## Playing it
 
-Open the project in Godot 4.6 and press Run (`F5`).
+Open the project in Godot 4.6 and press Run (`F5`). You land on the main
+menu: **Play vanilla** deals a fresh game, **Resume** (shown once a game
+exists) returns to the table, **Settings** opens the options below, **Quit**
+exits. In game, the **Menu** button brings you back here without losing the
+game in progress.
 
 You sit at the bottom; opponents sit around the table showing the backs of
 their cards — the first enemy directly opposite you, the second on the left,
@@ -52,8 +56,10 @@ On your turn:
    **+ New group** zone to start a new group. Dragging a selected card drags the
    whole selection.
 2. Clicking works too: click cards to select them (they turn blue), then click a
-   group's **+** button or **+ New group**. Groups outline green when valid, red
-   when not. Table cards are greyed out until you've opened.
+   group's **+** button or the **+ New group** zone — both appear only while you
+   have cards selected, keeping the table clean. Valid groups sit quietly on the
+   felt; invalid ones outline red. Table cards are greyed out until you've
+   opened.
 3. Cards you laid down this turn can go back: drag them onto your hand, or select
    them and press **Return to hand**. (Cards that started the turn on the table
    can never enter your hand.)
@@ -124,11 +130,12 @@ The **Settings** button opens a dialog with:
   strong + quick and fully deterministic
 - `scripts/ai_graph.gd` — `AIGraph`: the clickable 2D skill/style picker in the
   settings dialog
-- `scripts/main_ui.gd` + `scenes/main.tscn` — drag-and-drop (or click-to-play) UI,
-  built in code: styled cards, felt table, per-group validity outlines, opponent
-  seats with face-down card backs, flying-card enemy-turn animations with
-  round-long gold highlights, the right-click joker menu, Balatro-style hand
-  ordering, return-to-hand for cards staged this turn, the settings dialog
+- `scripts/main_ui.gd` + `scenes/main.tscn` — main menu plus the drag-and-drop
+  (or click-to-play) UI, built in code: styled cards, felt table, per-group
+  validity outlines, opponent seats with face-down card backs, flying-card
+  enemy-turn animations with round-long gold highlights, the right-click joker
+  menu, Balatro-style hand ordering, return-to-hand for cards staged this
+  turn, the settings dialog
 - `tests/smoke_test.gd` — headless AI-vs-AI smoke test plus unit tests for the
   joker rules, the joker swap, joker stand-in choice, and the AI's safe
   stand-in picking

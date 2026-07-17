@@ -3,6 +3,10 @@ extends Control
 ## Playable UI for vanilla Machiavelli, built entirely in code so the scene
 ## file stays trivial.
 ##
+## A main menu fronts the table: Play vanilla (starts a fresh game), Resume
+## (shown once a game exists), Settings and Quit. The in-game Menu button
+## returns to it without losing the game in progress.
+##
 ## Table layout: you sit at the bottom; opponents sit around the table showing
 ## the backs of their cards. The first enemy sits directly opposite you at the
 ## top, the second on the left, and a fourth player (when one exists) sits on
@@ -11,12 +15,13 @@ extends Control
 ##
 ## How to play: on your turn, drag cards — from your hand AND from any group
 ## on the table (rearranging the table is the heart of the game). Drop them
-## onto a group (or any card in it) to add them there, or onto empty felt /
-## the "+ New group" zone to start a fresh group. Cards you laid down this
-## turn can be dragged back into your hand (or selected and sent back with
-## the "Return to hand" button). Clicking still works too: click cards to
-## select them (they lift and turn blue), then click a group's "+" button or
-## "+ New group". Dragging a selected card drags the whole selection.
+## onto a group (or any card in it) to add them there, or onto empty felt to
+## start a fresh group. Cards you laid down this turn can be dragged back
+## into your hand (or selected and sent back with the "Return to hand"
+## button). Clicking still works too: click cards to select them (they lift
+## and turn blue), then click a group's "+" button or the "+ New group" zone —
+## both appear only while cards are selected, keeping the table clean.
+## Dragging a selected card drags the whole selection.
 ##
 ## Opening rule: until you have laid down at least one valid group built only
 ## from your own hand, you cannot add to other groups or take cards from them
@@ -82,7 +87,7 @@ const COL_SELECT := Color(0.20, 0.55, 0.95)
 const COL_SELECT_BG := Color(0.84, 0.91, 1.0)
 const COL_HILITE := Color(0.93, 0.72, 0.13)
 const COL_HILITE_BG := Color(1.0, 0.94, 0.75)
-const COL_MELD_OK := Color(0.35, 0.75, 0.45)
+const COL_MELD_BORDER := Color(1, 1, 1, 0.16)
 const COL_MELD_BAD := Color(0.92, 0.35, 0.30)
 const COL_CHIP_BG := Color(0.13, 0.14, 0.17)
 const COL_CHIP_ACTIVE := Color(0.93, 0.72, 0.13)
@@ -111,6 +116,9 @@ var enemy_count := 2      # 1-3
 var draw_per_turn := 1    # 1-3
 var include_jokers := false
 
+var game_root: VBoxContainer
+var menu_layer: PanelContainer
+var resume_btn: Button
 var seat_top: VBoxContainer
 var seat_left: VBoxContainer
 var seat_right: VBoxContainer
@@ -142,7 +150,7 @@ func _ready() -> void:
 	gm.player_passed.connect(_on_player_passed)
 	gm.game_over.connect(_on_game_over)
 	_build_layout()
-	_new_game()
+	_show_menu()
 
 func _new_game() -> void:
 	game_generation += 1
@@ -175,21 +183,23 @@ func _build_layout() -> void:
 	var ui_theme := Theme.new()
 	ui_theme.default_font_size = UI_FONT_SIZE
 	theme = ui_theme
+	# Paint the whole window in dark felt instead of the engine's gray.
+	RenderingServer.set_default_clear_color(COL_FELT_DARK)
 
-	var root := VBoxContainer.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_theme_constant_override("separation", 8)
-	root.offset_left = 14
-	root.offset_top = 14
-	root.offset_right = -14
-	root.offset_bottom = -14
-	add_child(root)
+	game_root = VBoxContainer.new()
+	game_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	game_root.add_theme_constant_override("separation", 6)
+	game_root.offset_left = 10
+	game_root.offset_top = 10
+	game_root.offset_right = -10
+	game_root.offset_bottom = -10
+	add_child(game_root)
 
 	# Top row: the first enemy's seat, centered directly opposite you, with the
 	# stock count tucked into the corner.
 	var top_bar := HBoxContainer.new()
 	top_bar.add_theme_constant_override("separation", 8)
-	root.add_child(top_bar)
+	game_root.add_child(top_bar)
 	var top_pad_left := Control.new()
 	top_pad_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(top_pad_left)
@@ -206,7 +216,7 @@ func _build_layout() -> void:
 	var mid_row := HBoxContainer.new()
 	mid_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	mid_row.add_theme_constant_override("separation", 8)
-	root.add_child(mid_row)
+	game_root.add_child(mid_row)
 	seat_left = _make_seat()
 	seat_left.custom_minimum_size = Vector2(SIDE_SEAT_WIDTH, 0)
 	mid_row.add_child(seat_left)
@@ -238,7 +248,7 @@ func _build_layout() -> void:
 	# Hand: darker felt panel at the bottom. The whole panel accepts drops so
 	# cards played this turn can be dragged back into the hand.
 	hand_panel = PanelContainer.new()
-	root.add_child(hand_panel)
+	game_root.add_child(hand_panel)
 	var hand_col := VBoxContainer.new()
 	hand_col.add_theme_constant_override("separation", 4)
 	hand_panel.add_child(hand_col)
@@ -272,7 +282,7 @@ func _build_layout() -> void:
 	# Action row.
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", 8)
-	root.add_child(actions)
+	game_root.add_child(actions)
 
 	selection_label = Label.new()
 	selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -317,15 +327,21 @@ func _build_layout() -> void:
 	new_game_btn.pressed.connect(_new_game)
 	actions.add_child(new_game_btn)
 
+	var menu_btn := Button.new()
+	menu_btn.text = "Menu"
+	menu_btn.tooltip_text = "Back to the main menu — the game is kept"
+	menu_btn.pressed.connect(_show_menu)
+	actions.add_child(menu_btn)
+
 	status_label = Label.new()
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	root.add_child(status_label)
+	game_root.add_child(status_label)
 
 	log_box = RichTextLabel.new()
-	log_box.custom_minimum_size = Vector2(0, 110)
+	log_box.custom_minimum_size = Vector2(0, 74)
 	log_box.scroll_following = true
 	log_box.fit_content = false
-	root.add_child(log_box)
+	game_root.add_child(log_box)
 
 	# Overlay for the flying-card animations; never intercepts the mouse.
 	anim_layer = Control.new()
@@ -333,7 +349,71 @@ func _build_layout() -> void:
 	anim_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(anim_layer)
 
+	# The menu sits above everything (including in-flight card animations).
+	_build_menu()
 	_build_settings_dialog()
+
+func _build_menu() -> void:
+	menu_layer = PanelContainer.new()
+	menu_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	menu_layer.add_theme_stylebox_override("panel", _panel_style(COL_FELT_DARK, 0))
+	add_child(menu_layer)
+	var center := CenterContainer.new()
+	menu_layer.add_child(center)
+	var col := VBoxContainer.new()
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_theme_constant_override("separation", 12)
+	center.add_child(col)
+
+	var title := Label.new()
+	title.text = "Machiavelli"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 54)
+	title.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
+	col.add_child(title)
+	var subtitle := Label.new()
+	subtitle.text = "the Italian rummy of rearranging the whole table"
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	col.add_child(subtitle)
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(0, 18)
+	col.add_child(gap)
+
+	resume_btn = _make_menu_button("Resume game", _on_resume_pressed)
+	col.add_child(resume_btn)
+	col.add_child(_make_menu_button("Play vanilla", _on_play_vanilla_pressed))
+	col.add_child(_make_menu_button("Settings", _on_settings_pressed))
+	col.add_child(_make_menu_button("Quit", _on_quit_pressed))
+
+func _make_menu_button(text: String, on_pressed: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(280, 54)
+	b.add_theme_font_size_override("font_size", 21)
+	b.focus_mode = Control.FOCUS_NONE
+	b.pressed.connect(on_pressed)
+	return b
+
+func _show_menu() -> void:
+	resume_btn.visible = not gm.players.is_empty()
+	menu_layer.visible = true
+	game_root.visible = false
+
+func _show_game() -> void:
+	menu_layer.visible = false
+	game_root.visible = true
+	_refresh()
+
+func _on_play_vanilla_pressed() -> void:
+	_new_game()
+	_show_game()
+
+func _on_resume_pressed() -> void:
+	_show_game()
+
+func _on_quit_pressed() -> void:
+	get_tree().quit()
 
 func _build_settings_dialog() -> void:
 	settings_dialog = AcceptDialog.new()
@@ -520,7 +600,10 @@ func _refresh_board() -> void:
 		board_flow.add_child(empty)
 	for meld in gm.board.melds:
 		board_flow.add_child(_make_meld_panel(meld))
-	board_flow.add_child(_make_new_group_zone())
+	# The "+ New group" click target only appears while cards are selected;
+	# drags can always land on empty felt instead.
+	if not selected.is_empty() and _is_human_turn():
+		board_flow.add_child(_make_new_group_zone())
 
 func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	Rules.assign_jokers(meld.cards)
@@ -528,9 +611,10 @@ func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	var valid := meld.is_valid()
 	var locked := _is_human_turn() and not gm.current_player_is_open() \
 		and not gm.is_own_staged_meld(meld)
-	var sb := _panel_style(Color(1, 1, 1, 0.06), 10)
-	sb.border_color = COL_MELD_OK if valid else COL_MELD_BAD
-	sb.set_border_width_all(2)
+	# Valid groups sit quietly on the felt; only broken ones shout.
+	var sb := _panel_style(Color(1, 1, 1, 0.045), 10)
+	sb.border_color = COL_MELD_BORDER if valid else COL_MELD_BAD
+	sb.set_border_width_all(1 if valid else 2)
 	panel.add_theme_stylebox_override("panel", sb)
 	if not valid:
 		panel.tooltip_text = "Not a valid group yet — fix it before ending your turn."
@@ -544,15 +628,16 @@ func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	panel.add_child(row)
 	for c in Rules.display_order(meld.cards):
 		row.add_child(_make_card_button(c, meld))
-	var add_btn := Button.new()
-	add_btn.text = "+"
-	add_btn.tooltip_text = "Move selected cards into this group"
-	add_btn.custom_minimum_size = ADD_BTN_SIZE
-	add_btn.disabled = selected.is_empty() or not _is_human_turn() or locked
-	add_btn.pressed.connect(_on_add_to_meld_pressed.bind(meld))
-	add_btn.set_drag_forwarding(Callable(),
-		_can_drop_on_meld.bind(meld), _drop_on_meld.bind(meld))
-	row.add_child(add_btn)
+	# The "+" target only appears while cards are selected and may land here.
+	if not selected.is_empty() and _is_human_turn() and not locked:
+		var add_btn := Button.new()
+		add_btn.text = "+"
+		add_btn.tooltip_text = "Move selected cards into this group"
+		add_btn.custom_minimum_size = ADD_BTN_SIZE
+		add_btn.pressed.connect(_on_add_to_meld_pressed.bind(meld))
+		add_btn.set_drag_forwarding(Callable(),
+			_can_drop_on_meld.bind(meld), _drop_on_meld.bind(meld))
+		row.add_child(add_btn)
 	return panel
 
 func _make_new_group_zone() -> Button:
@@ -560,7 +645,6 @@ func _make_new_group_zone() -> Button:
 	zone.text = "+ New group"
 	zone.tooltip_text = "Drop or move selected cards here to start a brand-new group"
 	zone.custom_minimum_size = NEW_GROUP_SIZE
-	zone.disabled = selected.is_empty() or not _is_human_turn()
 	zone.focus_mode = Control.FOCUS_NONE
 	var sb := _panel_style(Color(1, 1, 1, 0.04), 10)
 	sb.border_color = Color(1, 1, 1, 0.35)
@@ -568,10 +652,6 @@ func _make_new_group_zone() -> Button:
 	zone.add_theme_stylebox_override("normal", sb)
 	zone.add_theme_stylebox_override("hover", _hover_variant(sb))
 	zone.add_theme_stylebox_override("pressed", sb)
-	var sb_off := _panel_style(Color(1, 1, 1, 0.02), 10)
-	sb_off.border_color = Color(1, 1, 1, 0.12)
-	sb_off.set_border_width_all(2)
-	zone.add_theme_stylebox_override("disabled", sb_off)
 	zone.pressed.connect(_on_new_meld_pressed)
 	zone.set_drag_forwarding(Callable(), _can_drop_new_group, _drop_new_group)
 	return zone
