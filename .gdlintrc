@@ -1,0 +1,3 @@
+# gdlint configuration. main_ui.gd builds the whole UI in code and
+# legitimately runs past gdlint's default 1000-line cap.
+max-file-lines: 1600
