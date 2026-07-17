@@ -192,9 +192,7 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 		# new meld together with hand cards.
 		for m in gm.board.melds:
 			for t in m.cards:
-				var rest: Array[Card] = m.cards.duplicate()
-				rest.erase(t)
-				if not Rules.is_valid_meld(rest):
+				if not _leftover_valid(m, [t]):
 					continue
 				var pool: Array[Card] = hand.duplicate()
 				pool.append(t)
@@ -203,8 +201,39 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 					continue
 				if budget >= 0 and combo.size() - 1 > budget:
 					continue
-				candidates.append({"cards": combo, "dest": null, "borrowed": t,
+				candidates.append({"cards": combo, "dest": null, "borrowed": [t],
 					"text": "takes %s from the table to build %s" % [t.label(), _cards_text(combo)]})
+		# 5. Deeper manipulation: borrow TWO table cards at once — from one meld
+		# or across two — to reach a meld a single borrow can't. Each source meld
+		# must stay valid once its card(s) leave, and the built meld must use both
+		# borrowed cards (a joker among them still counts as a steal).
+		if budget < 0 or budget >= 1:
+			var table: Array = []  # [Card, CardSet] for every card on the table
+			for m in gm.board.melds:
+				for c in m.cards:
+					table.append([c, m])
+			for i in table.size():
+				for j in range(i + 1, table.size()):
+					var t1: Card = table[i][0]
+					var m1: CardSet = table[i][1]
+					var t2: Card = table[j][0]
+					var m2: CardSet = table[j][1]
+					if m1 == m2:
+						if not _leftover_valid(m1, [t1, t2]):
+							continue
+					elif not _leftover_valid(m1, [t1]) or not _leftover_valid(m2, [t2]):
+						continue
+					var pool: Array[Card] = hand.duplicate()
+					pool.append(t1)
+					pool.append(t2)
+					var combo := _find_meld(pool)
+					if combo.is_empty() or not combo.has(t1) or not combo.has(t2):
+						continue
+					if budget >= 0 and combo.size() - 2 > budget:
+						continue
+					candidates.append({"cards": combo, "dest": null, "borrowed": [t1, t2],
+						"text": "reworks the table, taking %s and %s to build %s"
+							% [t1.label(), t2.label(), _cards_text(combo)]})
 	var best: Dictionary = {}
 	var best_score := 0.0  # hold and draw rather than play a net-negative move
 	for cand in candidates:
@@ -222,13 +251,14 @@ static func _score_move(gm: GameManager, move: Dictionary, hand: Array[Card],
 		pressure: bool) -> float:
 	var cards: Array[Card] = move["cards"]
 	var dest: CardSet = move["dest"]
-	var borrowed: Card = move.get("borrowed", null)
-	var from_hand := cards.size() - (1 if borrowed != null else 0)
+	var borrowed: Array = move.get("borrowed", [])
+	var from_hand := cards.size() - borrowed.size()
 	var score := from_hand * W_PROGRESS
 	if hand.size() - from_hand == 0:
 		score += GO_OUT_BONUS
-	if borrowed != null and borrowed.is_joker:
-		score += JOKER_STEAL_BONUS
+	for b: Card in borrowed:
+		if b.is_joker:
+			score += JOKER_STEAL_BONUS
 	if pressure:
 		return score
 	# The meld this move leaves on the table, whose open ends opponents inherit.
@@ -236,14 +266,16 @@ static func _score_move(gm: GameManager, move: Dictionary, hand: Array[Card],
 	if dest != null:
 		result = dest.cards + cards
 	score -= W_FEED * _open_end_exposure(gm, result)
-	# Blocking: dumping a lone/paired card that still pairs up with the rest of
-	# the hand (or a joker) is worth less than holding it for a bigger play.
+	# Blocking: dumping a lone/paired card still worth keeping (a joker, or one
+	# that pairs toward a meld the deck can still complete) is worth less than
+	# holding it for a bigger play. Cards whose completions are all dead cost
+	# nothing to shed, so this never sandbags the AI onto a hopeless hold.
 	if dest != null:
 		var rest: Array[Card] = hand.duplicate()
 		for c in cards:
 			rest.erase(c)
 		for c in cards:
-			if _seems_important(c, rest):
+			if _worth_holding(gm, c, rest):
 				score -= W_BLOCK
 	return score
 
@@ -311,6 +343,41 @@ static func _meld_fixed_rank(cards: Array[Card]) -> int:
 		if r > 0:
 			return r
 	return 0
+
+## Whether a meld stays legal after `removed` cards leave it: either nothing is
+## left (the whole meld was consumed) or the remainder is still a valid meld.
+## Guards every table rearrangement so the committed table never goes invalid.
+static func _leftover_valid(meld: CardSet, removed: Array[Card]) -> bool:
+	var rest: Array[Card] = meld.cards.duplicate()
+	for c in removed:
+		rest.erase(c)
+	return rest.is_empty() or Rules.is_valid_meld(rest)
+
+## Whether keeping this card in hand is still worth more than playing it now: a
+## joker, or a card that pairs toward a meld the deck can still complete (a set
+## whose third suit is still unseen, or a run whose next rank is still unseen).
+## A pair whose only completions are already all on the table or in hand is a
+## dead end — not worth holding — so the AI stops hoarding and goes out.
+static func _worth_holding(gm: GameManager, c: Card, rest: Array[Card]) -> bool:
+	if c.is_joker:
+		return true
+	for o in rest:
+		if o == c or o.is_joker:
+			continue
+		# Toward a set: same rank, another suit — needs a still-unseen third suit.
+		if o.rank == c.rank and o.suit != c.suit:
+			for s in Deck.SUITS:
+				if s != c.suit and s != o.suit and _unseen_copies(gm, c.rank, s) > 0:
+					return true
+		# Toward a run: same suit, adjacent rank — needs a still-unseen end card.
+		if o.suit == c.suit and absi(o.rank - c.rank) == 1:
+			var lo := mini(c.rank, o.rank)
+			var hi := maxi(c.rank, o.rank)
+			if lo - 1 >= 1 and _unseen_copies(gm, lo - 1, c.suit) > 0:
+				return true
+			if hi + 1 <= 13 and _unseen_copies(gm, hi + 1, c.suit) > 0:
+				return true
+	return false
 
 ## The endgame is close enough that a smart AI stops sandbagging and denying and
 ## races to go out. Notices earlier than the baseline _under_pressure.

@@ -145,8 +145,10 @@ The **Settings** button opens a dialog with:
   valid, to complete a new meld with hand cards); picks safe joker stand-ins at
   higher skill; respects the opening rule; produces one move at a time so the
   UI can animate enemy turns. At the top skill tier it swaps the greedy search
-  for a score-all-candidates "smart brain" that counts the deck, steals jokers,
-  avoids feeding opponents, blocks, and races the endgame
+  for a score-all-candidates "smart brain" that counts the deck, borrows up to
+  two table cards at once to reach melds a single borrow can't, steals jokers,
+  avoids feeding opponents, holds only cards the deck can still complete (never
+  hoarding toward a dead end), and races the endgame
 - `scripts/ai_profile.gd` — `AIProfile`: the three personality dials GreedyAI
   consults — skill (search depth + the smart brain), style (opening threshold,
   key-card holding), attention (miss chance); unset = strong + quick +
@@ -172,8 +174,9 @@ godot --headless --path . --script res://tests/smoke_test.gd    # unit tests + 6
 
 - The turn model is *staged*: moves mutate state immediately, `commit_turn()` is the
   only legality gate, `reset_turn()` rolls the whole turn back. Same as physical play.
-- The AI only does single-card table rearrangements (even the top-tier smart
-  brain borrows one card at a time). A truly strong AI (and a "hint" feature)
+- The AI's table rearrangement is bounded — it borrows at most two cards at a
+  time (the top-tier smart brain), not the arbitrary multi-meld shuffles a
+  human can do. A truly strong AI (and a "hint" feature)
   should use the ILP formulation from Den Hertog & Hulshof, *Solving Rummikub
   Problems by Integer Linear Programming* — see
   [cduck/machiavelli](https://github.com/cduck/machiavelli) (MIT) and
