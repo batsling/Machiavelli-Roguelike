@@ -3,9 +3,17 @@ extends Control
 ## Playable UI for vanilla Machiavelli, built entirely in code so the scene
 ## file stays trivial.
 ##
-## A main menu fronts the table: Play vanilla (starts a fresh game), Resume
-## (shown once a game exists), Settings and Quit. The in-game Menu button
-## returns to it without losing the game in progress.
+## A main menu fronts the table: Roguelike run, Vanilla sandbox (a fresh
+## free-play game), Resume (shown once a game exists), Settings and Quit.
+## The in-game Menu button returns to it without losing the game in progress.
+##
+## Roguelike run: an endless ladder of 1v1 games under fixed run rules —
+## draw 2 cards per turn, at most 13 cards played per turn, all 4 jokers in.
+## Beat an enemy to advance to the next round (the "New game" button becomes
+## "Next round"); lose and the run is over ("New run" starts over at round
+## 1). Enemies are placeholders for now — designed enemies with their own
+## mechanics come later. Sandbox settings never apply during a run, so the
+## Settings button is disabled in-game while one is active.
 ##
 ## Table layout: you sit at the bottom; opponents sit around the table showing
 ## the backs of their cards. The first enemy sits directly opposite you at the
@@ -71,6 +79,13 @@ const DRAG_TYPE := "machiavelli_cards"
 const MAX_PLAYERS := 4
 const ENEMY_NAMES := ["Rosso", "Nero", "Bianco"]
 
+## Fixed rules for a roguelike run. The AI values are a placeholder (strong
+## and quick) until designed enemies bring their own profiles and mechanics.
+const ROGUE_DRAW_PER_TURN := 2
+const ROGUE_MAX_PLAYS_PER_TURN := 13
+const ROGUE_AI_STRENGTH := 1.0
+const ROGUE_AI_STYLE := 0.0
+
 const CARD_SIZE := Vector2(78, 108)  # hand cards
 const CARD_FONT_SIZE := 28
 const BOARD_CARD_SIZE := Vector2(62, 86)  # table cards are smaller, so more groups fit
@@ -102,7 +117,13 @@ const COL_CHIP_ACTIVE := Color(0.93, 0.72, 0.13)
 const COL_JOKER := Color(0.48, 0.20, 0.62)
 const COL_JOKER_BG := Color(0.96, 0.92, 0.98)
 
+enum Mode { SANDBOX, ROGUE }
+
 var gm: GameManager
+var game_mode := Mode.SANDBOX
+var rogue_round := 1
+# Whether the just-finished rogue game was won, i.e. "Next round" is on offer.
+var rogue_round_won := false
 var selected: Array[Card] = []
 var highlighted := {}  # Card -> true; every card the enemies touched last round
 var ai_running := false
@@ -116,8 +137,9 @@ var card_nodes := {}
 # refresh, used as the animation origin for cards played from a hidden hand.
 var opponent_backs := {}
 
-# Settings (the Settings dialog). The AI graph and draw count apply
-# immediately; enemy count and jokers take effect on the next new game.
+# Settings (the Settings dialog) — sandbox games only; a roguelike run's
+# rules are fixed. The AI graph and draw count apply immediately; enemy count
+# and jokers take effect on the next new game.
 var ai_strength := 1.0    # 0 = weak, 1 = strong
 var ai_style := 0.0       # 0 = quick, 1 = conservative
 var enemy_count := 2      # 1-3
@@ -167,21 +189,33 @@ func _new_game() -> void:
 	selected.clear()
 	highlighted.clear()
 	ai_running = false
+	rogue_round_won = false
 	_clear_children(anim_layer)
-	var names: Array = ["You"]
-	for i in enemy_count:
-		names.append(ENEMY_NAMES[i])
-	gm.setup(names, GameManager.DEFAULT_HAND_SIZE, -1, include_jokers)
-	gm.draw_per_turn = draw_per_turn
-	gm.max_hand_size = max_hand_size
-	gm.max_plays_per_turn = max_plays_per_turn
 	log_box.clear()
+	if game_mode == Mode.ROGUE:
+		var enemy: String = ENEMY_NAMES[(rogue_round - 1) % ENEMY_NAMES.size()]
+		gm.setup(["You", enemy], GameManager.DEFAULT_HAND_SIZE, -1, true)
+		gm.draw_per_turn = ROGUE_DRAW_PER_TURN
+		gm.max_hand_size = 0
+		gm.max_plays_per_turn = ROGUE_MAX_PLAYS_PER_TURN
+		_log("[b]Round %d[/b] — you face %s. Run rules: draw %d per turn, "
+			% [rogue_round, enemy, ROGUE_DRAW_PER_TURN]
+			+ "at most %d cards played per turn, 4 jokers in."
+			% ROGUE_MAX_PLAYS_PER_TURN)
+	else:
+		var names: Array = ["You"]
+		for i in enemy_count:
+			names.append(ENEMY_NAMES[i])
+		gm.setup(names, GameManager.DEFAULT_HAND_SIZE, -1, include_jokers)
+		gm.draw_per_turn = draw_per_turn
+		gm.max_hand_size = max_hand_size
+		gm.max_plays_per_turn = max_plays_per_turn
+		_log("New game: %d enem%s, 13 cards each, double deck, %s." % [enemy_count,
+			"y" if enemy_count == 1 else "ies",
+			"4 jokers in" if include_jokers else "no jokers"])
 	_set_status("Your turn. Drag cards to the table (or click to select) — "
 		+ "open by laying down a valid group from your hand.")
-	_log("New game: %d enem%s, 13 cards each, double deck, %s." % [enemy_count,
-		"y" if enemy_count == 1 else "ies",
-		"4 jokers in" if include_jokers else "no jokers"])
-	if include_jokers:
+	if game_mode == Mode.ROGUE or include_jokers:
 		_log("Jokers (★) count as any card. A joker in a valid group shows what "
 			+ "it stands for — drop the real card on it to swap the joker into your hand.")
 	_log("Opening rule: lay down a valid group from your own hand before "
@@ -336,7 +370,7 @@ func _build_layout() -> void:
 
 	new_game_btn = Button.new()
 	new_game_btn.text = "New game"
-	new_game_btn.pressed.connect(_new_game)
+	new_game_btn.pressed.connect(_on_new_game_pressed)
 	actions.add_child(new_game_btn)
 
 	var menu_btn := Button.new()
@@ -394,7 +428,8 @@ func _build_menu() -> void:
 
 	resume_btn = _make_menu_button("Resume game", _on_resume_pressed)
 	col.add_child(resume_btn)
-	col.add_child(_make_menu_button("Play vanilla", _on_play_vanilla_pressed))
+	col.add_child(_make_menu_button("Roguelike run", _on_play_rogue_pressed))
+	col.add_child(_make_menu_button("Vanilla sandbox", _on_play_vanilla_pressed))
 	col.add_child(_make_menu_button("Settings", _on_settings_pressed))
 	col.add_child(_make_menu_button("Quit", _on_quit_pressed))
 
@@ -418,6 +453,13 @@ func _show_game() -> void:
 	_refresh()
 
 func _on_play_vanilla_pressed() -> void:
+	game_mode = Mode.SANDBOX
+	_new_game()
+	_show_game()
+
+func _on_play_rogue_pressed() -> void:
+	game_mode = Mode.ROGUE
+	rogue_round = 1
 	_new_game()
 	_show_game()
 
@@ -460,17 +502,20 @@ func _build_settings_dialog() -> void:
 	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, draw_per_turn,
 		_on_draw_count_changed))
 	# Max hand size: with a cap, drawing stops at the cap and a draw attempted
-	# on a full hand becomes a pass. Applies immediately.
+	# on a full hand becomes a pass. Applies immediately — but never to a
+	# roguelike run, whose rules are fixed.
 	col.add_child(_make_cap_row("Max hand size:", max_hand_size,
 		func(v: int) -> void:
 			max_hand_size = v
-			gm.max_hand_size = v))
+			if game_mode == Mode.SANDBOX:
+				gm.max_hand_size = v))
 	# Max cards played per turn: only cards leaving the hand count, and the
-	# same cap binds the AI. Applies immediately.
+	# same cap binds the AI. Applies immediately (sandbox only).
 	col.add_child(_make_cap_row("Max cards played per turn:", max_plays_per_turn,
 		func(v: int) -> void:
 			max_plays_per_turn = v
-			gm.max_plays_per_turn = v))
+			if game_mode == Mode.SANDBOX:
+				gm.max_plays_per_turn = v))
 
 	var joker_check := CheckBox.new()
 	joker_check.text = "Include 4 jokers — wildcards (next game)"
@@ -522,7 +567,8 @@ func _on_enemy_count_changed(value: float) -> void:
 
 func _on_draw_count_changed(value: float) -> void:
 	draw_per_turn = int(value)
-	gm.draw_per_turn = draw_per_turn
+	if game_mode == Mode.SANDBOX:
+		gm.draw_per_turn = draw_per_turn
 
 func _on_jokers_toggled(on: bool) -> void:
 	include_jokers = on
@@ -723,6 +769,18 @@ func _refresh_buttons() -> void:
 	reset_btn.disabled = not human_turn or not gm.can_undo_action()
 	end_turn_btn.disabled = not human_turn
 	draw_btn.disabled = not human_turn
+	if game_mode == Mode.ROGUE:
+		new_game_btn.text = "Next round" if gm.is_game_over and rogue_round_won \
+			else "New run"
+		settings_btn.disabled = true
+		settings_btn.tooltip_text = "Sandbox settings — a run's rules are fixed " \
+			+ "(draw %d, %d plays max, jokers in)" \
+			% [ROGUE_DRAW_PER_TURN, ROGUE_MAX_PLAYS_PER_TURN]
+	else:
+		new_game_btn.text = "New game"
+		settings_btn.disabled = false
+		settings_btn.tooltip_text = \
+			"Enemy AI, enemy count, draw count, hand cap, play cap and jokers"
 	if selected.is_empty():
 		selection_label.text = ""
 	else:
@@ -1074,6 +1132,16 @@ func _on_card_toggled(pressed: bool, c: Card) -> void:
 func _on_new_meld_pressed() -> void:
 	_stage_move(selected.duplicate(), null)
 
+## Sandbox: always a fresh game. Roguelike: "Next round" after a won game
+## advances the ladder; otherwise the run restarts from round 1.
+func _on_new_game_pressed() -> void:
+	if game_mode == Mode.ROGUE:
+		if gm.is_game_over and rogue_round_won:
+			rogue_round += 1
+		else:
+			rogue_round = 1
+	_new_game()
+
 func _on_sort_rank_pressed() -> void:
 	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
 		if a.is_joker != b.is_joker:
@@ -1144,7 +1212,17 @@ func _on_game_over(winners: Array) -> void:
 		names.append(p.display_name)
 	var who := ", ".join(names)
 	_log("[b]Game over — winner: %s[/b]" % who)
-	_set_status("Game over — %s wins. Press New game to play again." % who)
+	if game_mode == Mode.ROGUE:
+		# A shared fewest-cards tie counts as surviving the round.
+		rogue_round_won = winners.has(gm.players[0])
+		if rogue_round_won:
+			_set_status("Round %d cleared! Press \"Next round\" for the next enemy."
+				% rogue_round)
+		else:
+			_set_status("Run over — %s beat you on round %d. Press \"New run\" to try again."
+				% [who, rogue_round])
+	else:
+		_set_status("Game over — %s wins. Press New game to play again." % who)
 
 # --- AI driving ----------------------------------------------------------------
 
@@ -1158,7 +1236,8 @@ func _run_ai_turns() -> void:
 		return
 	ai_running = true
 	var gen := game_generation
-	var profile := AIProfile.new(ai_strength, ai_style)
+	var profile := AIProfile.new(ROGUE_AI_STRENGTH, ROGUE_AI_STYLE) \
+		if game_mode == Mode.ROGUE else AIProfile.new(ai_strength, ai_style)
 	highlighted.clear()
 	_refresh()
 	while not gm.is_game_over and gm.current_player().is_opponent:
