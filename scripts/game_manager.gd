@@ -96,6 +96,7 @@ func current_player() -> PlayerState:
 func move_cards_to_new_meld(cards_to_move: Array[Card]) -> String:
 	if cards_to_move.is_empty():
 		return ""
+	cards_to_move = _expand_sticky(cards_to_move)
 	var err := _stage_error(cards_to_move, null)
 	if err != "":
 		return err
@@ -110,6 +111,7 @@ func move_cards_to_new_meld(cards_to_move: Array[Card]) -> String:
 func add_cards_to_meld(cards_to_move: Array[Card], meld: CardSet) -> String:
 	if cards_to_move.is_empty():
 		return ""
+	cards_to_move = _expand_sticky(cards_to_move)
 	var err := _stage_error(cards_to_move, meld)
 	if err != "":
 		return err
@@ -333,6 +335,30 @@ func draw_and_end_turn() -> void:
 	_advance()
 
 # --- Internals ---------------------------------------------------------------
+
+## Grow a move so it drags whole slime clusters: any card in cards_to_move that
+## sits on the table pulls its full sticky_cluster along (see CardSet). Cluster
+## members are emitted contiguously in board order so the cluster keeps its
+## arrangement wherever it lands, which keeps the bonds intact for next time.
+## Hand cards (not on any meld) pass through untouched, so a hand-only play is
+## never affected. The Cute Slime slips her own slime freely, so a player that
+## ignores_sticky is never expanded. Idempotent: expanding an already-whole
+## cluster changes nothing, so it is safe to call over UI moves that expanded.
+func _expand_sticky(cards_to_move: Array[Card]) -> Array[Card]:
+	if current_player().ignores_sticky:
+		return cards_to_move
+	var out: Array[Card] = []
+	for c in cards_to_move:
+		if out.has(c):
+			continue
+		var meld := board.meld_of(c)
+		if meld == null:
+			out.append(c)
+			continue
+		for m in meld.sticky_cluster(c):
+			if not out.has(m):
+				out.append(m)
+	return out
 
 func _move_cards(cards_to_move: Array[Card], dest: CardSet) -> void:
 	var p := current_player()

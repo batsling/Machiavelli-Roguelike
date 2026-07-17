@@ -11,9 +11,11 @@ extends Control
 ## draw 2 cards per turn, at most 13 cards played per turn, all 4 jokers in.
 ## Beat an enemy to advance to the next round (the "New game" button becomes
 ## "Next round"); lose and the run is over ("New run" starts over at round
-## 1). Enemies are placeholders for now — designed enemies with their own
-## mechanics come later. Sandbox settings never apply during a run, so the
-## Settings button is disabled in-game while one is active.
+## 1). Each round faces a designed enemy picked at random from Enemy.roster()
+## — for now the only one is the Cute Slime, who slimes half the hearts, half
+## the diamonds and every joker (slimed cards carry a green splotch and stick to
+## each other, so a run of them moves as one lump). Sandbox settings never apply
+## during a run, so the Settings button is disabled in-game while one is active.
 ##
 ## Table layout: you sit at the bottom; opponents sit around the table showing
 ## the backs of their cards. The first enemy sits directly opposite you at the
@@ -79,13 +81,10 @@ const DRAG_TYPE := "machiavelli_cards"
 const MAX_PLAYERS := 4
 const ENEMY_NAMES := ["Rosso", "Nero", "Bianco"]
 
-## Fixed rules for a roguelike run. The AI values are a placeholder (strong
-## and quick) until designed enemies bring their own profiles and mechanics.
+## Fixed rules for a roguelike run. Each round faces a designed enemy from
+## Enemy.roster(), which brings its own AI profile and mechanics.
 const ROGUE_DRAW_PER_TURN := 2
 const ROGUE_MAX_PLAYS_PER_TURN := 13
-const ROGUE_AI_STRENGTH := 1.0
-const ROGUE_AI_STYLE := 0.0
-const ROGUE_AI_ATTENTION := 1.0
 
 const CARD_SIZE := Vector2(78, 108)  # hand cards
 const CARD_FONT_SIZE := 28
@@ -117,12 +116,17 @@ const COL_CHIP_BG := Color(0.13, 0.14, 0.17)
 const COL_CHIP_ACTIVE := Color(0.93, 0.72, 0.13)
 const COL_JOKER := Color(0.48, 0.20, 0.62)
 const COL_JOKER_BG := Color(0.96, 0.92, 0.98)
+const COL_SLIME := Color(0.44, 0.82, 0.30)      # the slime splotch on a slimed card
+const COL_SLIME_EDGE := Color(0.20, 0.52, 0.16)
 
 enum Mode { SANDBOX, ROGUE }
 
 var gm: GameManager
 var game_mode := Mode.SANDBOX
 var rogue_round := 1
+# The designed enemy faced in the current rogue round (null in sandbox); drives
+# the AI profile and planted the round's mechanics at combat start.
+var current_enemy: Enemy = null
 # Whether the just-finished rogue game was won, i.e. "Next round" is on offer.
 var rogue_round_won := false
 var selected: Array[Card] = []
@@ -194,16 +198,25 @@ func _new_game() -> void:
 	_clear_children(anim_layer)
 	log_box.clear()
 	if game_mode == Mode.ROGUE:
-		var enemy: String = ENEMY_NAMES[(rogue_round - 1) % ENEMY_NAMES.size()]
-		gm.setup(["You", enemy], GameManager.DEFAULT_HAND_SIZE, -1, true)
+		current_enemy = Enemy.random_enemy()
+		gm.setup(["You", current_enemy.display_name], GameManager.DEFAULT_HAND_SIZE, -1, true)
 		gm.draw_per_turn = ROGUE_DRAW_PER_TURN
 		gm.max_hand_size = 0
 		gm.max_plays_per_turn = ROGUE_MAX_PLAYS_PER_TURN
+		# Let the enemy plant its mechanics on the freshly dealt game.
+		current_enemy.on_combat_start(gm)
 		_log("[b]Round %d[/b] — you face %s. Run rules: draw %d per turn, "
-			% [rogue_round, enemy, ROGUE_DRAW_PER_TURN]
+			% [rogue_round, current_enemy.display_name, ROGUE_DRAW_PER_TURN]
 			+ "at most %d cards played per turn, 4 jokers in."
 			% ROGUE_MAX_PLAYS_PER_TURN)
+		if current_enemy is CuteSlime:
+			_log("[b]%s[/b] slimes half the hearts, half the diamonds and every "
+				% current_enemy.display_name
+				+ "joker (green splotch). Slimed cards stick to each other, so a "
+				+ "run of them is one lump — dragging one drags them all. She "
+				+ "oozes freely and tries to seal her jokers inside the slime.")
 	else:
+		current_enemy = null
 		var names: Array = ["You"]
 		for i in enemy_count:
 			names.append(ENEMY_NAMES[i])
@@ -896,6 +909,9 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	b.add_theme_stylebox_override("hover", _card_style(bg, COL_SELECT, maxi(border_w, 2)))
 	b.add_theme_stylebox_override("hover_pressed", _card_style(bg, border, border_w))
 
+	if c.is_sticky():
+		_add_slime_blob(b)
+
 	b.toggled.connect(_on_card_toggled.bind(c))
 	if on_board:
 		b.set_drag_forwarding(_get_card_drag_data.bind(c, b),
@@ -907,6 +923,31 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 			_can_drop_on_hand_card.bind(c), _drop_on_hand_card.bind(c))
 	card_nodes[c] = b
 	return b
+
+## A little green slime splotch pinned to the top-right corner of a card, the
+## visible mark of the Cute Slime's Sticky effect. Non-interactive so it never
+## steals the card's clicks or drags.
+func _add_slime_blob(parent: Control) -> void:
+	const BLOB := 15.0
+	const MARGIN := 3.0
+	var blob := Panel.new()
+	blob.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	blob.anchor_left = 1.0
+	blob.anchor_right = 1.0
+	blob.anchor_top = 0.0
+	blob.anchor_bottom = 0.0
+	blob.offset_left = -(BLOB + MARGIN)
+	blob.offset_right = -MARGIN
+	blob.offset_top = MARGIN
+	blob.offset_bottom = MARGIN + BLOB
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = COL_SLIME
+	sb.border_color = COL_SLIME_EDGE
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(int(BLOB / 2.0))
+	blob.add_theme_stylebox_override("panel", sb)
+	blob.tooltip_text = "Slimed — sticks to adjacent slimed cards; moving one drags the lump."
+	parent.add_child(blob)
 
 func _card_style(bg: Color, border: Color, width: int) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
@@ -988,8 +1029,29 @@ func _get_card_drag_data(_at_position: Vector2, c: Card, source: Button) -> Vari
 		cards.assign(selected)
 	else:
 		cards.append(c)
+	# A slimed card on the table drags its whole cluster; expand the drag so the
+	# preview shows what will actually move (the engine expands again to be sure).
+	cards = _expand_sticky(cards)
 	source.set_drag_preview(_make_drag_preview(cards))
 	return {"type": DRAG_TYPE, "cards": cards}
+
+## Grow a drag set so a slimed table card brings its whole slime cluster along,
+## mirroring GameManager._expand_sticky. Hand cards (not on any meld) are left
+## untouched. Purely for the preview and selection feel — the engine expands
+## again when the move is staged, so this only has to match, not be trusted.
+func _expand_sticky(cards: Array[Card]) -> Array[Card]:
+	var out: Array[Card] = []
+	for c in cards:
+		if out.has(c):
+			continue
+		var meld := gm.board.meld_of(c)
+		if meld == null:
+			out.append(c)
+			continue
+		for m in meld.sticky_cluster(c):
+			if not out.has(m):
+				out.append(m)
+	return out
 
 func _make_drag_preview(cards: Array[Card]) -> Control:
 	var row := HBoxContainer.new()
@@ -1283,8 +1345,11 @@ func _run_ai_turns() -> void:
 		return
 	ai_running = true
 	var gen := game_generation
-	var profile := AIProfile.new(ROGUE_AI_STRENGTH, ROGUE_AI_STYLE, ROGUE_AI_ATTENTION) \
-		if game_mode == Mode.ROGUE else AIProfile.new(ai_strength, ai_style, ai_attention)
+	var in_rogue := game_mode == Mode.ROGUE and current_enemy != null
+	var profile := current_enemy.make_profile() if in_rogue \
+		else AIProfile.new(ai_strength, ai_style, ai_attention)
+	# The designed enemy drives its strategy (e.g. the slime guarding jokers).
+	var enemy_def: Enemy = current_enemy if in_rogue else null
 	highlighted.clear()
 	_refresh()
 	while not gm.is_game_over and gm.current_player().is_opponent:
@@ -1296,7 +1361,7 @@ func _run_ai_turns() -> void:
 			return
 		var played_any := false
 		while true:
-			var move: Dictionary = GreedyAI.plan_move(gm, profile)
+			var move: Dictionary = GreedyAI.plan_move(gm, profile, enemy_def)
 			if move.is_empty():
 				break
 			var moved: Array[Card] = move["cards"]

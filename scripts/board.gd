@@ -19,6 +19,13 @@ func all_cards() -> Array[Card]:
 		out.append_array(m.cards)
 	return out
 
+## The meld currently holding this card, or null if it is not on the table.
+func meld_of(card: Card) -> CardSet:
+	for m in melds:
+		if m.cards.has(card):
+			return m
+	return null
+
 func remove_card(card: Card) -> bool:
 	for m in melds:
 		if m.cards.has(card):
