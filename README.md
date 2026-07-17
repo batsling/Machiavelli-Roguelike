@@ -26,9 +26,18 @@ health/gold, encounters) will be built on.
   end your turn.
 - **Choosing what a joker stands for**: some groups leave the joker a genuine
   choice — a set of three is missing two suits, and a spare joker on a run could
-  extend either end. Right-click the joker on your turn to pick from the valid
-  options; inner run gaps are forced, so those offer no choice. The pick sticks
-  with the joker until it returns to a hand.
+  extend either end. Right-click the joker to pick from the valid options;
+  inner run gaps are forced, so those offer no choice. The choice is open only
+  while the joker is freshly placed — until the turn that played it is
+  committed.
+- **Joker locking**: when the turn that placed a joker ends, the joker locks to
+  the card it was placed as. From then on every rule treats it as exactly that
+  card — anyone may rearrange it into other groups, but it is no longer a
+  wildcard — until the swap sends it back to a hand, where it becomes a free
+  joker again.
+- **Max hand size** (optional, settings: none or 10-20): drawing stops at the
+  cap, so trying to draw on a full hand is a pass. A full round of passes ends
+  the game as usual, fewest cards winning.
 - **Opening rule** (applies to every player, human and AI): until you have laid
   down at least one valid group built *only* from your own hand, you may not add
   cards to other groups or take cards from them. Laying your own valid group
@@ -100,6 +109,8 @@ The **Settings** button opens a dialog with:
   enemy turn.
 - **Enemies** (1-3) — takes effect on the next new game.
 - **Cards drawn per turn** (1-3) — applies immediately, to everyone.
+- **Max hand size** (none, or 10-20) — applies immediately, to everyone;
+  drawing stops at the cap and a draw on a full hand becomes a pass.
 - **Include 4 jokers** — takes effect on the next new game.
 
 ## Layout
@@ -137,8 +148,8 @@ The **Settings** button opens a dialog with:
   menu, Balatro-style hand ordering, return-to-hand for cards staged this
   turn, the settings dialog
 - `tests/smoke_test.gd` — headless AI-vs-AI smoke test plus unit tests for the
-  joker rules, the joker swap, joker stand-in choice, and the AI's safe
-  stand-in picking
+  joker rules, the joker swap, joker stand-in choice, joker locking, the AI's
+  safe stand-in picking, and the hand cap
 
 ## Headless smoke test
 

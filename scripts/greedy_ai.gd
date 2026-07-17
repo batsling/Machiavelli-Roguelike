@@ -156,7 +156,7 @@ static func _choose_joker_reps(gm: GameManager, meld: CardSet) -> void:
 		return a["suit"] < b["suit"])
 	var i := 0
 	for c in meld.cards:
-		if c.is_joker:
+		if c.is_joker and c.joker_lock_rank == 0:
 			var alt: Dictionary = scored[mini(i, scored.size() - 1)]
 			c.joker_pref_rank = alt["rank"]
 			c.joker_pref_suit = alt["suit"]

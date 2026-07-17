@@ -22,6 +22,10 @@ func _init() -> void:
 		failures += 1
 	if not _test_safe_joker_reps():
 		failures += 1
+	if not _test_joker_lock():
+		failures += 1
+	if not _test_hand_cap():
+		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
 			failures += 1
@@ -43,6 +47,9 @@ func _init() -> void:
 	for seed_value in 5:
 		if not _play_game(seed_value, "draw-3 game", false, null, 3):
 			failures += 1
+	for seed_value in 5:
+		if not _play_game(seed_value, "capped game", false, null, 1, 15):
+			failures += 1
 	if failures == 0:
 		print("SMOKE TEST OK: all games completed cleanly")
 		quit(0)
@@ -61,6 +68,36 @@ func _joker() -> Card:
 	c.suit = "joker"
 	c.is_joker = true
 	return c
+
+## With a hand cap, drawing stops at the cap and a draw attempted on a full
+## hand counts as a pass; a full round of full-hand passes ends the game.
+func _test_hand_cap() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 5)
+	gm.draw_per_turn = 3
+	gm.max_hand_size = 14
+	var p := gm.current_player()
+	gm.draw_and_end_turn()
+	if p.hand.size() != 14:
+		printerr("hand cap: draw-3 should stop at the cap of 14, got %d" % p.hand.size())
+		ok = false
+	gm.draw_and_end_turn()  # P1 draws to 14 too
+	gm.draw_and_end_turn()  # P0 is full: this is a pass
+	if p.hand.size() != 14:
+		printerr("hand cap: a full hand should not draw, got %d" % p.hand.size())
+		ok = false
+	elif gm.is_game_over:
+		printerr("hand cap: one pass should not end the game")
+		ok = false
+	gm.draw_and_end_turn()  # P1 is full too: second pass in the round — game ends
+	if not gm.is_game_over:
+		printerr("hand cap: a full round of full-hand passes should end the game")
+		ok = false
+	gm.free()
+	if ok:
+		print("hand cap test OK")
+	return ok
 
 ## Cards staged from the hand this turn can be taken back into the hand;
 ## cards still in the hand (or never played) cannot be "returned".
@@ -228,6 +265,78 @@ func _test_safe_joker_reps() -> bool:
 		print("safe joker reps test OK")
 	return ok
 
+## Committing a turn locks every joker on the table to what it was placed
+## as: it is then treated as exactly that card (not a wildcard) when
+## rearranged, keeps its face even in a broken meld, and only unlocks when
+## the swap takes it off the board — with undo restoring the lock.
+func _test_joker_lock() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 21, true)
+	var p := gm.current_player()
+	p.has_opened = true
+	var joker := _joker()
+	var played: Array[Card] = [_card(5, "hearts"), _card(6, "hearts"), joker]
+	for c: Card in played:
+		p.hand.append(c)
+		gm._hand_snapshot.append(c)
+	if gm.move_cards_to_new_meld(played) != "":
+		printerr("lock test: staging the joker run was rejected")
+		ok = false
+	elif joker.joker_lock_rank != 0:
+		printerr("lock test: joker locked before the turn was committed")
+		ok = false
+	elif gm.commit_turn() != "":
+		printerr("lock test: committing the joker run failed")
+		ok = false
+	elif joker.joker_lock_rank != 7 or joker.joker_lock_suit != "hearts":
+		printerr("lock test: joker should lock as 7 of hearts at commit, got %s"
+			% joker.rep_label())
+		ok = false
+	if not ok:
+		gm.free()
+		return false
+	# Locked, the joker is exactly the 7 of hearts wherever it goes.
+	var as_seven: Array[Card] = [joker, _card(8, "hearts"), _card(9, "hearts")]
+	if not Rules.is_valid_meld(as_seven):
+		printerr("lock test: locked joker should count as 7 of hearts in a new run")
+		ok = false
+	var as_wild: Array[Card] = [joker, _card(9, "clubs"), _card(9, "spades")]
+	if Rules.is_valid_meld(as_wild):
+		printerr("lock test: locked joker must no longer act as a wildcard")
+		ok = false
+	var broken: Array[Card] = [joker, _card(2, "clubs")]
+	Rules.assign_jokers(broken)
+	if joker.joker_rank != 7 or joker.joker_suit != "hearts":
+		printerr("lock test: locked joker lost its face in a broken meld")
+		ok = false
+	if not Rules.joker_alternatives(gm.board.melds[0].cards).is_empty():
+		printerr("lock test: locked joker should offer no alternatives")
+		ok = false
+	# The swap unlocks it; undoing the swap locks it again.
+	var p1 := gm.current_player()
+	p1.has_opened = true
+	var seven := _card(7, "hearts")
+	p1.hand.append(seven)
+	gm._hand_snapshot.append(seven)
+	Rules.assign_jokers(gm.board.melds[0].cards)
+	if gm.swap_joker(seven, joker, gm.board.melds[0]) != "":
+		printerr("lock test: swapping the real card for the locked joker failed")
+		ok = false
+	elif joker.joker_lock_rank != 0:
+		printerr("lock test: swap should unlock the joker")
+		ok = false
+	elif not gm.undo_action():
+		printerr("lock test: swap was not undoable")
+		ok = false
+	elif joker.joker_lock_rank != 7 or joker.joker_lock_suit != "hearts":
+		printerr("lock test: undo should restore the joker's lock")
+		ok = false
+	gm.free()
+	if ok:
+		print("joker lock test OK")
+	return ok
+
 ## A board joker standing for a specific card can be swapped for the real
 ## card from the hand; the swap counts as playing one card (so a swap alone
 ## can end the turn) and is undoable.
@@ -297,10 +406,11 @@ func _reassign_and_swap(gm: GameManager, hand_card: Card, joker: Card) -> bool:
 	return gm.swap_joker(hand_card, joker, gm.board.melds[0]) == ""
 
 func _play_game(seed_value: int, label: String, include_jokers := false,
-		profile: AIProfile = null, draw_per_turn := 1) -> bool:
+		profile: AIProfile = null, draw_per_turn := 1, max_hand_size := 0) -> bool:
 	var gm := GameManager.new()
 	gm.setup(["P0", "P1", "P2"], 13, seed_value, include_jokers)
 	gm.draw_per_turn = draw_per_turn
+	gm.max_hand_size = max_hand_size
 	var total_cards := 108 if include_jokers else 104
 	var turns := 0
 	while not gm.is_game_over and turns < MAX_TURNS:

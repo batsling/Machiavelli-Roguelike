@@ -46,6 +46,10 @@ var is_game_over := false
 ## the settings menu). Drawing stops early when the stock runs dry; a turn
 ## only counts as a pass when zero cards could be drawn.
 var draw_per_turn := 1
+## Optional hand cap (0 = none, 10-20 from the settings menu). Drawing stops
+## at the cap, so a draw attempted with a full hand is a pass; a full round
+## of passes still ends the game with fewest cards winning.
+var max_hand_size := 0
 
 # Staging state for the current turn. _hand_snapshot is the current player's
 # hand at the start of the turn; swap_joker() appends to it in place (the
@@ -118,6 +122,7 @@ func undo_action() -> bool:
 	current_player().hand.assign(snap["hand"])
 	board.restore(snap["board"])
 	_hand_snapshot.assign(snap["snapshot"])
+	_restore_locks(snap["locks"])
 	board_changed.emit()
 	return true
 
@@ -133,6 +138,7 @@ func reset_turn() -> void:
 	current_player().hand.assign(first["hand"])
 	board.restore(first["board"])
 	_hand_snapshot.assign(first["snapshot"])
+	_restore_locks(first["locks"])
 	_undo_stack.clear()
 	board_changed.emit()
 
@@ -202,6 +208,8 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	joker.joker_suit = ""
 	joker.joker_pref_rank = 0
 	joker.joker_pref_suit = ""
+	joker.joker_lock_rank = 0
+	joker.joker_lock_suit = ""
 	board_changed.emit()
 	return ""
 
@@ -261,6 +269,15 @@ func commit_turn() -> String:
 	if not p.has_opened and not _staged_open_meld_exists():
 		return "To open you must lay down at least one valid group " \
 			+ "built only from your own hand."
+	# The turn is final: every joker on the table locks to what it was placed
+	# as. From now on it is treated as exactly that card — no longer a
+	# wildcard — until the joker swap sends it back to a hand.
+	for m in board.melds:
+		Rules.assign_jokers(m.cards)
+		for c in m.cards:
+			if c.is_joker and c.joker_lock_rank == 0 and c.joker_rank > 0:
+				c.joker_lock_rank = c.joker_rank
+				c.joker_lock_suit = c.joker_suit
 	_consecutive_passes = 0
 	p.has_opened = true
 	turn_committed.emit(p, cards_played_this_turn())
@@ -277,6 +294,8 @@ func draw_and_end_turn() -> void:
 	var p := current_player()
 	var drew := 0
 	for _i in draw_per_turn:
+		if max_hand_size > 0 and p.hand.size() >= max_hand_size:
+			break
 		var card := deck.draw()
 		if card == null:
 			break
@@ -312,7 +331,22 @@ func _push_undo() -> void:
 		"hand": current_player().hand.duplicate(),
 		"board": board.snapshot(),
 		"snapshot": _hand_snapshot.duplicate(),
+		"locks": _joker_locks(),
 	})
+
+## Joker locks live on the cards, not in the board's card lists, so undoing a
+## swap must put the lock back explicitly.
+func _joker_locks() -> Dictionary:
+	var out := {}
+	for c in board.all_cards():
+		if c.is_joker:
+			out[c] = [c.joker_lock_rank, c.joker_lock_suit]
+	return out
+
+func _restore_locks(locks: Dictionary) -> void:
+	for c: Card in locks:
+		c.joker_lock_rank = locks[c][0]
+		c.joker_lock_suit = locks[c][1]
 
 func _begin_turn() -> void:
 	var p := current_player()

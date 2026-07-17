@@ -47,12 +47,17 @@ extends Control
 ## The Settings dialog holds: the enemy AI graph (vertical = weak→strong,
 ## horizontal = quick→conservative; applies from the next enemy turn), the
 ## number of enemies (1-3, next game), cards drawn per turn (1-3, applies
-## immediately), and the joker toggle (next game). Jokers (★) count as any
+## immediately), the max hand size (none, or 10-20 — drawing stops at the
+## cap and a draw on a full hand is a pass; applies immediately), and the
+## joker toggle (next game). Jokers (★) count as any
 ## card; a joker in a valid group shows the card it currently stands for
 ## (e.g. ★7♥), and if you hold that exact card you can drop it on the joker
 ## to swap it out and take the wildcard into your hand. When a group leaves
 ## the joker a choice (say, two missing suits in a set of three), right-click
-## the joker on your turn to pick which card it stands for.
+## the joker on your turn to pick which card it stands for — but only until
+## the turn that placed it is committed: from then on the joker is locked to
+## that card (no longer a wildcard, even when rearranged) until the swap
+## sends it back to a hand.
 
 const AI_THINK_DELAY := 0.6
 const AI_MOVE_DELAY := 0.5
@@ -114,6 +119,7 @@ var ai_strength := 1.0    # 0 = weak, 1 = strong
 var ai_style := 0.0       # 0 = quick, 1 = conservative
 var enemy_count := 2      # 1-3
 var draw_per_turn := 1    # 1-3
+var max_hand_size := 0    # 0 = no cap, otherwise 10-20
 var include_jokers := false
 
 var game_root: VBoxContainer
@@ -163,6 +169,7 @@ func _new_game() -> void:
 		names.append(ENEMY_NAMES[i])
 	gm.setup(names, GameManager.DEFAULT_HAND_SIZE, -1, include_jokers)
 	gm.draw_per_turn = draw_per_turn
+	gm.max_hand_size = max_hand_size
 	log_box.clear()
 	_set_status("Your turn. Drag cards to the table (or click to select) — "
 		+ "open by laying down a valid group from your hand.")
@@ -318,7 +325,7 @@ func _build_layout() -> void:
 
 	settings_btn = Button.new()
 	settings_btn.text = "Settings"
-	settings_btn.tooltip_text = "Enemy AI, enemy count, draw count and jokers"
+	settings_btn.tooltip_text = "Enemy AI, enemy count, draw count, hand cap and jokers"
 	settings_btn.pressed.connect(_on_settings_pressed)
 	actions.add_child(settings_btn)
 
@@ -447,6 +454,7 @@ func _build_settings_dialog() -> void:
 		_on_enemy_count_changed))
 	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, draw_per_turn,
 		_on_draw_count_changed))
+	col.add_child(_make_hand_cap_row())
 
 	var joker_check := CheckBox.new()
 	joker_check.text = "Include 4 jokers — wildcards (next game)"
@@ -469,6 +477,26 @@ func _make_spin_row(text: String, minimum: int, maximum: int, value: int,
 	spin.value = value
 	spin.value_changed.connect(on_changed)
 	row.add_child(spin)
+	return row
+
+## Max hand size: "None" or 10-20. With a cap, drawing stops at the cap and a
+## draw attempted on a full hand becomes a pass. Applies immediately.
+func _make_hand_cap_row() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var lbl := Label.new()
+	lbl.text = "Max hand size:"
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(lbl)
+	var opt := OptionButton.new()
+	opt.add_item("None", 0)
+	for v in range(10, 21):
+		opt.add_item(str(v), v)
+	opt.select(0 if max_hand_size == 0 else max_hand_size - 9)
+	opt.item_selected.connect(func(idx: int) -> void:
+		max_hand_size = opt.get_item_id(idx)
+		gm.max_hand_size = max_hand_size)
+	row.add_child(opt)
 	return row
 
 func _on_settings_pressed() -> void:
@@ -678,6 +706,8 @@ func _refresh_hand() -> void:
 			c.joker_suit = ""
 			c.joker_pref_rank = 0
 			c.joker_pref_suit = ""
+			c.joker_lock_rank = 0
+			c.joker_lock_suit = ""
 	for c in hand:
 		hand_box.add_child(_make_card_button(c))
 
@@ -720,7 +750,11 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	if c.is_joker:
 		font_col = COL_JOKER
 		if not b.disabled:
-			if c.joker_rank > 0:
+			if c.joker_lock_rank > 0:
+				b.tooltip_text = ("Joker placed as %s — it stays that card until " \
+					+ "it leaves the table. Hold the real %s? Drop it on this " \
+					+ "joker to swap it into your hand.") % [c.rep_label(), c.rep_label()]
+			elif c.joker_rank > 0:
 				b.tooltip_text = "Joker standing in for %s. Hold the real %s? " \
 					% [c.rep_label(), c.rep_label()] \
 					+ "Drop it on this joker to swap it into your hand."
@@ -974,7 +1008,7 @@ func _on_joker_gui_input(event: InputEvent, joker: Card, meld: CardSet) -> void:
 		_show_joker_menu(joker, meld)
 
 func _show_joker_menu(joker: Card, meld: CardSet) -> void:
-	if not _card_is_interactive(meld):
+	if not _card_is_interactive(meld) or joker.joker_lock_rank > 0:
 		return
 	Rules.assign_jokers(meld.cards)
 	var alts := Rules.joker_alternatives(meld.cards)
@@ -1098,7 +1132,8 @@ func _on_card_drawn(p: PlayerState, card: Card) -> void:
 		_log("%s drew a card." % p.display_name)
 
 func _on_player_passed(p: PlayerState) -> void:
-	_log("%s passed (stock is empty)." % p.display_name)
+	var why := "stock is empty" if gm.deck.is_empty() else "hand is full"
+	_log("%s passed (%s)." % [p.display_name, why])
 
 func _on_game_over(winners: Array) -> void:
 	var names := PackedStringArray()

@@ -40,6 +40,13 @@ var joker_suit: String = ""
 var joker_pref_rank: int = 0
 var joker_pref_suit: String = ""
 
+# Once a turn that placed this joker is committed, the joker locks to the
+# card it was placed as (GameManager.commit_turn): from then on the rules
+# treat it as exactly that card — rearrange it anywhere, it is no longer a
+# wildcard — until it returns to a hand via the joker swap. 0/"" = free.
+var joker_lock_rank: int = 0
+var joker_lock_suit: String = ""
+
 # Tracks whether a Brittle card has already used its one move.
 var has_moved: bool = false
 
