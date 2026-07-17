@@ -85,6 +85,7 @@ const ROGUE_DRAW_PER_TURN := 2
 const ROGUE_MAX_PLAYS_PER_TURN := 13
 const ROGUE_AI_STRENGTH := 1.0
 const ROGUE_AI_STYLE := 0.0
+const ROGUE_AI_ATTENTION := 1.0
 
 const CARD_SIZE := Vector2(78, 108)  # hand cards
 const CARD_FONT_SIZE := 28
@@ -142,6 +143,7 @@ var opponent_backs := {}
 # and jokers take effect on the next new game.
 var ai_strength := 1.0    # 0 = weak, 1 = strong
 var ai_style := 0.0       # 0 = quick, 1 = conservative
+var ai_attention := 1.0   # 0 = oblivious, 1 = attentive
 var enemy_count := 2      # 1-3
 var draw_per_turn := 1    # 1-3
 var max_hand_size := 0    # 0 = no cap, otherwise 10-20
@@ -170,7 +172,6 @@ var draw_btn: Button
 var settings_btn: Button
 var new_game_btn: Button
 var settings_dialog: AcceptDialog
-var ai_graph: AIGraph
 var ai_desc_label: Label
 var anim_layer: Control
 
@@ -481,14 +482,22 @@ func _build_settings_dialog() -> void:
 	settings_dialog.add_child(col)
 
 	var ai_label := Label.new()
-	ai_label.text = "Enemy AI — click the graph: up = stronger, right = more conservative."
+	ai_label.text = "Enemy AI — three independent dials for the opponents' brains."
 	ai_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(ai_label)
 
-	ai_graph = AIGraph.new()
-	ai_graph.set_values(ai_style, ai_strength)
-	ai_graph.value_changed.connect(_on_ai_graph_changed)
-	col.add_child(ai_graph)
+	col.add_child(_make_ai_slider_row("Skill", "Weak", "Strong", ai_strength,
+		func(v: float) -> void:
+			ai_strength = v
+			_refresh_ai_desc()))
+	col.add_child(_make_ai_slider_row("Style", "Quick", "Conservative", ai_style,
+		func(v: float) -> void:
+			ai_style = v
+			_refresh_ai_desc()))
+	col.add_child(_make_ai_slider_row("Attention", "Oblivious", "Attentive", ai_attention,
+		func(v: float) -> void:
+			ai_attention = v
+			_refresh_ai_desc()))
 
 	ai_desc_label = Label.new()
 	ai_desc_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.7))
@@ -573,23 +582,61 @@ func _on_draw_count_changed(value: float) -> void:
 func _on_jokers_toggled(on: bool) -> void:
 	include_jokers = on
 
-func _on_ai_graph_changed(style: float, strength: float) -> void:
-	ai_style = style
-	ai_strength = strength
+## A titled 0..1 slider with its two end labels underneath. `on_changed` gets
+## the new value. Used for the three enemy-AI dials.
+func _make_ai_slider_row(title: String, left: String, right: String,
+		value: float, on_changed: Callable) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 2)
+	var head := Label.new()
+	head.text = title
+	box.add_child(head)
+	var slider := HSlider.new()
+	slider.min_value = 0.0
+	slider.max_value = 1.0
+	slider.step = 0.01
+	slider.value = value
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.value_changed.connect(on_changed)
+	box.add_child(slider)
+	var ends := HBoxContainer.new()
+	var l := Label.new()
+	l.text = left
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.add_theme_color_override("font_color", Color(1, 1, 1, 0.5))
+	l.add_theme_font_size_override("font_size", 12)
+	var r := Label.new()
+	r.text = right
+	r.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	r.add_theme_color_override("font_color", Color(1, 1, 1, 0.5))
+	r.add_theme_font_size_override("font_size", 12)
+	ends.add_child(l)
+	ends.add_child(r)
+	box.add_child(ends)
+	return box
+
+func _refresh_ai_desc() -> void:
 	ai_desc_label.text = _ai_description()
 
 func _ai_description() -> String:
-	var skill := "strong"
-	if ai_strength < 0.4:
+	var skill := "capable"
+	if ai_strength < 0.35:
 		skill = "weak"
-	elif ai_strength < 0.75:
-		skill = "capable"
+	elif ai_strength >= AIProfile.SMART_BRAIN_SKILL:
+		skill = "cutthroat"
+	elif ai_strength >= 0.7:
+		skill = "strong"
 	var pace := "quick"
 	if ai_style >= 0.75:
 		pace = "conservative"
 	elif ai_style >= 0.4:
 		pace = "balanced"
-	return "Enemies play %s and %s. Applies from their next turn." % [skill, pace]
+	var focus := "attentive"
+	if ai_attention < 0.4:
+		focus = "oblivious"
+	elif ai_attention < 0.75:
+		focus = "distractible"
+	return "Enemies play %s, %s and %s. Applies from their next turn." % [skill, pace, focus]
 
 func _make_seat() -> VBoxContainer:
 	var seat := VBoxContainer.new()
@@ -1236,8 +1283,8 @@ func _run_ai_turns() -> void:
 		return
 	ai_running = true
 	var gen := game_generation
-	var profile := AIProfile.new(ROGUE_AI_STRENGTH, ROGUE_AI_STYLE) \
-		if game_mode == Mode.ROGUE else AIProfile.new(ai_strength, ai_style)
+	var profile := AIProfile.new(ROGUE_AI_STRENGTH, ROGUE_AI_STYLE, ROGUE_AI_ATTENTION) \
+		if game_mode == Mode.ROGUE else AIProfile.new(ai_strength, ai_style, ai_attention)
 	highlighted.clear()
 	_refresh()
 	while not gm.is_game_over and gm.current_player().is_opponent:

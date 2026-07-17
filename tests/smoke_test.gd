@@ -34,18 +34,23 @@ func _init() -> void:
 	for seed_value in 10:
 		if not _play_game(seed_value, "joker game", true):
 			failures += 1
-	# Strong AIs pick safe joker stand-ins; make sure games stay clean.
+	# Top-skill AIs run the deck-counting smart brain and pick safe joker
+	# stand-ins; make sure their games stay clean.
 	for seed_value in 5:
-		var strong := AIProfile.new(1.0, 0.0, seed_value)
+		var strong := AIProfile.new(1.0, 0.0, 1.0, seed_value)
 		if not _play_game(seed_value, "smart joker game", true, strong):
 			failures += 1
-	# The four corners of the AI graph, seeded so replays are exact.
-	for corner: Array in [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]:
-		for seed_value in 5:
-			var profile := AIProfile.new(corner[0], corner[1], seed_value)
-			var label := "profile(%.0f,%.0f) game" % [corner[0], corner[1]]
-			if not _play_game(seed_value, label, false, profile):
-				failures += 1
+	# Every corner of the three sliders (skill × style × attention), seeded so
+	# replays are exact. Covers the smart brain (skill 1), the greedy tiers
+	# (skill 0), and the blunder roll (attention 0).
+	for strength: float in [0.0, 1.0]:
+		for style: float in [0.0, 1.0]:
+			for attention: float in [0.0, 1.0]:
+				for seed_value in 3:
+					var profile := AIProfile.new(strength, style, attention, seed_value)
+					var label := "profile(%.0f,%.0f,%.0f) game" % [strength, style, attention]
+					if not _play_game(seed_value, label, false, profile):
+						failures += 1
 	for seed_value in 5:
 		if not _play_game(seed_value, "draw-3 game", false, null, 3):
 			failures += 1
