@@ -60,6 +60,8 @@ static func take_turn(gm: GameManager, profile: AIProfile = null) -> void:
 static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 	if profile != null and profile.misses_move():
 		return {}
+	if profile != null and profile.uses_smart_brain():
+		return _plan_smart_move(gm, profile)
 	# Cards still playable under the play cap this turn (-1 = unlimited).
 	# Every planned move stays within it, or staging would reject the move.
 	var budget := -1
@@ -128,6 +130,197 @@ static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 				return {"cards": combo, "dest": null,
 					"text": "takes %s from the table to build %s" % [t.label(), _cards_text(combo)]}
 	return {}
+
+# --- Smart brain (top skill tier) ------------------------------------------
+# Below the smart-brain threshold the AI grabs the first legal move it finds
+# (plan_move above). At the top it instead enumerates every legal move for the
+# turn and plays the highest-scoring one, using the same deck-count math that
+# picks safe joker stand-ins to reason about what opponents can do next.
+
+const W_PROGRESS := 10.0     # per own hand card the move commits
+const GO_OUT_BONUS := 100.0  # emptying the hand this move
+const JOKER_STEAL_BONUS := 30.0  # pulling a joker off another meld into ours
+const W_FEED := 2.0          # per unseen copy an open end hands to opponents
+const W_BLOCK := 6.0         # holding a card still useful in hand beats dumping it
+
+## Enumerate every legal move for the current player, score each, and return
+## the best (or {} to hold and draw when nothing scores positive). Mirrors
+## plan_move's move families and rules (opening gate, play cap) but compares
+## candidates instead of taking the first.
+static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
+	var budget := -1
+	if gm.max_plays_per_turn > 0:
+		budget = gm.max_plays_per_turn - gm.cards_played_this_turn()
+		if budget <= 0:
+			return {}
+	var hand := gm.current_player().hand
+	# Once the endgame is close the AI stops denying and blocking and simply
+	# races to empty its hand.
+	var pressure := _under_pressure_smart(gm)
+	var candidates: Array[Dictionary] = []
+	# 1. Complete meld straight from hand (respects the conservative opening gate).
+	var meld := _find_meld(hand)
+	if not meld.is_empty() and (budget < 0 or meld.size() <= budget) \
+			and _will_lay_meld(gm, meld, profile):
+		candidates.append({"cards": meld, "dest": null,
+			"text": "lays down %s" % _cards_text(meld)})
+	if gm.current_player_is_open():
+		# 2. Single-card lay-offs.
+		for c in hand:
+			for m in gm.board.melds:
+				var cand: Array[Card] = m.cards.duplicate()
+				cand.append(c)
+				if Rules.is_valid_meld(cand):
+					var single: Array[Card] = [c]
+					candidates.append({"cards": single, "dest": m,
+						"text": "adds %s to %s" % [c.label(), _cards_text(m.cards)]})
+		# 3. Two-card lay-offs onto one meld.
+		if budget < 0 or budget >= 2:
+			for i in hand.size():
+				for j in range(i + 1, hand.size()):
+					var a := hand[i]
+					var b := hand[j]
+					for m in gm.board.melds:
+						var cand: Array[Card] = m.cards.duplicate()
+						cand.append(a)
+						cand.append(b)
+						if Rules.is_valid_meld(cand):
+							var pair: Array[Card] = [a, b]
+							candidates.append({"cards": pair, "dest": m,
+								"text": "adds %s to %s" % [_cards_text(pair), _cards_text(m.cards)]})
+		# 4. Rearrange: borrow one card (a joker counts as a steal) to finish a
+		# new meld together with hand cards.
+		for m in gm.board.melds:
+			for t in m.cards:
+				var rest: Array[Card] = m.cards.duplicate()
+				rest.erase(t)
+				if not Rules.is_valid_meld(rest):
+					continue
+				var pool: Array[Card] = hand.duplicate()
+				pool.append(t)
+				var combo := _find_meld(pool)
+				if combo.is_empty() or not combo.has(t):
+					continue
+				if budget >= 0 and combo.size() - 1 > budget:
+					continue
+				candidates.append({"cards": combo, "dest": null, "borrowed": t,
+					"text": "takes %s from the table to build %s" % [t.label(), _cards_text(combo)]})
+	var best: Dictionary = {}
+	var best_score := 0.0  # hold and draw rather than play a net-negative move
+	for cand in candidates:
+		var score := _score_move(gm, cand, hand, pressure)
+		if score > best_score:
+			best_score = score
+			best = cand
+	return best
+
+## Value of a candidate move. Own progress dominates (and going out trumps
+## everything); once the game is open but not yet under endgame pressure the AI
+## also rewards stealing jokers, penalizes handing opponents an open end, and
+## prefers to keep cards still useful in hand rather than dump them.
+static func _score_move(gm: GameManager, move: Dictionary, hand: Array[Card],
+		pressure: bool) -> float:
+	var cards: Array[Card] = move["cards"]
+	var dest: CardSet = move["dest"]
+	var borrowed: Card = move.get("borrowed", null)
+	var from_hand := cards.size() - (1 if borrowed != null else 0)
+	var score := from_hand * W_PROGRESS
+	if hand.size() - from_hand == 0:
+		score += GO_OUT_BONUS
+	if borrowed != null and borrowed.is_joker:
+		score += JOKER_STEAL_BONUS
+	if pressure:
+		return score
+	# The meld this move leaves on the table, whose open ends opponents inherit.
+	var result: Array[Card] = cards.duplicate()
+	if dest != null:
+		result = dest.cards + cards
+	score -= W_FEED * _open_end_exposure(gm, result)
+	# Blocking: dumping a lone/paired card that still pairs up with the rest of
+	# the hand (or a joker) is worth less than holding it for a bigger play.
+	if dest != null:
+		var rest: Array[Card] = hand.duplicate()
+		for c in cards:
+			rest.erase(c)
+		for c in cards:
+			if _seems_important(c, rest):
+				score -= W_BLOCK
+	return score
+
+## Copies of the cards that would extend this meld's open ends and are still
+## unseen — i.e. what an opponent could hold to lay off onto it next turn. A
+## set counts its one missing suit; a run counts the ranks just past each end.
+## Uses natural/locked-joker identities only, so it is an estimate for tie-
+## breaking, not an exact reading of a joker-filled meld.
+static func _open_end_exposure(gm: GameManager, cards: Array[Card]) -> int:
+	if Rules.is_valid_set(cards):
+		if cards.size() >= Rules.MAX_SET_SIZE:
+			return 0
+		var rank := _meld_fixed_rank(cards)
+		if rank <= 0:
+			return 0
+		var present := {}
+		for c in cards:
+			var s := _fixed_suit(c)
+			if s != "":
+				present[s] = true
+		var worst := 0
+		for s in Deck.SUITS:
+			if not present.has(s):
+				worst = maxi(worst, _unseen_copies(gm, rank, s))
+		return worst
+	if not Rules.is_valid_run(cards):
+		return 0
+	var suit := ""
+	var lo := 99
+	var hi := -99
+	for c in cards:
+		var s := _fixed_suit(c)
+		if s == "":
+			continue  # free joker: its slot shifts the ends, skip for the estimate
+		suit = s
+		var r := _fixed_rank(c)
+		lo = mini(lo, r)
+		hi = maxi(hi, r)
+	if suit == "" or lo > hi:
+		return 0
+	var exposure := 0
+	if lo - 1 >= 1:
+		exposure += _unseen_copies(gm, lo - 1, suit)
+	if hi + 1 <= 13:
+		exposure += _unseen_copies(gm, hi + 1, suit)
+	return exposure
+
+## Natural rank of a card, or the rank a locked joker stands for (0 for a free
+## joker, which has no fixed identity yet).
+static func _fixed_rank(c: Card) -> int:
+	if not c.is_joker:
+		return c.rank
+	return c.joker_lock_rank  # 0 when the joker is still a free wildcard
+
+static func _fixed_suit(c: Card) -> String:
+	if not c.is_joker:
+		return c.suit
+	return c.joker_lock_suit  # "" when the joker is still a free wildcard
+
+## Fixed rank shared by a set's fixed cards (the rank a lone extra card must
+## match); 0 when the set has no fixed card.
+static func _meld_fixed_rank(cards: Array[Card]) -> int:
+	for c in cards:
+		var r := _fixed_rank(c)
+		if r > 0:
+			return r
+	return 0
+
+## The endgame is close enough that a smart AI stops sandbagging and denying and
+## races to go out. Notices earlier than the baseline _under_pressure.
+static func _under_pressure_smart(gm: GameManager) -> bool:
+	if gm.deck.size() <= gm.players.size() * 3:
+		return true
+	for p in gm.players:
+		if p != gm.current_player() and p.hand.size() <= 5:
+			return true
+	return false
 
 ## Apply a move produced by plan_move() to the (staged) game state. A capable
 ## profile also points any jokers in the touched meld at safe stand-ins.

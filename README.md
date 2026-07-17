@@ -96,17 +96,26 @@ since you last acted; they clear when the enemies start their next round.
 
 The **Settings** button opens a dialog with:
 
-- **Enemy AI graph** — click to place the marker. Vertical axis is skill
-  (top = strong, bottom = weak), horizontal is style (left = quick,
-  right = conservative). A weak AI regularly misses plays it could have made; a
-  strong one sees single- and two-card lay-offs plus table rearrangements, and
-  points the jokers it plays at safe stand-ins — cards whose copies are mostly
-  already visible on the table (or in its own hand), so the other players are
-  unlikely to hold the exact card needed to swap-claim the joker. A quick AI
-  dumps everything as soon as possible; a conservative one sits on its opening
-  meld until it's big enough (unless the endgame forces its hand) and holds
-  cards that still pair up with the rest of its hand. Applies from the next
-  enemy turn.
+- **Enemy AI** — three independent 0–1 sliders:
+  - **Skill** (weak → strong) — how much of the move space the AI searches. It
+    ramps up through single lay-offs, two-card lay-offs, safe joker stand-ins,
+    and table rearrangements. At the top (**cutthroat**) it switches from
+    grabbing the first legal move to a deck-counting brain that scores every
+    legal move and plays the smartest one: it steals exposed jokers off the
+    table into its own melds, avoids handing opponents an open end to lay off
+    onto, holds cards worth keeping, and drops all of that to race for the
+    finish once the endgame is close.
+  - **Style** (quick → conservative) — a quick AI dumps everything as soon as
+    possible; a conservative one sits on its opening meld until it's big enough
+    (unless the endgame forces its hand) and holds cards that still pair up with
+    the rest of its hand.
+  - **Attention** (oblivious → attentive) — purely the blunder roll: an
+    oblivious AI regularly overlooks a play it could have made (cutting its
+    streak short, or missing a turn); an attentive one never forgets. It is
+    independent of skill — a strong but oblivious AI sees the clever plays yet
+    keeps fumbling the obvious ones.
+
+  Applies from the next enemy turn.
 - **Enemies** (1-3) — takes effect on the next new game.
 - **Cards drawn per turn** (1-3) — applies immediately, to everyone.
 - **Max hand size** (none, or 10-20) — applies immediately, to everyone;
@@ -135,12 +144,13 @@ The **Settings** button opens a dialog with:
   rearrangements (borrows one card from a group, when the leftover group stays
   valid, to complete a new meld with hand cards); picks safe joker stand-ins at
   higher skill; respects the opening rule; produces one move at a time so the
-  UI can animate enemy turns
-- `scripts/ai_profile.gd` — `AIProfile`: the skill/style knobs GreedyAI consults
-  (miss chance, search depth, opening threshold, key-card holding); unset =
-  strong + quick and fully deterministic
-- `scripts/ai_graph.gd` — `AIGraph`: the clickable 2D skill/style picker in the
-  settings dialog
+  UI can animate enemy turns. At the top skill tier it swaps the greedy search
+  for a score-all-candidates "smart brain" that counts the deck, steals jokers,
+  avoids feeding opponents, blocks, and races the endgame
+- `scripts/ai_profile.gd` — `AIProfile`: the three personality dials GreedyAI
+  consults — skill (search depth + the smart brain), style (opening threshold,
+  key-card holding), attention (miss chance); unset = strong + quick +
+  attentive and fully deterministic
 - `scripts/main_ui.gd` + `scenes/main.tscn` — main menu plus the drag-and-drop
   (or click-to-play) UI, built in code: styled cards, felt table, per-group
   validity outlines, opponent seats with face-down card backs, flying-card
@@ -162,8 +172,8 @@ godot --headless --path . --script res://tests/smoke_test.gd    # unit tests + 6
 
 - The turn model is *staged*: moves mutate state immediately, `commit_turn()` is the
   only legality gate, `reset_turn()` rolls the whole turn back. Same as physical play.
-- The AI is greedy and only does single-card table rearrangements. A strong AI
-  (and a "hint" feature)
+- The AI only does single-card table rearrangements (even the top-tier smart
+  brain borrows one card at a time). A truly strong AI (and a "hint" feature)
   should use the ILP formulation from Den Hertog & Hulshof, *Solving Rummikub
   Problems by Integer Linear Programming* — see
   [cduck/machiavelli](https://github.com/cduck/machiavelli) (MIT) and
