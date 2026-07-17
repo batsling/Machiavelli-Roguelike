@@ -33,6 +33,13 @@ const JOKER_GLYPH := "★"
 var joker_rank: int = 0
 var joker_suit: String = ""
 
+# Which card the joker's holder wants it to stand for when the meld leaves a
+# choice (e.g. two missing suits in a set, or a spare joker that could extend
+# either end of a run). Honored by Rules.assign_jokers() whenever it still
+# fits the meld; cleared when the joker returns to a hand.
+var joker_pref_rank: int = 0
+var joker_pref_suit: String = ""
+
 # Tracks whether a Brittle card has already used its one move.
 var has_moved: bool = false
 

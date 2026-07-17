@@ -18,11 +18,20 @@ func _init() -> void:
 		failures += 1
 	if not _test_joker_swap():
 		failures += 1
+	if not _test_joker_choice():
+		failures += 1
+	if not _test_safe_joker_reps():
+		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
 			failures += 1
 	for seed_value in 10:
 		if not _play_game(seed_value, "joker game", true):
+			failures += 1
+	# Strong AIs pick safe joker stand-ins; make sure games stay clean.
+	for seed_value in 5:
+		var strong := AIProfile.new(1.0, 0.0, seed_value)
+		if not _play_game(seed_value, "smart joker game", true, strong):
 			failures += 1
 	# The four corners of the AI graph, seeded so replays are exact.
 	for corner: Array in [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]:
@@ -128,6 +137,95 @@ func _test_joker_rules() -> bool:
 		ok = false
 	if ok:
 		print("joker rules test OK")
+	return ok
+
+## When a meld leaves a joker a choice, joker_alternatives lists the options
+## and a joker_pref_* choice steers assign_jokers; a preference that no
+## longer fits is ignored.
+func _test_joker_choice() -> bool:
+	var ok := true
+	# Set of three: two suits missing, so the joker has a genuine choice.
+	var joker := _joker()
+	var trio: Array[Card] = [_card(9, "hearts"), _card(9, "spades"), joker]
+	var alts := Rules.joker_alternatives(trio)
+	if alts.size() != 2:
+		printerr("joker choice: 3-set should offer 2 suits, got %d" % alts.size())
+		ok = false
+	Rules.assign_jokers(trio)
+	if joker.joker_suit != "diamonds":
+		printerr("joker choice: default set suit should be diamonds, got %s"
+			% joker.joker_suit)
+		ok = false
+	joker.joker_pref_rank = 9
+	joker.joker_pref_suit = "clubs"
+	Rules.assign_jokers(trio)
+	if joker.joker_suit != "clubs":
+		printerr("joker choice: clubs preference ignored, got %s" % joker.joker_suit)
+		ok = false
+	joker.joker_pref_suit = "hearts"  # taken by a natural — must be ignored
+	Rules.assign_jokers(trio)
+	if joker.joker_suit != "diamonds":
+		printerr("joker choice: unusable preference should fall back to diamonds, got %s"
+			% joker.joker_suit)
+		ok = false
+	# Run extension: the spare joker can sit at either end.
+	var run_joker := _joker()
+	var run: Array[Card] = [_card(5, "hearts"), _card(6, "hearts"), run_joker]
+	var run_alts := Rules.joker_alternatives(run)
+	if run_alts.size() != 2 or run_alts[0]["rank"] != 4 or run_alts[1]["rank"] != 7:
+		printerr("joker choice: 5-6 run should offer ranks 4 and 7")
+		ok = false
+	run_joker.joker_pref_rank = 4
+	run_joker.joker_pref_suit = "hearts"
+	Rules.assign_jokers(run)
+	if run_joker.joker_rank != 4:
+		printerr("joker choice: low-end run preference ignored, got %d"
+			% run_joker.joker_rank)
+		ok = false
+	if not Rules.is_valid_meld(run):
+		printerr("joker choice: preferred run no longer valid")
+		ok = false
+	# A joker forced into an inner gap has no choice to offer.
+	var gapped: Array[Card] = [_card(5, "clubs"), _joker(), _card(7, "clubs")]
+	if not Rules.joker_alternatives(gapped).is_empty():
+		printerr("joker choice: gap joker should have no alternatives")
+		ok = false
+	# Two jokers covering both missing suits of a set: nothing left to pick.
+	var full_set: Array[Card] = [_card(4, "hearts"), _card(4, "spades"),
+		_joker(), _joker()]
+	if not Rules.joker_alternatives(full_set).is_empty():
+		printerr("joker choice: fully-jokered set should have no alternatives")
+		ok = false
+	if ok:
+		print("joker choice test OK")
+	return ok
+
+## A capable AI points a played joker at the stand-in with the fewest unseen
+## copies, so opponents are unlikely to hold the card that swap-claims it.
+func _test_safe_joker_reps() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 11, true)
+	# Both 9 of diamonds are accounted for (one on the table, one in the AI's
+	# hand); both 9 of clubs are still out there.
+	var seen_meld := CardSet.new()
+	seen_meld.cards.assign([_card(8, "diamonds"), _card(9, "diamonds"),
+		_card(10, "diamonds")])
+	gm.board.melds.append(seen_meld)
+	gm.current_player().hand.append(_card(9, "diamonds"))
+	var joker := _joker()
+	var meld := CardSet.new()
+	meld.cards.assign([_card(9, "hearts"), _card(9, "spades"), joker])
+	gm.board.melds.append(meld)
+	GreedyAI._choose_joker_reps(gm, meld)
+	Rules.assign_jokers(meld.cards)
+	if joker.joker_suit != "diamonds":
+		printerr("safe reps: joker should stand for the fully-seen 9 of diamonds, got %s"
+			% joker.rep_label())
+		ok = false
+	gm.free()
+	if ok:
+		print("safe joker reps test OK")
 	return ok
 
 ## A board joker standing for a specific card can be swapped for the real

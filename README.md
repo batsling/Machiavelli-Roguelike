@@ -1,8 +1,11 @@
 # Machiavelli — Vanilla Engine
 
 A playable, vanilla implementation of Machiavelli (the Italian rummy variant,
-mechanically a cousin of Rummikub) in Godot 4.6. This is the base the roguelike
-layer (card effects, health/gold, encounters) will be built on.
+mechanically a cousin of Rummikub) in Godot 4.6: a full rules engine with
+staged, undoable turns; a drag-and-drop table UI with animated, tunable AI
+opponents; optional jokers with player-chosen stand-ins; and a headless
+AI-vs-AI test suite. This is the base the roguelike layer (card effects,
+health/gold, encounters) will be built on.
 
 ## Rules implemented
 
@@ -20,6 +23,11 @@ layer (card effects, health/gold, encounters) will be built on.
   (e.g. `★7♥`); a player holding that exact card may drop it on the joker to swap
   it out and take the wildcard into their hand (the exchange itself doesn't count
   as playing a card).
+- **Choosing what a joker stands for**: some groups leave the joker a genuine
+  choice — a set of three is missing two suits, and a spare joker on a run could
+  extend either end. Right-click the joker on your turn to pick from the valid
+  options; inner run gaps are forced, so those offer no choice. The pick sticks
+  with the joker until it returns to a hand.
 - **Opening rule** (applies to every player, human and AI): until you have laid
   down at least one valid group built *only* from your own hand, you may not add
   cards to other groups or take cards from them. Laying your own valid group
@@ -52,6 +60,10 @@ On your turn:
    the last staged move; **Undo turn** puts the whole turn back.
 5. **Draw & end turn** if you can't or won't play (this also abandons staged moves).
 
+Jokers on the table show a tooltip with what they stand for; when the group
+leaves them a choice, right-click one to pick its stand-in (handy for setting
+up — or blocking — the swap).
+
 Your hand works like Balatro's: it keeps whatever order you give it. Drag a card
 onto another hand card to slot it there (left half = before, right half = after),
 drag onto empty hand space to send it to the end, or use the **Sort: rank** /
@@ -59,7 +71,10 @@ drag onto empty hand space to send it to the end, or use the **Sort: rank** /
 
 Enemy turns play out move by move on screen: each card an enemy plays flies from
 where it was (their hidden hand or its previous spot on the table) to where it
-lands, stays highlighted in gold, and the log narrates each move.
+lands, and the log narrates each move. Every card the enemies touched stays
+highlighted in gold — the highlights accumulate across the whole round of enemy
+turns and persist through your turn, so you can always see exactly what changed
+since you last acted; they clear when the enemies start their next round.
 
 ## Settings
 
@@ -68,11 +83,14 @@ The **Settings** button opens a dialog with:
 - **Enemy AI graph** — click to place the marker. Vertical axis is skill
   (top = strong, bottom = weak), horizontal is style (left = quick,
   right = conservative). A weak AI regularly misses plays it could have made; a
-  strong one sees single- and two-card lay-offs plus table rearrangements. A
-  quick AI dumps everything as soon as possible; a conservative one sits on its
-  opening meld until it's big enough (unless the endgame forces its hand) and
-  holds cards that still pair up with the rest of its hand. Applies from the
-  next enemy turn.
+  strong one sees single- and two-card lay-offs plus table rearrangements, and
+  points the jokers it plays at safe stand-ins — cards whose copies are mostly
+  already visible on the table (or in its own hand), so the other players are
+  unlikely to hold the exact card needed to swap-claim the joker. A quick AI
+  dumps everything as soon as possible; a conservative one sits on its opening
+  meld until it's big enough (unless the endgame forces its hand) and holds
+  cards that still pair up with the rest of its hand. Applies from the next
+  enemy turn.
 - **Enemies** (1-3) — takes effect on the next new game.
 - **Cards drawn per turn** (1-3) — applies immediately, to everyone.
 - **Include 4 jokers** — takes effect on the next new game.
@@ -82,7 +100,8 @@ The **Settings** button opens a dialog with:
 - `scripts/card.gd` — `Card` resource: suit, rank + roguelike effect flags (unused by
   the vanilla engine)
 - `scripts/rules.gd` — `Rules`: static set/run/meld validation (joker-aware),
-  joker value assignment, display ordering
+  joker value assignment (honoring per-joker stand-in preferences), the list of
+  alternative stand-ins a joker could take, display ordering
 - `scripts/deck.gd` — `Deck`: double deck (optional jokers), seeded Fisher-Yates
   shuffle, stock
 - `scripts/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
@@ -96,8 +115,9 @@ The **Settings** button opens a dialog with:
 - `scripts/greedy_ai.gd` — `GreedyAI`: baseline opponent — plays complete melds from
   hand (with joker fallbacks), single- and two-card lay-offs, and simple table
   rearrangements (borrows one card from a group, when the leftover group stays
-  valid, to complete a new meld with hand cards); respects the opening rule;
-  produces one move at a time so the UI can animate enemy turns
+  valid, to complete a new meld with hand cards); picks safe joker stand-ins at
+  higher skill; respects the opening rule; produces one move at a time so the
+  UI can animate enemy turns
 - `scripts/ai_profile.gd` — `AIProfile`: the skill/style knobs GreedyAI consults
   (miss chance, search depth, opening threshold, key-card holding); unset =
   strong + quick and fully deterministic
@@ -105,15 +125,18 @@ The **Settings** button opens a dialog with:
   settings dialog
 - `scripts/main_ui.gd` + `scenes/main.tscn` — drag-and-drop (or click-to-play) UI,
   built in code: styled cards, felt table, per-group validity outlines, opponent
-  seats with face-down card backs, flying-card enemy-turn animations,
-  return-to-hand for cards staged this turn
-- `tests/smoke_test.gd` — headless AI-vs-AI smoke test
+  seats with face-down card backs, flying-card enemy-turn animations with
+  round-long gold highlights, the right-click joker menu, Balatro-style hand
+  ordering, return-to-hand for cards staged this turn, the settings dialog
+- `tests/smoke_test.gd` — headless AI-vs-AI smoke test plus unit tests for the
+  joker rules, the joker swap, joker stand-in choice, and the AI's safe
+  stand-in picking
 
 ## Headless smoke test
 
 ```sh
 godot --headless --path . --import                              # once, builds class cache
-godot --headless --path . --script res://tests/smoke_test.gd    # plays 25 seeded games
+godot --headless --path . --script res://tests/smoke_test.gd    # unit tests + 65 seeded games
 ```
 
 ## Design notes / references

@@ -39,8 +39,10 @@ static func is_valid_run(cards: Array[Card]) -> bool:
 
 ## Write onto every joker in the meld the card it currently stands for
 ## (Card.joker_rank / joker_suit), or clear the fields when the meld isn't
-## valid. Runs fill inner gaps first, then extend past the high end, then
-## below the low end; sets hand out the missing suits in a fixed order. Call
+## valid. When the meld leaves a choice, a joker's preferred stand-in
+## (joker_pref_rank / joker_pref_suit) is honored if it still fits; otherwise
+## runs fill inner gaps first, then extend past the high end, then below the
+## low end, and sets hand out the missing suits in a fixed order. Call
 ## whenever a meld changes, before displaying it or swapping with a joker.
 static func assign_jokers(cards: Array[Card]) -> void:
 	var jokers: Array[Card] = []
@@ -53,6 +55,7 @@ static func assign_jokers(cards: Array[Card]) -> void:
 		return
 	if is_valid_set(cards):
 		var naturals := _naturals(cards)
+		var rank: int = naturals[0].rank
 		var used := {}
 		for c in naturals:
 			used[c.suit] = true
@@ -60,9 +63,19 @@ static func assign_jokers(cards: Array[Card]) -> void:
 		for s in Deck.SUITS:
 			if not used.has(s):
 				free.append(s)
-		for i in jokers.size():
-			jokers[i].joker_rank = naturals[0].rank
-			jokers[i].joker_suit = free[i]
+		# Jokers whose holder picked a still-free suit take it first; the rest
+		# share out the remaining suits in a fixed order.
+		var rest: Array[Card] = []
+		for j in jokers:
+			if j.joker_pref_rank == rank and free.has(j.joker_pref_suit):
+				j.joker_rank = rank
+				j.joker_suit = j.joker_pref_suit
+				free.erase(j.joker_pref_suit)
+			else:
+				rest.append(j)
+		for i in rest.size():
+			rest[i].joker_rank = rank
+			rest[i].joker_suit = free[i]
 		return
 	var plan := _run_plan(cards)
 	if plan.is_empty():
@@ -134,38 +147,119 @@ static func _run_plan(cards: Array[Card]) -> Dictionary:
 			ranks.append(14 if ace_high and c.rank == 1 else c.rank)
 		var low_bound := 2 if ace_high else 1
 		var high_bound := 14 if ace_high else 13
-		var fill := _fill_run(ranks, joker_count, low_bound, high_bound)
-		if not fill.is_empty():
-			return {"joker_ranks": fill["joker_ranks"], "ace_high": ace_high}
+		var options := _run_fill_options(ranks, joker_count, low_bound, high_bound)
+		if options.is_empty():
+			continue
+		# Honor the jokers' preferred stand-ins: pick the layout that covers
+		# the most of them, highest-extension-first on ties (the default).
+		var prefs: Array[int] = []
+		for c in cards:
+			if c.is_joker and c.joker_pref_suit == suit and c.joker_pref_rank > 0:
+				prefs.append(14 if ace_high and c.joker_pref_rank == 1 else c.joker_pref_rank)
+		var best: Array[int] = options[0]
+		var best_score := _pref_coverage(best, prefs)
+		for i in range(1, options.size()):
+			var score := _pref_coverage(options[i], prefs)
+			if score > best_score:
+				best = options[i]
+				best_score = score
+		return {"joker_ranks": best, "ace_high": ace_high}
 	return {}
 
-## Place `joker_count` wildcards around the natural `ranks` so the whole run
-## is consecutive and stays inside [low_bound, high_bound]: inner gaps are
-## forced, leftovers extend high first, then low. Returns {} on failure or
-## {"joker_ranks": Array[int]} on success (empty array when no jokers).
-static func _fill_run(ranks: Array[int], joker_count: int,
-		low_bound: int, high_bound: int) -> Dictionary:
+## All the ways `joker_count` wildcards can complete the natural `ranks` into
+## one consecutive run inside [low_bound, high_bound]: inner gaps are always
+## forced, spare jokers may split between the two ends any way that fits.
+## Returns an Array of fill-rank Arrays, most-high-extension first (the
+## default layout), or [] when no layout exists.
+static func _run_fill_options(ranks: Array[int], joker_count: int,
+		low_bound: int, high_bound: int) -> Array:
 	var ordered: Array[int] = ranks.duplicate()
 	ordered.sort()
 	if ordered[0] < low_bound or ordered[-1] > high_bound:
-		return {}
-	var fills: Array[int] = []
+		return []
+	var forced: Array[int] = []
 	for i in range(1, ordered.size()):
 		for r in range(ordered[i - 1] + 1, ordered[i]):
-			fills.append(r)
-	if fills.size() > joker_count:
-		return {}
-	var extra := joker_count - fills.size()
+			forced.append(r)
+	if forced.size() > joker_count:
+		return []
+	var extra := joker_count - forced.size()
 	var lo := ordered[0]
 	var hi := ordered[-1]
-	while extra > 0 and hi < high_bound:
-		hi += 1
-		fills.append(hi)
-		extra -= 1
-	while extra > 0 and lo > low_bound:
-		lo -= 1
-		fills.append(lo)
-		extra -= 1
-	if extra > 0:
-		return {}
-	return {"joker_ranks": fills}
+	var options: Array = []
+	for high_n in range(mini(extra, high_bound - hi), -1, -1):
+		var low_n := extra - high_n
+		if low_n > lo - low_bound:
+			continue
+		var fill: Array[int] = forced.duplicate()
+		for i in high_n:
+			fill.append(hi + 1 + i)
+		for i in low_n:
+			fill.append(lo - 1 - i)
+		options.append(fill)
+	return options
+
+## How many of the preferred ranks this fill satisfies (each fill rank can
+## satisfy at most one preference).
+static func _pref_coverage(fill: Array[int], prefs: Array[int]) -> int:
+	var remaining: Array[int] = fill.duplicate()
+	var score := 0
+	for r in prefs:
+		var idx := remaining.find(r)
+		if idx != -1:
+			remaining.remove_at(idx)
+			score += 1
+	return score
+
+## Every card a joker in this meld could be made to stand for, as
+## {"rank": int, "suit": String} entries (aces reported as rank 1). Empty when
+## the meld is invalid, has no jokers, or leaves them no actual choice (inner
+## run gaps are forced, and a set whose jokers cover every missing suit offers
+## nothing to pick). Feeds the UI's right-click joker menu and the AI's safe
+## stand-in selection.
+static func joker_alternatives(cards: Array[Card]) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var naturals := _naturals(cards)
+	var joker_count := cards.size() - naturals.size()
+	if joker_count == 0 or naturals.is_empty():
+		return out
+	if is_valid_set(cards):
+		var used := {}
+		for c in naturals:
+			used[c.suit] = true
+		var free: Array[String] = []
+		for s in Deck.SUITS:
+			if not used.has(s):
+				free.append(s)
+		if free.size() <= joker_count:
+			return out
+		for s in free:
+			out.append({"rank": naturals[0].rank, "suit": s})
+		return out
+	if not is_valid_run(cards):
+		return out
+	# Runs: mirror _run_plan's layout family; the choices are the ranks that
+	# appear in some layouts but not all.
+	var suit: String = naturals[0].suit
+	for ace_high: bool in [false, true]:
+		var ranks: Array[int] = []
+		for c in naturals:
+			ranks.append(14 if ace_high and c.rank == 1 else c.rank)
+		var low_bound := 2 if ace_high else 1
+		var high_bound := 14 if ace_high else 13
+		var options := _run_fill_options(ranks, joker_count, low_bound, high_bound)
+		if options.is_empty():
+			continue
+		var seen_in := {}
+		for opt: Array in options:
+			for r: int in opt:
+				seen_in[r] = int(seen_in.get(r, 0)) + 1
+		var choice_ranks: Array[int] = []
+		for r: int in seen_in:
+			if seen_in[r] < options.size():
+				choice_ranks.append(r)
+		choice_ranks.sort()
+		for r in choice_ranks:
+			out.append({"rank": 1 if r == 14 else r, "suit": suit})
+		break
+	return out

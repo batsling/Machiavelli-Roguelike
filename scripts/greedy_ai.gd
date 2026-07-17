@@ -26,6 +26,11 @@ extends RefCounted
 ## still look useful with the rest of its hand (pairs, near-runs, jokers).
 ## A weak AI additionally rolls AIProfile.misses_move() before every planned
 ## move and may simply miss a play it could have made.
+##
+## Joker smarts: a capable AI (AIProfile.picks_safe_joker_reps) points every
+## joker it plays at the safest card it can stand for — the choice with the
+## fewest copies still unseen — so opponents rarely hold the exact card
+## needed to swap the joker away from it.
 
 static func take_turn(gm: GameManager, profile: AIProfile = null) -> void:
 	var played_any := false
@@ -33,7 +38,7 @@ static func take_turn(gm: GameManager, profile: AIProfile = null) -> void:
 		var move := plan_move(gm, profile)
 		if move.is_empty():
 			break
-		apply_move(gm, move)
+		apply_move(gm, move, profile)
 		played_any = true
 	if not played_any:
 		gm.draw_and_end_turn()
@@ -112,8 +117,9 @@ static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 					"text": "takes %s from the table to build %s" % [t.label(), _cards_text(combo)]}
 	return {}
 
-## Apply a move produced by plan_move() to the (staged) game state.
-static func apply_move(gm: GameManager, move: Dictionary) -> void:
+## Apply a move produced by plan_move() to the (staged) game state. A capable
+## profile also points any jokers in the touched meld at safe stand-ins.
+static func apply_move(gm: GameManager, move: Dictionary, profile: AIProfile = null) -> void:
 	var cards: Array[Card] = move["cards"]
 	var dest: CardSet = move["dest"]
 	var err := ""
@@ -124,6 +130,51 @@ static func apply_move(gm: GameManager, move: Dictionary) -> void:
 	if err != "":
 		# Should be unreachable: plan_move only proposes legal moves.
 		push_warning("GreedyAI staged an illegal move (%s)" % err)
+		return
+	if profile != null and profile.picks_safe_joker_reps():
+		# A new meld is appended last by move_cards_to_new_meld.
+		_choose_joker_reps(gm, dest if dest != null else gm.board.melds[-1])
+
+## Point every joker in the meld the AI just touched at the safest card it
+## can stand for: the alternative with the fewest copies still unseen (not on
+## the table and not in this AI's own hand). An opponent can only swap-claim
+## a joker by holding the exact card it stands for, so fewer unseen copies
+## means less chance anyone ever takes the wildcard.
+static func _choose_joker_reps(gm: GameManager, meld: CardSet) -> void:
+	var alts := Rules.joker_alternatives(meld.cards)
+	if alts.is_empty():
+		return
+	var scored: Array[Dictionary] = []
+	for alt in alts:
+		scored.append({"rank": alt["rank"], "suit": alt["suit"],
+			"unseen": _unseen_copies(gm, alt["rank"], alt["suit"])})
+	scored.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if a["unseen"] != b["unseen"]:
+			return a["unseen"] < b["unseen"]
+		if a["rank"] != b["rank"]:
+			return a["rank"] < b["rank"]
+		return a["suit"] < b["suit"])
+	var i := 0
+	for c in meld.cards:
+		if c.is_joker:
+			var alt: Dictionary = scored[mini(i, scored.size() - 1)]
+			c.joker_pref_rank = alt["rank"]
+			c.joker_pref_suit = alt["suit"]
+			i += 1
+
+## Copies of the exact card that could still sit in an opponent's hand or the
+## stock: 2 in the double deck, minus those visible on the table and those
+## the current player holds.
+static func _unseen_copies(gm: GameManager, rank: int, suit: String) -> int:
+	var seen := 0
+	for m in gm.board.melds:
+		for c in m.cards:
+			if not c.is_joker and c.rank == rank and c.suit == suit:
+				seen += 1
+	for c in gm.current_player().hand:
+		if not c.is_joker and c.rank == rank and c.suit == suit:
+			seen += 1
+	return maxi(2 - seen, 0)
 
 ## Whether the AI commits to laying this meld right now. Always yes once
 ## open; a conservative AI holds its opening meld until it is big enough,

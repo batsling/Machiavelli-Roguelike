@@ -202,6 +202,8 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 		_hand_snapshot.append(joker)
 	joker.joker_rank = 0
 	joker.joker_suit = ""
+	joker.joker_pref_rank = 0
+	joker.joker_pref_suit = ""
 	board_changed.emit()
 	return ""
 

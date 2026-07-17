@@ -29,8 +29,10 @@ extends Control
 ##
 ## Enemy turns play out visibly: each move the AI makes is applied one at a
 ## time, its cards fly from where they were (the enemy's hidden hand or their
-## previous spot on the table) to where they land, and every card the enemy
-## touched stays highlighted in gold until the next enemy acts.
+## previous spot on the table) to where they land. Every card any enemy
+## touched stays highlighted in gold through your whole turn, so you can see
+## at a glance everything that changed while you weren't acting; the
+## highlights clear when the enemies start their next round.
 ##
 ## Your hand works like Balatro's: it keeps whatever order you give it. Drag
 ## a card onto another hand card to move it there (left half = before, right
@@ -43,7 +45,9 @@ extends Control
 ## immediately), and the joker toggle (next game). Jokers (★) count as any
 ## card; a joker in a valid group shows the card it currently stands for
 ## (e.g. ★7♥), and if you hold that exact card you can drop it on the joker
-## to swap it out and take the wildcard into your hand.
+## to swap it out and take the wildcard into your hand. When a group leaves
+## the joker a choice (say, two missing suits in a set of three), right-click
+## the joker on your turn to pick which card it stands for.
 
 const AI_THINK_DELAY := 0.6
 const AI_MOVE_DELAY := 0.5
@@ -87,7 +91,7 @@ const COL_JOKER_BG := Color(0.96, 0.92, 0.98)
 
 var gm: GameManager
 var selected: Array[Card] = []
-var highlighted := {}  # Card -> true; cards the last enemy touched
+var highlighted := {}  # Card -> true; every card the enemies touched last round
 var ai_running := false
 # Bumped on every new game so a suspended AI coroutine from the previous game
 # notices on resume and bails out instead of acting on the fresh state.
@@ -587,11 +591,13 @@ func _refresh_hand() -> void:
 			+ "from these cards before touching the table"
 	# The hand keeps whatever order the player gave it (drag to rearrange,
 	# sort buttons to sort). A joker back in the hand is a free wildcard, so
-	# shed any representation left over from its time on the table.
+	# shed any representation (and choice) left over from its time on the table.
 	for c in hand:
 		if c.is_joker:
 			c.joker_rank = 0
 			c.joker_suit = ""
+			c.joker_pref_rank = 0
+			c.joker_pref_suit = ""
 	for c in hand:
 		hand_box.add_child(_make_card_button(c))
 
@@ -638,6 +644,9 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 				b.tooltip_text = "Joker standing in for %s. Hold the real %s? " \
 					% [c.rep_label(), c.rep_label()] \
 					+ "Drop it on this joker to swap it into your hand."
+				if on_board and not Rules.joker_alternatives(meld.cards).is_empty():
+					b.tooltip_text += "\nRight-click to choose what the joker stands for."
+					b.gui_input.connect(_on_joker_gui_input.bind(c, meld))
 			else:
 				b.tooltip_text = "Joker — counts as any card."
 	for state in ["font_color", "font_pressed_color", "font_hover_color",
@@ -877,6 +886,40 @@ func _matching_joker(c: Card, meld: CardSet) -> Card:
 			return t
 	return null
 
+## Right-clicking a joker on the table (when its group leaves it a choice)
+## opens a menu of the cards it could stand for.
+func _on_joker_gui_input(event: InputEvent, joker: Card, meld: CardSet) -> void:
+	if event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_RIGHT:
+		_show_joker_menu(joker, meld)
+
+func _show_joker_menu(joker: Card, meld: CardSet) -> void:
+	if not _card_is_interactive(meld):
+		return
+	Rules.assign_jokers(meld.cards)
+	var alts := Rules.joker_alternatives(meld.cards)
+	if alts.is_empty():
+		return
+	var menu := PopupMenu.new()
+	add_child(menu)
+	for i in alts.size():
+		var alt: Dictionary = alts[i]
+		menu.add_radio_check_item("Stands for %s" % _rep_text(alt["rank"], alt["suit"]), i)
+		menu.set_item_checked(i,
+			alt["rank"] == joker.joker_rank and alt["suit"] == joker.joker_suit)
+	menu.id_pressed.connect(func(id: int) -> void:
+		var alt: Dictionary = alts[id]
+		joker.joker_pref_rank = alt["rank"]
+		joker.joker_pref_suit = alt["suit"]
+		_refresh())
+	menu.popup_hide.connect(menu.queue_free)
+	menu.position = Vector2i(get_global_mouse_position())
+	menu.popup()
+
+func _rep_text(rank: int, suit: String) -> String:
+	return "%s%s" % [Card.RANK_NAMES.get(rank, str(rank)),
+		Card.SUIT_SYMBOLS.get(suit, suit)]
+
 ## Stage a move through the engine (meld == null starts a new group) and show
 ## the engine's error, if any, in the status line.
 func _stage_move(cards: Array[Card], meld: CardSet) -> void:
@@ -988,19 +1031,20 @@ func _on_game_over(winners: Array) -> void:
 # --- AI driving ----------------------------------------------------------------
 
 ## Play out every queued enemy turn, one visible move at a time. Each move is
-## staged through the same engine calls the human uses, its cards fly on
-## screen from where they were to where they land, and stay highlighted in
-## gold until the next enemy starts acting (or a new game begins).
+## staged through the same engine calls the human uses and its cards fly on
+## screen from where they were to where they land. Highlights accumulate over
+## the whole round of enemy turns and stay through the player's turn, only
+## clearing when the enemies next start acting (or a new game begins).
 func _run_ai_turns() -> void:
 	if ai_running or gm.is_game_over:
 		return
 	ai_running = true
 	var gen := game_generation
 	var profile := AIProfile.new(ai_strength, ai_style)
+	highlighted.clear()
 	_refresh()
 	while not gm.is_game_over and gm.current_player().is_opponent:
 		var enemy := gm.current_player()
-		highlighted.clear()
 		_set_status("%s is thinking…" % enemy.display_name)
 		_refresh()
 		await get_tree().create_timer(AI_THINK_DELAY).timeout
@@ -1013,7 +1057,7 @@ func _run_ai_turns() -> void:
 				break
 			var moved: Array[Card] = move["cards"]
 			var sources := _capture_card_positions(enemy, moved)
-			GreedyAI.apply_move(gm, move)
+			GreedyAI.apply_move(gm, move, profile)
 			played_any = true
 			for c in moved:
 				highlighted[c] = true

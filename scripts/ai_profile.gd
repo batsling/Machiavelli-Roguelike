@@ -44,6 +44,13 @@ func can_rearrange() -> bool:
 func sees_pair_layoffs() -> bool:
 	return strength >= 0.7
 
+## Whether the AI points the jokers it plays at safe stand-ins: cards whose
+## copies are mostly already visible on the table (or in its own hand), so
+## opponents are unlikely to hold the exact card needed to swap-claim the
+## joker. See GreedyAI._choose_joker_reps.
+func picks_safe_joker_reps() -> bool:
+	return strength >= 0.5
+
 ## Conservative AIs won't lay off cards that pair up with the rest of their
 ## hand, preferring to keep them for a bigger play later.
 func holds_key_cards() -> bool:
