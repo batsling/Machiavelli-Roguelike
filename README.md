@@ -21,8 +21,9 @@ health/gold, encounters) will be built on.
 - **Jokers** (optional, ★): count as any card, but a group needs at least one real
   card to anchor them. A joker in a valid group shows the card it stands for
   (e.g. `★7♥`); a player holding that exact card may drop it on the joker to swap
-  it out and take the wildcard into their hand (the exchange itself doesn't count
-  as playing a card).
+  it out and take the wildcard into their hand. The real card leaves your hand
+  for the table, so the swap counts as playing a card — a swap alone lets you
+  end your turn.
 - **Choosing what a joker stands for**: some groups leave the joker a genuine
   choice — a set of three is missing two suits, and a spare joker on a run could
   extend either end. Right-click the joker on your turn to pick from the valid

@@ -229,7 +229,8 @@ func _test_safe_joker_reps() -> bool:
 	return ok
 
 ## A board joker standing for a specific card can be swapped for the real
-## card from the hand; the exchange nets zero played cards and is undoable.
+## card from the hand; the swap counts as playing one card (so a swap alone
+## can end the turn) and is undoable.
 func _test_joker_swap() -> bool:
 	var gm := GameManager.new()
 	var ok := true
@@ -262,12 +263,9 @@ func _test_joker_swap() -> bool:
 	elif not p.hand.has(joker) or joker.joker_rank != 0:
 		printerr("swap test: joker not back in hand as a free wildcard")
 		ok = false
-	elif gm.cards_played_this_turn() != 0:
-		printerr("swap test: swap should not count as playing a card (got %d)"
+	elif gm.cards_played_this_turn() != 1:
+		printerr("swap test: swap should count as playing one card (got %d)"
 			% gm.cards_played_this_turn())
-		ok = false
-	elif not gm.commit_turn().begins_with("You must play at least one card"):
-		printerr("swap test: commit after swap-only turn gave the wrong error")
 		ok = false
 	elif not gm.undo_action():
 		printerr("swap test: swap was not undoable")
@@ -278,10 +276,25 @@ func _test_joker_swap() -> bool:
 	elif gm.cards_played_this_turn() != 0:
 		printerr("swap test: undo left the played-cards count off")
 		ok = false
+	elif not _reassign_and_swap(gm, seven, joker):
+		printerr("swap test: swap after undo was rejected")
+		ok = false
+	elif gm.commit_turn() != "":
+		printerr("swap test: a swap-only turn should be committable")
+		ok = false
+	elif gm.current_player() == p:
+		printerr("swap test: committing the swap-only turn did not end the turn")
+		ok = false
 	gm.free()
 	if ok:
 		print("joker swap test OK")
 	return ok
+
+## After an undo the joker's representation is stale; the UI recomputes it on
+## every refresh, so mirror that here before swapping again.
+func _reassign_and_swap(gm: GameManager, hand_card: Card, joker: Card) -> bool:
+	Rules.assign_jokers(gm.board.melds[0].cards)
+	return gm.swap_joker(hand_card, joker, gm.board.melds[0]) == ""
 
 func _play_game(seed_value: int, label: String, include_jokers := false,
 		profile: AIProfile = null, draw_per_turn := 1) -> bool:

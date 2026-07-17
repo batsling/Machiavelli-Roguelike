@@ -48,9 +48,9 @@ var is_game_over := false
 var draw_per_turn := 1
 
 # Staging state for the current turn. _hand_snapshot is the current player's
-# hand at the start of the turn; swap_joker() edits it in place (the joker
-# legally becomes "a card you started the turn with"), which is why every
-# undo entry carries its own copy.
+# hand at the start of the turn; swap_joker() appends to it in place (the
+# joker legally becomes "a card you started the turn with"), which is why
+# every undo entry carries its own copy.
 var _hand_snapshot: Array[Card] = []
 # One {hand, board, snapshot} state per staged move, so moves can be undone.
 var _undo_stack: Array[Dictionary] = []
@@ -171,10 +171,10 @@ func return_cards_to_hand(cards_to_return: Array[Card]) -> String:
 
 ## Swap a natural card from the current player's hand for a joker on the
 ## table that currently stands for exactly that card (see Rules.assign_jokers).
-## The joker comes back to the hand as a free wildcard. The exchange is
-## card-for-card, so it does not count as playing a card — the turn still
-## needs at least one card played (or a draw) to end. Returns "" on success
-## or a human-readable reason the swap is not allowed.
+## The joker comes back to the hand as a free wildcard. The natural card
+## genuinely leaves the hand for the table, so the swap counts as playing a
+## card — a swap alone is enough to end the turn. Returns "" on success or a
+## human-readable reason the swap is not allowed.
 func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	var p := current_player()
 	if not joker.is_joker or joker.joker_rank == 0:
@@ -193,12 +193,10 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	meld.cards[meld.cards.find(joker)] = hand_card
 	p.hand.erase(hand_card)
 	p.hand.append(joker)
-	# The joker now counts as a card the player started the turn with, in
-	# place of the natural card that took its spot on the table.
-	var snap_idx := _hand_snapshot.find(hand_card)
-	if snap_idx != -1:
-		_hand_snapshot[snap_idx] = joker
-	else:
+	# The joker now counts as a card the player started the turn with. The
+	# natural card stays in the snapshot too — it was played from the hand to
+	# the table, which is what makes the swap count as one played card.
+	if not _hand_snapshot.has(joker):
 		_hand_snapshot.append(joker)
 	joker.joker_rank = 0
 	joker.joker_suit = ""
