@@ -333,16 +333,16 @@ func _test_slime_setup() -> bool:
 		print("slime setup test OK")
 	return ok
 
-## The slime strategy oozes a slimed card next to an unguarded joker to seal it
-## in slime, and only does so when that genuinely guards the joker.
+## The slime consolidates her slime aggressively, prizing a joker above plain
+## cards, and stops when no move improves her grip (or she has no bodyguard to
+## bring over).
 func _test_slime_strategy() -> bool:
 	var gm := GameManager.new()
 	var ok := true
 	gm.setup(["You", "The Cute Slime"], 13, 6, true)
-	var p := gm.current_player()
-	p.has_opened = true
-	# A run whose joker sits (by default high extension) at the 8♥ slot, with a
-	# plain 7♥ neighbour — unguarded.
+	gm.current_player().has_opened = true
+	# A run whose joker sits (by default high extension) at the 8♥ slot with a
+	# plain 7♥ neighbour — exposed.
 	var joker := _sticky(_joker())
 	var meld_a := CardSet.new()
 	meld_a.cards.assign([_card(6, "hearts"), _card(7, "hearts"), joker])
@@ -354,6 +354,7 @@ func _test_slime_strategy() -> bool:
 	gm.board.melds.append(meld_a)
 	gm.board.melds.append(meld_b)
 	var slime := CuteSlime.new()
+	slime.on_turn_begin(gm)
 	var move := slime.plan_strategy_move(gm)
 	if move.is_empty():
 		printerr("slime strategy: expected a guarding move, got none")
@@ -363,24 +364,32 @@ func _test_slime_strategy() -> bool:
 			% _labels(move["cards"]))
 		ok = false
 	elif move["dest"] != meld_a:
-		printerr("slime strategy: should ooze the 9♥ onto the joker's group")
+		printerr("slime strategy: should ooze the 9♥ onto the joker's group to seal it")
 		ok = false
-	# With the joker already guarded (a slimed neighbour in its group), there is
-	# nothing to improve.
+	# She wants a joker kept from the player more than any plain card.
+	if slime._importance(_joker()) <= slime._importance(_card(1, "hearts")) \
+			or slime._importance(_card(1, "hearts")) <= slime._importance(_card(13, "hearts")) \
+			or slime._importance(_card(13, "hearts")) <= slime._importance(_card(5, "hearts")):
+		printerr("slime strategy: importance should rank joker > ace > face > plain")
+		ok = false
+	# A lone group offers no second group to bring a bodyguard from: no move.
 	if ok:
-		# The joker sits at the 8♥ high end, so its neighbour 7♥ is the guard.
-		var guarded := CardSet.new()
-		guarded.cards.assign([_card(6, "hearts"), _sticky(_card(7, "hearts")), _sticky(_joker())])
 		var gm2 := GameManager.new()
 		gm2.setup(["You", "The Cute Slime"], 13, 6, true)
 		gm2.current_player().has_opened = true
-		gm2.board.melds.append(guarded)
-		gm2.board.melds.append(meld_b)
-		Rules.assign_jokers(guarded.cards)
+		var solo := CardSet.new()
+		solo.cards.assign([_card(6, "hearts"), _card(7, "hearts"), _sticky(_joker())])
+		gm2.board.melds.append(solo)
+		Rules.assign_jokers(solo.cards)
+		slime.on_turn_begin(gm2)
 		if not slime.plan_strategy_move(gm2).is_empty():
-			printerr("slime strategy: an already-guarded joker should need no move")
+			printerr("slime strategy: a lone group offers no bodyguard to move")
 			ok = false
 		gm2.free()
+	# The per-turn budget stops her after a few guards.
+	if ok and CuteSlime.MAX_GUARDS_PER_TURN <= 0:
+		printerr("slime strategy: guarding budget should be positive")
+		ok = false
 	gm.free()
 	if ok:
 		print("slime strategy test OK")

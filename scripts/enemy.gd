@@ -27,6 +27,12 @@ func make_profile(seed_value: int = -1) -> AIProfile:
 func on_combat_start(_gm: GameManager) -> void:
 	pass
 
+## Called at the start of each of this enemy's own turns, before its first move,
+## so it can reset any per-turn strategy budget. The base enemy has nothing to
+## reset.
+func on_turn_begin(_gm: GameManager) -> void:
+	pass
+
 ## The enemy's special strategy move for the current (its own) turn, tried by
 ## GreedyAI once its ordinary plays are spent — a chance to act on a mechanic
 ## rather than just empty its hand. Returns a move Dictionary in GreedyAI's

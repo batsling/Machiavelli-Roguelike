@@ -42,6 +42,8 @@ extends RefCounted
 
 static func take_turn(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> void:
+	if enemy != null:
+		enemy.on_turn_begin(gm)
 	var played_any := false
 	while true:
 		var move := plan_move(gm, profile, enemy)
