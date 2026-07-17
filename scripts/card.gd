@@ -20,18 +20,34 @@ enum Effect {
 
 const SUIT_SYMBOLS := {"hearts": "♥", "diamonds": "♦", "clubs": "♣", "spades": "♠"}
 const RANK_NAMES := {1: "A", 11: "J", 12: "Q", 13: "K"}
+const JOKER_GLYPH := "★"
 
-@export var suit: String = ""        # "hearts", "diamonds", "clubs", "spades"
-@export var rank: int = 0            # 1-13 (ace = 1)
+@export var suit: String = ""        # "hearts", "diamonds", "clubs", "spades" ("joker" for jokers)
+@export var rank: int = 0            # 1-13 (ace = 1); 0 for jokers
 @export var owner_id: int = -1       # which player/opponent this card currently belongs to
 @export var effects: Array[Effect] = []
+@export var is_joker: bool = false   # counts as any card; see Rules.assign_jokers
+
+# What the joker currently stands for on the table (0 / "" while it sits free
+# in a hand or its meld is invalid). Recomputed by Rules.assign_jokers().
+var joker_rank: int = 0
+var joker_suit: String = ""
 
 # Tracks whether a Brittle card has already used its one move.
 var has_moved: bool = false
 
 func label() -> String:
+	if is_joker:
+		return JOKER_GLYPH if joker_rank == 0 else JOKER_GLYPH + rep_label()
 	var rank_text: String = RANK_NAMES.get(rank, str(rank))
 	var suit_text: String = SUIT_SYMBOLS.get(suit, suit)
+	return "%s%s" % [rank_text, suit_text]
+
+## The card this joker stands for, e.g. "7♥". Only meaningful when a valid
+## meld has assigned the joker a value.
+func rep_label() -> String:
+	var rank_text: String = RANK_NAMES.get(joker_rank, str(joker_rank))
+	var suit_text: String = SUIT_SYMBOLS.get(joker_suit, joker_suit)
 	return "%s%s" % [rank_text, suit_text]
 
 func has_effect(e: Effect) -> bool:

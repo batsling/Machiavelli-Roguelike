@@ -1,10 +1,11 @@
 class_name Deck
 extends RefCounted
 
-## The stock: two full 52-card decks, no jokers (104 cards total).
+## The stock: two full 52-card decks (104 cards), plus 4 jokers when enabled.
 ## Uses its own RNG so a whole game is reproducible from a single seed.
 
 const SUITS: Array[String] = ["hearts", "diamonds", "clubs", "spades"]
+const JOKER_COUNT := 4
 
 var cards: Array[Card] = []
 var rng := RandomNumberGenerator.new()
@@ -15,7 +16,7 @@ func _init(seed_value: int = -1) -> void:
 	else:
 		rng.randomize()
 
-func build_double_deck() -> void:
+func build_double_deck(include_jokers := false) -> void:
 	cards.clear()
 	for _copy in 2:
 		for suit in SUITS:
@@ -24,6 +25,13 @@ func build_double_deck() -> void:
 				c.suit = suit
 				c.rank = rank
 				cards.append(c)
+	if include_jokers:
+		for _i in JOKER_COUNT:
+			var j := Card.new()
+			j.suit = "joker"
+			j.rank = 0
+			j.is_joker = true
+			cards.append(j)
 
 func shuffle() -> void:
 	# Fisher-Yates using our own RNG (Array.shuffle() would use the global one).

@@ -31,6 +31,19 @@ extends Control
 ## time, its cards fly from where they were (the enemy's hidden hand or their
 ## previous spot on the table) to where they land, and every card the enemy
 ## touched stays highlighted in gold until the next enemy acts.
+##
+## Your hand works like Balatro's: it keeps whatever order you give it. Drag
+## a card onto another hand card to move it there (left half = before, right
+## half = after), drag to the hand's empty space to send it to the end, or
+## use the "Sort: rank" / "Sort: suit" buttons.
+##
+## The Settings dialog holds: the enemy AI graph (vertical = weak→strong,
+## horizontal = quick→conservative; applies from the next enemy turn), the
+## number of enemies (1-3, next game), cards drawn per turn (1-3, applies
+## immediately), and the joker toggle (next game). Jokers (★) count as any
+## card; a joker in a valid group shows the card it currently stands for
+## (e.g. ★7♥), and if you hold that exact card you can drop it on the joker
+## to swap it out and take the wildcard into your hand.
 
 const AI_THINK_DELAY := 0.6
 const AI_MOVE_DELAY := 0.5
@@ -40,6 +53,7 @@ const DRAG_TYPE := "machiavelli_cards"
 
 ## The UI seats at most this many players: you + up to 3 opponents.
 const MAX_PLAYERS := 4
+const ENEMY_NAMES := ["Rosso", "Nero", "Bianco"]
 
 const CARD_SIZE := Vector2(78, 108)
 const CARD_FONT_SIZE := 28
@@ -68,6 +82,8 @@ const COL_MELD_OK := Color(0.35, 0.75, 0.45)
 const COL_MELD_BAD := Color(0.92, 0.35, 0.30)
 const COL_CHIP_BG := Color(0.13, 0.14, 0.17)
 const COL_CHIP_ACTIVE := Color(0.93, 0.72, 0.13)
+const COL_JOKER := Color(0.48, 0.20, 0.62)
+const COL_JOKER_BG := Color(0.96, 0.92, 0.98)
 
 var gm: GameManager
 var selected: Array[Card] = []
@@ -82,6 +98,14 @@ var card_nodes := {}
 # player_id -> the container of card backs for that opponent; rebuilt on each
 # refresh, used as the animation origin for cards played from a hidden hand.
 var opponent_backs := {}
+
+# Settings (the Settings dialog). The AI graph and draw count apply
+# immediately; enemy count and jokers take effect on the next new game.
+var ai_strength := 1.0    # 0 = weak, 1 = strong
+var ai_style := 0.0       # 0 = quick, 1 = conservative
+var enemy_count := 2      # 1-3
+var draw_per_turn := 1    # 1-3
+var include_jokers := false
 
 var seat_top: VBoxContainer
 var seat_left: VBoxContainer
@@ -99,7 +123,11 @@ var undo_action_btn: Button
 var reset_btn: Button
 var end_turn_btn: Button
 var draw_btn: Button
+var settings_btn: Button
 var new_game_btn: Button
+var settings_dialog: AcceptDialog
+var ai_graph: AIGraph
+var ai_desc_label: Label
 var anim_layer: Control
 
 func _ready() -> void:
@@ -118,11 +146,20 @@ func _new_game() -> void:
 	highlighted.clear()
 	ai_running = false
 	_clear_children(anim_layer)
-	gm.setup(["You", "Rosso", "Nero"])
+	var names: Array = ["You"]
+	for i in enemy_count:
+		names.append(ENEMY_NAMES[i])
+	gm.setup(names, GameManager.DEFAULT_HAND_SIZE, -1, include_jokers)
+	gm.draw_per_turn = draw_per_turn
 	log_box.clear()
 	_set_status("Your turn. Drag cards to the table (or click to select) — "
 		+ "open by laying down a valid group from your hand.")
-	_log("New game: 13 cards each, double deck, no jokers.")
+	_log("New game: %d enem%s, 13 cards each, double deck, %s." % [enemy_count,
+		"y" if enemy_count == 1 else "ies",
+		"4 jokers in" if include_jokers else "no jokers"])
+	if include_jokers:
+		_log("Jokers (★) count as any card. A joker in a valid group shows what "
+			+ "it stands for — drop the real card on it to swap the joker into your hand.")
 	_log("Opening rule: lay down a valid group from your own hand before "
 		+ "you can touch other groups on the table.")
 	_refresh()
@@ -201,15 +238,31 @@ func _build_layout() -> void:
 	var hand_col := VBoxContainer.new()
 	hand_col.add_theme_constant_override("separation", 4)
 	hand_panel.add_child(hand_col)
+	var hand_top := HBoxContainer.new()
+	hand_top.add_theme_constant_override("separation", 8)
+	hand_col.add_child(hand_top)
 	hand_title = Label.new()
+	hand_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hand_title.add_theme_font_size_override("font_size", 15)
 	hand_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
-	hand_col.add_child(hand_title)
+	hand_top.add_child(hand_title)
+	var sort_rank_btn := Button.new()
+	sort_rank_btn.text = "Sort: rank"
+	sort_rank_btn.tooltip_text = "Sort your hand by rank (jokers last)"
+	sort_rank_btn.focus_mode = Control.FOCUS_NONE
+	sort_rank_btn.pressed.connect(_on_sort_rank_pressed)
+	hand_top.add_child(sort_rank_btn)
+	var sort_suit_btn := Button.new()
+	sort_suit_btn.text = "Sort: suit"
+	sort_suit_btn.tooltip_text = "Sort your hand by suit, then rank (jokers last)"
+	sort_suit_btn.focus_mode = Control.FOCUS_NONE
+	sort_suit_btn.pressed.connect(_on_sort_suit_pressed)
+	hand_top.add_child(sort_suit_btn)
 	hand_box = HFlowContainer.new()
 	hand_box.add_theme_constant_override("h_separation", 4)
 	hand_box.add_theme_constant_override("v_separation", 4)
 	hand_col.add_child(hand_box)
-	for zone: Control in [hand_panel, hand_col, hand_title, hand_box]:
+	for zone: Control in [hand_panel, hand_col, hand_top, hand_title, hand_box]:
 		zone.set_drag_forwarding(Callable(), _can_drop_on_hand, _drop_on_hand)
 
 	# Action row.
@@ -249,6 +302,12 @@ func _build_layout() -> void:
 	draw_btn.pressed.connect(_on_draw_pressed)
 	actions.add_child(draw_btn)
 
+	settings_btn = Button.new()
+	settings_btn.text = "Settings"
+	settings_btn.tooltip_text = "Enemy AI, enemy count, draw count and jokers"
+	settings_btn.pressed.connect(_on_settings_pressed)
+	actions.add_child(settings_btn)
+
 	new_game_btn = Button.new()
 	new_game_btn.text = "New game"
 	new_game_btn.pressed.connect(_new_game)
@@ -269,6 +328,95 @@ func _build_layout() -> void:
 	anim_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	anim_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(anim_layer)
+
+	_build_settings_dialog()
+
+func _build_settings_dialog() -> void:
+	settings_dialog = AcceptDialog.new()
+	settings_dialog.title = "Settings"
+	settings_dialog.ok_button_text = "Done"
+	add_child(settings_dialog)
+
+	var col := VBoxContainer.new()
+	col.custom_minimum_size = Vector2(380, 0)
+	col.add_theme_constant_override("separation", 10)
+	settings_dialog.add_child(col)
+
+	var ai_label := Label.new()
+	ai_label.text = "Enemy AI — click the graph: up = stronger, right = more conservative."
+	ai_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(ai_label)
+
+	ai_graph = AIGraph.new()
+	ai_graph.set_values(ai_style, ai_strength)
+	ai_graph.value_changed.connect(_on_ai_graph_changed)
+	col.add_child(ai_graph)
+
+	ai_desc_label = Label.new()
+	ai_desc_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.7))
+	ai_desc_label.text = _ai_description()
+	col.add_child(ai_desc_label)
+
+	col.add_child(HSeparator.new())
+
+	col.add_child(_make_spin_row("Enemies (next game):", 1, 3, enemy_count,
+		_on_enemy_count_changed))
+	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, draw_per_turn,
+		_on_draw_count_changed))
+
+	var joker_check := CheckBox.new()
+	joker_check.text = "Include 4 jokers — wildcards (next game)"
+	joker_check.button_pressed = include_jokers
+	joker_check.toggled.connect(_on_jokers_toggled)
+	col.add_child(joker_check)
+
+func _make_spin_row(text: String, minimum: int, maximum: int, value: int,
+		on_changed: Callable) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(lbl)
+	var spin := SpinBox.new()
+	spin.min_value = minimum
+	spin.max_value = maximum
+	spin.step = 1
+	spin.value = value
+	spin.value_changed.connect(on_changed)
+	row.add_child(spin)
+	return row
+
+func _on_settings_pressed() -> void:
+	settings_dialog.popup_centered()
+
+func _on_enemy_count_changed(value: float) -> void:
+	enemy_count = int(value)
+
+func _on_draw_count_changed(value: float) -> void:
+	draw_per_turn = int(value)
+	gm.draw_per_turn = draw_per_turn
+
+func _on_jokers_toggled(on: bool) -> void:
+	include_jokers = on
+
+func _on_ai_graph_changed(style: float, strength: float) -> void:
+	ai_style = style
+	ai_strength = strength
+	ai_desc_label.text = _ai_description()
+
+func _ai_description() -> String:
+	var skill := "strong"
+	if ai_strength < 0.4:
+		skill = "weak"
+	elif ai_strength < 0.75:
+		skill = "capable"
+	var pace := "quick"
+	if ai_style >= 0.75:
+		pace = "conservative"
+	elif ai_style >= 0.4:
+		pace = "balanced"
+	return "Enemies play %s and %s. Applies from their next turn." % [skill, pace]
 
 func _make_seat() -> VBoxContainer:
 	var seat := VBoxContainer.new()
@@ -371,6 +519,7 @@ func _refresh_board() -> void:
 	board_flow.add_child(_make_new_group_zone())
 
 func _make_meld_panel(meld: CardSet) -> PanelContainer:
+	Rules.assign_jokers(meld.cards)
 	var panel := PanelContainer.new()
 	var valid := meld.is_valid()
 	var locked := _is_human_turn() and not gm.current_player_is_open() \
@@ -436,7 +585,14 @@ func _refresh_hand() -> void:
 	else:
 		hand_title.text = "Your hand (%d) — not open yet: lay down a valid group " % hand.size() \
 			+ "from these cards before touching the table"
-	for c in Rules.display_order(hand):
+	# The hand keeps whatever order the player gave it (drag to rearrange,
+	# sort buttons to sort). A joker back in the hand is a free wildcard, so
+	# shed any representation left over from its time on the table.
+	for c in hand:
+		if c.is_joker:
+			c.joker_rank = 0
+			c.joker_suit = ""
+	for c in hand:
 		hand_box.add_child(_make_card_button(c))
 
 func _refresh_buttons() -> void:
@@ -475,13 +631,22 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	b.focus_mode = Control.FOCUS_NONE
 
 	var font_col := COL_CARD_RED if RED_SUITS.has(c.suit) else COL_CARD_BLACK
+	if c.is_joker:
+		font_col = COL_JOKER
+		if not b.disabled:
+			if c.joker_rank > 0:
+				b.tooltip_text = "Joker standing in for %s. Hold the real %s? " \
+					% [c.rep_label(), c.rep_label()] \
+					+ "Drop it on this joker to swap it into your hand."
+			else:
+				b.tooltip_text = "Joker — counts as any card."
 	for state in ["font_color", "font_pressed_color", "font_hover_color",
 			"font_hover_pressed_color", "font_focus_color"]:
 		b.add_theme_color_override(state, font_col)
 	b.add_theme_color_override("font_disabled_color", Color(font_col, 0.75))
 
-	var bg := COL_CARD_BG
-	var border := COL_CARD_BORDER
+	var bg := COL_JOKER_BG if c.is_joker else COL_CARD_BG
+	var border := COL_JOKER if c.is_joker else COL_CARD_BORDER
 	var border_w := 1
 	if highlighted.has(c):
 		bg = COL_HILITE_BG
@@ -502,8 +667,10 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 		b.set_drag_forwarding(_get_card_drag_data.bind(c, b),
 			_can_drop_on_meld.bind(meld), _drop_on_meld.bind(meld))
 	else:
+		# Hand cards are also reorder targets: dropping other hand cards on
+		# them moves those cards next to this one.
 		b.set_drag_forwarding(_get_card_drag_data.bind(c, b),
-			_can_drop_on_hand, _drop_on_hand)
+			_can_drop_on_hand_card.bind(c), _drop_on_hand_card.bind(c))
 	card_nodes[c] = b
 	return b
 
@@ -618,7 +785,7 @@ func _can_drop_on_meld(_at_position: Vector2, data: Variant, meld: CardSet) -> b
 	return gm.current_player_is_open() or gm.is_own_staged_meld(meld)
 
 func _drop_on_meld(_at_position: Vector2, data: Variant, meld: CardSet) -> void:
-	_stage_move(_drag_cards(data), meld)
+	_play_on_meld(_drag_cards(data), meld)
 
 func _can_drop_new_group(_at_position: Vector2, data: Variant) -> bool:
 	return _is_human_turn() and not _drag_cards(data).is_empty()
@@ -626,13 +793,89 @@ func _can_drop_new_group(_at_position: Vector2, data: Variant) -> bool:
 func _drop_new_group(_at_position: Vector2, data: Variant) -> void:
 	_stage_move(_drag_cards(data), null)
 
+## The hand takes two kinds of drops: cards already in the hand (a reorder)
+## and cards played to the table this turn (a return).
 func _can_drop_on_hand(_at_position: Vector2, data: Variant) -> bool:
-	return _is_human_turn() and gm.can_return_to_hand(_drag_cards(data))
+	if not _is_human_turn():
+		return false
+	var cards := _drag_cards(data)
+	return _all_in_hand(cards) or gm.can_return_to_hand(cards)
 
 func _drop_on_hand(_at_position: Vector2, data: Variant) -> void:
-	_return_to_hand(_drag_cards(data))
+	var cards := _drag_cards(data)
+	if _all_in_hand(cards):
+		_reorder_hand(cards, gm.players[0].hand.size())
+	else:
+		_return_to_hand(cards)
+
+func _can_drop_on_hand_card(at_position: Vector2, data: Variant, _target: Card) -> bool:
+	return _can_drop_on_hand(at_position, data)
+
+## Dropping hand cards on another hand card slots them next to it: left half
+## of the card = before it, right half = after.
+func _drop_on_hand_card(at_position: Vector2, data: Variant, target: Card) -> void:
+	var cards := _drag_cards(data)
+	if not _all_in_hand(cards):
+		_return_to_hand(cards)
+		return
+	var idx := gm.players[0].hand.find(target)
+	if idx == -1:
+		return
+	if at_position.x > CARD_SIZE.x / 2.0:
+		idx += 1
+	_reorder_hand(cards, idx)
+
+func _all_in_hand(cards: Array[Card]) -> bool:
+	if cards.is_empty():
+		return false
+	var hand := gm.players[0].hand
+	for c in cards:
+		if not hand.has(c):
+			return false
+	return true
+
+## Move `cards` (all already in the hand) so they sit just before hand index
+## `idx`, keeping their dragged order. Pure presentation — no engine move is
+## staged and nothing becomes undoable.
+func _reorder_hand(cards: Array[Card], idx: int) -> void:
+	var hand := gm.players[0].hand
+	var shift := 0
+	for c in cards:
+		var i := hand.find(c)
+		if i != -1 and i < idx:
+			shift += 1
+	for c in cards:
+		hand.erase(c)
+	var insert_at := clampi(idx - shift, 0, hand.size())
+	for i in cards.size():
+		hand.insert(insert_at + i, cards[i])
+	_refresh()
 
 # --- Input handlers -----------------------------------------------------------
+
+## Play cards onto an existing meld — but if a single natural card is played
+## onto a meld whose joker stands for exactly that card, it becomes the joker
+## swap: the real card takes the joker's place and the wildcard joins the hand.
+func _play_on_meld(cards: Array[Card], meld: CardSet) -> void:
+	if cards.size() == 1 and not cards[0].is_joker:
+		var joker := _matching_joker(cards[0], meld)
+		if joker != null:
+			var err := gm.swap_joker(cards[0], joker, meld)
+			selected.clear()
+			if err == "":
+				_log("You swapped %s for the joker." % cards[0].label())
+				_set_status("Swapped — the joker is back in your hand as a wildcard.")
+			else:
+				_set_status(err)
+			_refresh()
+			return
+	_stage_move(cards, meld)
+
+func _matching_joker(c: Card, meld: CardSet) -> Card:
+	for t in meld.cards:
+		if t.is_joker and t.joker_rank == c.rank and t.joker_suit == c.suit:
+			return t
+	return null
 
 ## Stage a move through the engine (meld == null starts a new group) and show
 ## the engine's error, if any, in the status line.
@@ -669,7 +912,25 @@ func _on_new_meld_pressed() -> void:
 	_stage_move(selected.duplicate(), null)
 
 func _on_add_to_meld_pressed(meld: CardSet) -> void:
-	_stage_move(selected.duplicate(), meld)
+	_play_on_meld(selected.duplicate(), meld)
+
+func _on_sort_rank_pressed() -> void:
+	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
+		if a.is_joker != b.is_joker:
+			return b.is_joker
+		if a.rank != b.rank:
+			return a.rank < b.rank
+		return a.suit < b.suit)
+	_refresh()
+
+func _on_sort_suit_pressed() -> void:
+	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
+		if a.is_joker != b.is_joker:
+			return b.is_joker
+		if a.suit != b.suit:
+			return a.suit < b.suit
+		return a.rank < b.rank)
+	_refresh()
 
 func _on_return_pressed() -> void:
 	_return_to_hand(selected.duplicate())
@@ -735,6 +996,7 @@ func _run_ai_turns() -> void:
 		return
 	ai_running = true
 	var gen := game_generation
+	var profile := AIProfile.new(ai_strength, ai_style)
 	_refresh()
 	while not gm.is_game_over and gm.current_player().is_opponent:
 		var enemy := gm.current_player()
@@ -746,7 +1008,7 @@ func _run_ai_turns() -> void:
 			return
 		var played_any := false
 		while true:
-			var move: Dictionary = GreedyAI.plan_move(gm)
+			var move: Dictionary = GreedyAI.plan_move(gm, profile)
 			if move.is_empty():
 				break
 			var moved: Array[Card] = move["cards"]

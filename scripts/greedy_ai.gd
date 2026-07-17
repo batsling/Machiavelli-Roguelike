@@ -1,23 +1,36 @@
 class_name GreedyAI
 extends RefCounted
 
-## Baseline opponent AI. Greedy and deterministic given the same game state,
-## so seeded games replay exactly.
+## Baseline opponent AI. With no profile it plays at full strength and quick
+## style, greedy and deterministic given the same game state, so seeded games
+## replay exactly. Pass an AIProfile to tune it: strength (weak → strong)
+## decides how much of the move space it sees and how often it blunders,
+## style (quick → conservative) decides how eagerly it commits cards.
 ##
 ## Moves are produced one at a time via plan_move() so the UI can show each
 ## play as it happens; take_turn() drives a whole turn at once for headless
 ## play and tests. In priority order the AI will:
-##  1. lay down any complete meld it holds (largest first),
+##  1. lay down any complete meld it holds (largest first; jokers fill in
+##     when no natural meld exists),
 ##  2. lay off single hand cards onto existing table melds,
-##  3. rearrange the table: borrow one card from a meld (only when the meld
-##     left behind is still valid) to complete a new meld with 2+ hand cards.
-## Steps 2 and 3 respect the opening rule: until the AI has laid down a valid
+##  3. lay off pairs of hand cards onto one meld (strong AI only — plays the
+##     single-card scan can't see, like both ends of a run at once),
+##  4. rearrange the table: borrow one card from a meld (only when the meld
+##     left behind is still valid) to complete a new meld with 2+ hand cards
+##     (not for weak AI).
+## Steps 2-4 respect the opening rule: until the AI has laid down a valid
 ## meld purely from its own hand, it will not touch other melds on the table.
+##
+## Style hooks: a conservative AI sits on its opening meld until the meld is
+## big enough (or the game forces its hand) and won't lay off cards that
+## still look useful with the rest of its hand (pairs, near-runs, jokers).
+## A weak AI additionally rolls AIProfile.misses_move() before every planned
+## move and may simply miss a play it could have made.
 
-static func take_turn(gm: GameManager) -> void:
+static func take_turn(gm: GameManager, profile: AIProfile = null) -> void:
 	var played_any := false
 	while true:
-		var move := plan_move(gm)
+		var move := plan_move(gm, profile)
 		if move.is_empty():
 			break
 		apply_move(gm, move)
@@ -33,23 +46,28 @@ static func take_turn(gm: GameManager) -> void:
 		gm.draw_and_end_turn()
 
 ## Plan the next single move for the current player. Returns {} when no move
-## exists, otherwise a Dictionary with:
+## exists (or the AI chooses not to see/make one), otherwise a Dictionary with:
 ##   cards: Array[Card]   every card that moves (from hand and/or table)
 ##   dest:  CardSet|null  existing meld to extend, or null for a new group
 ##   text:  String        human-readable description ("<name> " + text)
-static func plan_move(gm: GameManager) -> Dictionary:
+static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
+	if profile != null and profile.misses_move():
+		return {}
 	var hand := gm.current_player().hand
 	# 1. Complete meld straight from hand.
 	var meld := _find_meld(hand)
-	if not meld.is_empty():
+	if not meld.is_empty() and _will_lay_meld(gm, meld, profile):
 		return {"cards": meld, "dest": null,
 			"text": "lays down %s" % _cards_text(meld)}
 	# Not yet opened (no valid own meld on the table): the rules forbid
 	# touching other melds, so there is nothing more to plan.
 	if not gm.current_player_is_open():
 		return {}
+	var hold_keys := profile != null and profile.holds_key_cards()
 	# 2. Single-card lay-off onto an existing meld.
 	for c in hand:
+		if hold_keys and _seems_important(c, hand):
+			continue
 		for m in gm.board.melds:
 			var candidate: Array[Card] = m.cards.duplicate()
 			candidate.append(c)
@@ -57,24 +75,41 @@ static func plan_move(gm: GameManager) -> Dictionary:
 				var single: Array[Card] = [c]
 				return {"cards": single, "dest": m,
 					"text": "adds %s to %s" % [c.label(), _cards_text(m.cards)]}
-	# 3. Rearrange the table: borrow one card from a meld to finish a new meld
+	# 3. Two-card lay-off (strong AI): both cards land on the same meld.
+	if profile == null or profile.sees_pair_layoffs():
+		for i in hand.size():
+			for j in range(i + 1, hand.size()):
+				var a := hand[i]
+				var b := hand[j]
+				if hold_keys and _pair_seems_important(a, b, hand):
+					continue
+				for m in gm.board.melds:
+					var candidate: Array[Card] = m.cards.duplicate()
+					candidate.append(a)
+					candidate.append(b)
+					if Rules.is_valid_meld(candidate):
+						var pair: Array[Card] = [a, b]
+						return {"cards": pair, "dest": m,
+							"text": "adds %s to %s" % [_cards_text(pair), _cards_text(m.cards)]}
+	# 4. Rearrange the table: borrow one card from a meld to finish a new meld
 	# together with hand cards. Only cards whose removal leaves a valid meld
 	# behind are candidates.
-	for m in gm.board.melds:
-		for t in m.cards:
-			var rest: Array[Card] = m.cards.duplicate()
-			rest.erase(t)
-			if not Rules.is_valid_meld(rest):
-				continue
-			var pool: Array[Card] = hand.duplicate()
-			pool.append(t)
-			var combo := _find_meld(pool)
-			if combo.is_empty():
-				continue
-			# Step 1 found no hand-only meld, so combo necessarily uses t and
-			# therefore plays at least two hand cards.
-			return {"cards": combo, "dest": null,
-				"text": "takes %s from the table to build %s" % [t.label(), _cards_text(combo)]}
+	if profile == null or profile.can_rearrange():
+		for m in gm.board.melds:
+			for t in m.cards:
+				var rest: Array[Card] = m.cards.duplicate()
+				rest.erase(t)
+				if not Rules.is_valid_meld(rest):
+					continue
+				var pool: Array[Card] = hand.duplicate()
+				pool.append(t)
+				var combo := _find_meld(pool)
+				if combo.is_empty():
+					continue
+				# Step 1 found no hand-only meld, so combo necessarily uses t and
+				# therefore plays at least two hand cards.
+				return {"cards": combo, "dest": null,
+					"text": "takes %s from the table to build %s" % [t.label(), _cards_text(combo)]}
 	return {}
 
 ## Apply a move produced by plan_move() to the (staged) game state.
@@ -90,9 +125,66 @@ static func apply_move(gm: GameManager, move: Dictionary) -> void:
 		# Should be unreachable: plan_move only proposes legal moves.
 		push_warning("GreedyAI staged an illegal move (%s)" % err)
 
+## Whether the AI commits to laying this meld right now. Always yes once
+## open; a conservative AI holds its opening meld until it is big enough,
+## unless the game is about to end from under it.
+static func _will_lay_meld(gm: GameManager, meld: Array[Card], profile: AIProfile) -> bool:
+	if profile == null or gm.current_player_is_open():
+		return true
+	if meld.size() >= profile.opening_threshold():
+		return true
+	return _under_pressure(gm)
+
+## The endgame is close: the stock is nearly dry or someone is nearly out of
+## cards. A conservative AI stops sandbagging at this point.
+static func _under_pressure(gm: GameManager) -> bool:
+	if gm.deck.size() <= gm.players.size() * 2:
+		return true
+	for p in gm.players:
+		if p != gm.current_player() and p.hand.size() <= 4:
+			return true
+	return false
+
+## A card worth holding on to: a joker, or one that pairs up with another
+## hand card (same rank for a future set, or a same-suit neighbor for a
+## future run).
+static func _seems_important(c: Card, hand: Array[Card]) -> bool:
+	if c.is_joker:
+		return true
+	for o in hand:
+		if o == c or o.is_joker:
+			continue
+		if o.rank == c.rank and o.suit != c.suit:
+			return true
+		if o.suit == c.suit and absi(o.rank - c.rank) <= 1:
+			return true
+	return false
+
+## Importance for a pair lay-off is judged against the hand WITHOUT the pair:
+## two cards that only back each other up are fine to play together.
+static func _pair_seems_important(a: Card, b: Card, hand: Array[Card]) -> bool:
+	var rest: Array[Card] = hand.duplicate()
+	rest.erase(a)
+	rest.erase(b)
+	return _seems_important(a, rest) or _seems_important(b, rest)
+
 ## Largest complete meld (set or run) that can be formed from the given cards.
+## Prefers all-natural melds; falls back to completing one with jokers.
 ## Returns an empty array if none exists.
 static func _find_meld(pool: Array[Card]) -> Array[Card]:
+	var naturals: Array[Card] = []
+	var jokers: Array[Card] = []
+	for c in pool:
+		if c.is_joker:
+			jokers.append(c)
+		else:
+			naturals.append(c)
+	var best := _find_natural_meld(naturals)
+	if best.is_empty() and not jokers.is_empty():
+		best = _find_joker_meld(naturals, jokers)
+	return best
+
+static func _find_natural_meld(pool: Array[Card]) -> Array[Card]:
 	var best: Array[Card] = []
 	# Sets: same rank, distinct suits (two decks mean duplicate suits exist).
 	var by_rank := {}
@@ -140,6 +232,22 @@ static func _find_meld(pool: Array[Card]) -> Array[Card]:
 		if chain.size() > best.size() and Rules.is_valid_meld(chain):
 			best = chain.duplicate()
 	return best
+
+## Fallback when no natural meld exists: complete one with jokers — two
+## naturals plus a joker, or one natural plus two jokers. Rules.is_valid_meld
+## does the wildcard reasoning.
+static func _find_joker_meld(naturals: Array[Card], jokers: Array[Card]) -> Array[Card]:
+	for i in naturals.size():
+		for j in range(i + 1, naturals.size()):
+			var cand: Array[Card] = [naturals[i], naturals[j], jokers[0]]
+			if Rules.is_valid_meld(cand):
+				return cand
+	if jokers.size() >= 2:
+		for c in naturals:
+			var cand: Array[Card] = [c, jokers[0], jokers[1]]
+			if Rules.is_valid_meld(cand):
+				return cand
+	return []
 
 static func _cards_text(cards: Array[Card]) -> String:
 	var parts := PackedStringArray()

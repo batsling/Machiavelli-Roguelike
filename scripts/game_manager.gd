@@ -4,10 +4,10 @@ extends Node
 ## Core engine for a vanilla game of Machiavelli (the Italian rummy variant).
 ##
 ## Rules implemented:
-##  - Two full 52-card decks, no jokers; each player is dealt a starting hand,
-##    the rest forms the stock.
+##  - Two full 52-card decks (plus 4 wildcards when jokers are enabled); each
+##    player is dealt a starting hand, the rest forms the stock.
 ##  - On your turn you either play at least one card from your hand onto the
-##    table, or draw one card from the stock. While playing you may freely
+##    table, or draw from the stock (draw_per_turn cards). While playing you may freely
 ##    rearrange every meld on the table — the only requirement is that when
 ##    the turn ends, every meld on the table is valid (Rules.is_valid_meld).
 ##  - Opening: until a player has laid down at least one valid meld built
@@ -42,19 +42,26 @@ var board := Board.new()
 var deck: Deck = null
 var turn_index := 0
 var is_game_over := false
+## How many cards a player draws when they draw instead of playing (1-3 from
+## the settings menu). Drawing stops early when the stock runs dry; a turn
+## only counts as a pass when zero cards could be drawn.
+var draw_per_turn := 1
 
-# Staging state for the current turn.
+# Staging state for the current turn. _hand_snapshot is the current player's
+# hand at the start of the turn; swap_joker() edits it in place (the joker
+# legally becomes "a card you started the turn with"), which is why every
+# undo entry carries its own copy.
 var _hand_snapshot: Array[Card] = []
-var _board_snapshot: Array = []
-# One {hand, board} snapshot per staged move, so single moves can be undone.
+# One {hand, board, snapshot} state per staged move, so moves can be undone.
 var _undo_stack: Array[Dictionary] = []
 var _consecutive_passes := 0
 
-func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: int = -1) -> void:
+func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: int = -1,
+		include_jokers := false) -> void:
 	players.clear()
 	board = Board.new()
 	deck = Deck.new(seed_value)
-	deck.build_double_deck()
+	deck.build_double_deck(include_jokers)
 	deck.shuffle()
 	turn_index = 0
 	is_game_over = false
@@ -110,6 +117,7 @@ func undo_action() -> bool:
 	var snap: Dictionary = _undo_stack.pop_back()
 	current_player().hand.assign(snap["hand"])
 	board.restore(snap["board"])
+	_hand_snapshot.assign(snap["snapshot"])
 	board_changed.emit()
 	return true
 
@@ -117,11 +125,14 @@ func can_undo_action() -> bool:
 	return not _undo_stack.is_empty()
 
 ## Undo everything staged this turn: table and hand return to how they were
-## at the start of the turn.
+## at the start of the turn (the oldest undo entry holds exactly that state).
 func reset_turn() -> void:
-	var p := current_player()
-	p.hand = _hand_snapshot.duplicate()
-	board.restore(_board_snapshot)
+	if _undo_stack.is_empty():
+		return
+	var first: Dictionary = _undo_stack[0]
+	current_player().hand.assign(first["hand"])
+	board.restore(first["board"])
+	_hand_snapshot.assign(first["snapshot"])
 	_undo_stack.clear()
 	board_changed.emit()
 
@@ -155,6 +166,42 @@ func return_cards_to_hand(cards_to_return: Array[Card]) -> String:
 		board.remove_card(c)
 		p.hand.append(c)
 	board.prune_empty()
+	board_changed.emit()
+	return ""
+
+## Swap a natural card from the current player's hand for a joker on the
+## table that currently stands for exactly that card (see Rules.assign_jokers).
+## The joker comes back to the hand as a free wildcard. The exchange is
+## card-for-card, so it does not count as playing a card — the turn still
+## needs at least one card played (or a draw) to end. Returns "" on success
+## or a human-readable reason the swap is not allowed.
+func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
+	var p := current_player()
+	if not joker.is_joker or joker.joker_rank == 0:
+		return "That card is not a joker with a known value."
+	if not meld.cards.has(joker):
+		return "That joker is not in that group."
+	if not p.hand.has(hand_card) or hand_card.is_joker:
+		return "Only a real card from your hand can swap for a joker."
+	if hand_card.rank != joker.joker_rank or hand_card.suit != joker.joker_suit:
+		return "That joker stands for %s — only that exact card can swap for it." \
+			% joker.rep_label()
+	if not current_player_is_open() and not is_own_staged_meld(meld):
+		return "You can't touch the table before opening — " \
+			+ "lay down a valid group from your own hand first."
+	_push_undo()
+	meld.cards[meld.cards.find(joker)] = hand_card
+	p.hand.erase(hand_card)
+	p.hand.append(joker)
+	# The joker now counts as a card the player started the turn with, in
+	# place of the natural card that took its spot on the table.
+	var snap_idx := _hand_snapshot.find(hand_card)
+	if snap_idx != -1:
+		_hand_snapshot[snap_idx] = joker
+	else:
+		_hand_snapshot.append(joker)
+	joker.joker_rank = 0
+	joker.joker_suit = ""
 	board_changed.emit()
 	return ""
 
@@ -223,16 +270,21 @@ func commit_turn() -> String:
 	_advance()
 	return ""
 
-## Abandon any staged plays, draw one card (or pass if the stock is empty)
-## and end the turn.
+## Abandon any staged plays, draw draw_per_turn cards (or pass if the stock
+## is empty) and end the turn.
 func draw_and_end_turn() -> void:
 	reset_turn()
 	var p := current_player()
-	var card := deck.draw()
-	if card != null:
+	var drew := 0
+	for _i in draw_per_turn:
+		var card := deck.draw()
+		if card == null:
+			break
 		p.hand.append(card)
-		_consecutive_passes = 0
+		drew += 1
 		card_drawn.emit(p, card)
+	if drew > 0:
+		_consecutive_passes = 0
 	else:
 		_consecutive_passes += 1
 		player_passed.emit(p)
@@ -259,12 +311,12 @@ func _push_undo() -> void:
 	_undo_stack.append({
 		"hand": current_player().hand.duplicate(),
 		"board": board.snapshot(),
+		"snapshot": _hand_snapshot.duplicate(),
 	})
 
 func _begin_turn() -> void:
 	var p := current_player()
 	_hand_snapshot = p.hand.duplicate()
-	_board_snapshot = board.snapshot()
 	_undo_stack.clear()
 	turn_started.emit(p)
 

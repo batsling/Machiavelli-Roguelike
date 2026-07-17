@@ -6,13 +6,20 @@ layer (card effects, health/gold, encounters) will be built on.
 
 ## Rules implemented
 
-- Two full 52-card decks, no jokers (104 cards); 3 players (you + 2 AI), 13 cards each.
+- Two full 52-card decks (104 cards); you + 1-3 AI enemies (default 2), 13 cards
+  each. Optional: 4 jokers in the deck (settings).
 - A valid table group is a **set** (3–4 cards of one rank, all different suits) or a
   **run** (3+ consecutive cards of one suit; ace plays low `A-2-3` or high `Q-K-A`,
   never wrapping).
-- On your turn: play **at least one card from your hand**, or draw one card.
+- On your turn: play **at least one card from your hand**, or draw (1-3 cards,
+  set in settings; default 1).
   While playing you may freely rearrange *everything* on the table — the signature
   Machiavelli move — as long as every group is valid when you end the turn.
+- **Jokers** (optional, ★): count as any card, but a group needs at least one real
+  card to anchor them. A joker in a valid group shows the card it stands for
+  (e.g. `★7♥`); a player holding that exact card may drop it on the joker to swap
+  it out and take the wildcard into their hand (the exchange itself doesn't count
+  as playing a card).
 - **Opening rule** (applies to every player, human and AI): until you have laid
   down at least one valid group built *only* from your own hand, you may not add
   cards to other groups or take cards from them. Laying your own valid group
@@ -45,16 +52,39 @@ On your turn:
    the last staged move; **Undo turn** puts the whole turn back.
 5. **Draw & end turn** if you can't or won't play (this also abandons staged moves).
 
+Your hand works like Balatro's: it keeps whatever order you give it. Drag a card
+onto another hand card to slot it there (left half = before, right half = after),
+drag onto empty hand space to send it to the end, or use the **Sort: rank** /
+**Sort: suit** buttons.
+
 Enemy turns play out move by move on screen: each card an enemy plays flies from
 where it was (their hidden hand or its previous spot on the table) to where it
 lands, stays highlighted in gold, and the log narrates each move.
+
+## Settings
+
+The **Settings** button opens a dialog with:
+
+- **Enemy AI graph** — click to place the marker. Vertical axis is skill
+  (top = strong, bottom = weak), horizontal is style (left = quick,
+  right = conservative). A weak AI regularly misses plays it could have made; a
+  strong one sees single- and two-card lay-offs plus table rearrangements. A
+  quick AI dumps everything as soon as possible; a conservative one sits on its
+  opening meld until it's big enough (unless the endgame forces its hand) and
+  holds cards that still pair up with the rest of its hand. Applies from the
+  next enemy turn.
+- **Enemies** (1-3) — takes effect on the next new game.
+- **Cards drawn per turn** (1-3) — applies immediately, to everyone.
+- **Include 4 jokers** — takes effect on the next new game.
 
 ## Layout
 
 - `scripts/card.gd` — `Card` resource: suit, rank + roguelike effect flags (unused by
   the vanilla engine)
-- `scripts/rules.gd` — `Rules`: static set/run/meld validation, display ordering
-- `scripts/deck.gd` — `Deck`: double deck, seeded Fisher-Yates shuffle, stock
+- `scripts/rules.gd` — `Rules`: static set/run/meld validation (joker-aware),
+  joker value assignment, display ordering
+- `scripts/deck.gd` — `Deck`: double deck (optional jokers), seeded Fisher-Yates
+  shuffle, stock
 - `scripts/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
   future Trigger/Sticky effects)
 - `scripts/board.gd` — `Board`: the melds on the table, with snapshot/restore so a
@@ -64,10 +94,15 @@ lands, stays highlighted in gold, and the log narrates each move.
   the opening rule, commit validation, draw/pass, win detection; emits signals
   the UI listens to
 - `scripts/greedy_ai.gd` — `GreedyAI`: baseline opponent — plays complete melds from
-  hand, single-card lay-offs, and simple table rearrangements (borrows one card
-  from a group, when the leftover group stays valid, to complete a new meld with
-  hand cards); respects the opening rule; produces one move at a time so the UI
-  can animate enemy turns
+  hand (with joker fallbacks), single- and two-card lay-offs, and simple table
+  rearrangements (borrows one card from a group, when the leftover group stays
+  valid, to complete a new meld with hand cards); respects the opening rule;
+  produces one move at a time so the UI can animate enemy turns
+- `scripts/ai_profile.gd` — `AIProfile`: the skill/style knobs GreedyAI consults
+  (miss chance, search depth, opening threshold, key-card holding); unset =
+  strong + quick and fully deterministic
+- `scripts/ai_graph.gd` — `AIGraph`: the clickable 2D skill/style picker in the
+  settings dialog
 - `scripts/main_ui.gd` + `scenes/main.tscn` — drag-and-drop (or click-to-play) UI,
   built in code: styled cards, felt table, per-group validity outlines, opponent
   seats with face-down card backs, flying-card enemy-turn animations,
