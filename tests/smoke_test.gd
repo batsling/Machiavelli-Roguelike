@@ -12,6 +12,8 @@ const TOTAL_CARDS := 104
 
 func _init() -> void:
 	var failures := 0
+	if not _test_return_to_hand():
+		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value):
 			failures += 1
@@ -21,6 +23,37 @@ func _init() -> void:
 	else:
 		printerr("SMOKE TEST FAILED: %d/%d games had problems" % [failures, GAMES])
 		quit(1)
+
+## Cards staged from the hand this turn can be taken back into the hand;
+## cards still in the hand (or never played) cannot be "returned".
+func _test_return_to_hand() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 3)
+	var p := gm.current_player()
+	var played: Array[Card] = [p.hand[0], p.hand[1]]
+	if gm.move_cards_to_new_meld(played) != "":
+		printerr("return test: staging own hand cards was rejected")
+		ok = false
+	elif not gm.can_return_to_hand(played):
+		printerr("return test: staged cards not returnable")
+		ok = false
+	elif gm.return_cards_to_hand(played) != "":
+		printerr("return test: returning staged cards was rejected")
+		ok = false
+	elif p.hand.size() != 13 or not p.hand.has(played[0]) or not p.hand.has(played[1]):
+		printerr("return test: hand not restored after return")
+		ok = false
+	elif not gm.board.melds.is_empty():
+		printerr("return test: emptied meld not pruned from the board")
+		ok = false
+	elif gm.can_return_to_hand(played):
+		printerr("return test: cards already in hand reported returnable")
+		ok = false
+	gm.free()
+	if ok:
+		print("return-to-hand test OK")
+	return ok
 
 func _play_game(seed_value: int) -> bool:
 	var gm := GameManager.new()

@@ -3,37 +3,54 @@ extends Control
 ## Playable UI for vanilla Machiavelli, built entirely in code so the scene
 ## file stays trivial.
 ##
+## Table layout: you sit at the bottom; opponents sit around the table showing
+## the backs of their cards. The first enemy sits directly opposite you at the
+## top, the second on the left, and a fourth player (when one exists) sits on
+## the right — at most 4 seats in total. Backs overlap more as a hand grows so
+## every seat always fits on screen.
+##
 ## How to play: on your turn, drag cards — from your hand AND from any group
 ## on the table (rearranging the table is the heart of the game). Drop them
 ## onto a group (or any card in it) to add them there, or onto empty felt /
-## the "+ New group" zone to start a fresh group. Clicking still works too:
-## click cards to select them (they lift and turn blue), then click a group's
-## "+" button or "+ New group". Dragging a selected card drags the whole
-## selection.
+## the "+ New group" zone to start a fresh group. Cards you laid down this
+## turn can be dragged back into your hand (or selected and sent back with
+## the "Return to hand" button). Clicking still works too: click cards to
+## select them (they lift and turn blue), then click a group's "+" button or
+## "+ New group". Dragging a selected card drags the whole selection.
 ##
 ## Opening rule: until you have laid down at least one valid group built only
 ## from your own hand, you cannot add to other groups or take cards from them
-## (table cards are greyed out). The same rule binds the AI players.
+## (table cards are greyed out — except cards you played this turn, which stay
+## movable so you can always take them back). The same rule binds the AI.
 ##
 ## The table only has to be valid when you press "End turn". "Undo action"
 ## takes back the last staged move; "Undo turn" puts the whole turn back. If
 ## you can't (or won't) play, "Draw & end turn".
 ##
 ## Enemy turns play out visibly: each move the AI makes is applied one at a
-## time with a pause, and every card it touched stays highlighted in gold
-## until the next enemy acts — so you can see exactly what was laid down or
-## taken from the table.
+## time, its cards fly from where they were (the enemy's hidden hand or their
+## previous spot on the table) to where they land, and every card the enemy
+## touched stays highlighted in gold until the next enemy acts.
 
 const AI_THINK_DELAY := 0.6
-const AI_MOVE_DELAY := 0.9
+const AI_MOVE_DELAY := 0.5
+const AI_ANIM_TIME := 0.45
 const RED_SUITS := ["hearts", "diamonds"]
 const DRAG_TYPE := "machiavelli_cards"
+
+## The UI seats at most this many players: you + up to 3 opponents.
+const MAX_PLAYERS := 4
 
 const CARD_SIZE := Vector2(78, 108)
 const CARD_FONT_SIZE := 28
 const ADD_BTN_SIZE := Vector2(44, 108)
 const NEW_GROUP_SIZE := Vector2(150, 124)
 const UI_FONT_SIZE := 17
+const BACK_SIZE_TOP := Vector2(46, 64)  # portrait backs for the seat opposite you
+const BACK_SIZE_SIDE := Vector2(64, 46)  # landscape backs for the left/right seats
+const BACKS_MAX_LEN_TOP := 560.0
+const BACKS_MAX_LEN_SIDE := 330.0
+const SIDE_SEAT_WIDTH := 130.0
 
 const COL_FELT := Color(0.09, 0.30, 0.19)
 const COL_FELT_DARK := Color(0.07, 0.22, 0.14)
@@ -41,6 +58,8 @@ const COL_CARD_BG := Color(0.97, 0.96, 0.91)
 const COL_CARD_BORDER := Color(0.60, 0.56, 0.46)
 const COL_CARD_RED := Color(0.78, 0.13, 0.16)
 const COL_CARD_BLACK := Color(0.10, 0.10, 0.13)
+const COL_CARD_BACK := Color(0.17, 0.24, 0.50)
+const COL_CARD_BACK_EDGE := Color(0.93, 0.93, 0.97)
 const COL_SELECT := Color(0.20, 0.55, 0.95)
 const COL_SELECT_BG := Color(0.84, 0.91, 1.0)
 const COL_HILITE := Color(0.93, 0.72, 0.13)
@@ -57,20 +76,31 @@ var ai_running := false
 # Bumped on every new game so a suspended AI coroutine from the previous game
 # notices on resume and bails out instead of acting on the fresh state.
 var game_generation := 0
+# Card -> Button for every face-up card currently on screen; rebuilt on each
+# refresh so enemy-move animations can find source and destination positions.
+var card_nodes := {}
+# player_id -> the container of card backs for that opponent; rebuilt on each
+# refresh, used as the animation origin for cards played from a hidden hand.
+var opponent_backs := {}
 
-var players_box: HBoxContainer
+var seat_top: VBoxContainer
+var seat_left: VBoxContainer
+var seat_right: VBoxContainer
 var stock_label: Label
 var status_label: Label
 var log_box: RichTextLabel
 var board_flow: HFlowContainer
+var hand_panel: PanelContainer
 var hand_box: HFlowContainer
 var hand_title: Label
 var selection_label: Label
+var return_btn: Button
 var undo_action_btn: Button
 var reset_btn: Button
 var end_turn_btn: Button
 var draw_btn: Button
 var new_game_btn: Button
+var anim_layer: Control
 
 func _ready() -> void:
 	gm = GameManager.new()
@@ -87,6 +117,7 @@ func _new_game() -> void:
 	selected.clear()
 	highlighted.clear()
 	ai_running = false
+	_clear_children(anim_layer)
 	gm.setup(["You", "Rosso", "Nero"])
 	log_box.clear()
 	_set_status("Your turn. Drag cards to the table (or click to select) — "
@@ -113,23 +144,39 @@ func _build_layout() -> void:
 	root.offset_bottom = -14
 	add_child(root)
 
-	# Top bar: player chips + stock count.
+	# Top row: the first enemy's seat, centered directly opposite you, with the
+	# stock count tucked into the corner.
 	var top_bar := HBoxContainer.new()
 	top_bar.add_theme_constant_override("separation", 8)
 	root.add_child(top_bar)
-	players_box = HBoxContainer.new()
-	players_box.add_theme_constant_override("separation", 8)
-	players_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top_bar.add_child(players_box)
+	var top_pad_left := Control.new()
+	top_pad_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_bar.add_child(top_pad_left)
+	seat_top = _make_seat()
+	top_bar.add_child(seat_top)
+	var top_pad_right := Control.new()
+	top_pad_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_bar.add_child(top_pad_right)
 	stock_label = Label.new()
+	stock_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	top_bar.add_child(stock_label)
+
+	# Middle row: left seat, the felt, right seat (hidden until a 4th player).
+	var mid_row := HBoxContainer.new()
+	mid_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	mid_row.add_theme_constant_override("separation", 8)
+	root.add_child(mid_row)
+	seat_left = _make_seat()
+	seat_left.custom_minimum_size = Vector2(SIDE_SEAT_WIDTH, 0)
+	mid_row.add_child(seat_left)
 
 	# Table: green felt panel holding a flow of meld panels. The felt itself
 	# (panel, scroll area and flow) accepts drops to start a new group.
 	var table_panel := PanelContainer.new()
+	table_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	table_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	table_panel.add_theme_stylebox_override("panel", _panel_style(COL_FELT, 10))
-	root.add_child(table_panel)
+	mid_row.add_child(table_panel)
 	var table_scroll := ScrollContainer.new()
 	table_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	table_panel.add_child(table_scroll)
@@ -143,9 +190,13 @@ func _build_layout() -> void:
 	for zone: Control in [table_panel, table_scroll, board_flow]:
 		zone.set_drag_forwarding(Callable(), _can_drop_new_group, _drop_new_group)
 
-	# Hand: darker felt panel at the bottom.
-	var hand_panel := PanelContainer.new()
-	hand_panel.add_theme_stylebox_override("panel", _panel_style(COL_FELT_DARK, 10))
+	seat_right = _make_seat()
+	seat_right.custom_minimum_size = Vector2(SIDE_SEAT_WIDTH, 0)
+	mid_row.add_child(seat_right)
+
+	# Hand: darker felt panel at the bottom. The whole panel accepts drops so
+	# cards played this turn can be dragged back into the hand.
+	hand_panel = PanelContainer.new()
 	root.add_child(hand_panel)
 	var hand_col := VBoxContainer.new()
 	hand_col.add_theme_constant_override("separation", 4)
@@ -158,6 +209,8 @@ func _build_layout() -> void:
 	hand_box.add_theme_constant_override("h_separation", 4)
 	hand_box.add_theme_constant_override("v_separation", 4)
 	hand_col.add_child(hand_box)
+	for zone: Control in [hand_panel, hand_col, hand_title, hand_box]:
+		zone.set_drag_forwarding(Callable(), _can_drop_on_hand, _drop_on_hand)
 
 	# Action row.
 	var actions := HBoxContainer.new()
@@ -167,6 +220,12 @@ func _build_layout() -> void:
 	selection_label = Label.new()
 	selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	actions.add_child(selection_label)
+
+	return_btn = Button.new()
+	return_btn.text = "Return to hand"
+	return_btn.tooltip_text = "Put the selected cards you played this turn back in your hand"
+	return_btn.pressed.connect(_on_return_pressed)
+	actions.add_child(return_btn)
 
 	undo_action_btn = Button.new()
 	undo_action_btn.text = "Undo action"
@@ -205,19 +264,50 @@ func _build_layout() -> void:
 	log_box.fit_content = false
 	root.add_child(log_box)
 
+	# Overlay for the flying-card animations; never intercepts the mouse.
+	anim_layer = Control.new()
+	anim_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	anim_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(anim_layer)
+
+func _make_seat() -> VBoxContainer:
+	var seat := VBoxContainer.new()
+	seat.alignment = BoxContainer.ALIGNMENT_CENTER
+	seat.add_theme_constant_override("separation", 6)
+	return seat
+
 # --- Refresh ------------------------------------------------------------------
 
 func _refresh() -> void:
+	card_nodes.clear()
 	_prune_selection()
-	_refresh_players()
+	_refresh_seats()
 	_refresh_board()
 	_refresh_hand()
 	_refresh_buttons()
 
-func _refresh_players() -> void:
-	_clear_children(players_box)
-	for p in gm.players:
-		players_box.add_child(_make_player_chip(p))
+## Seat opponents around the table: players[1] opposite you, players[2] on the
+## left, players[3] on the right. Unused seats collapse.
+func _refresh_seats() -> void:
+	opponent_backs.clear()
+	var seats: Array = [seat_top, seat_left, seat_right]
+	var seated_players := mini(gm.players.size(), MAX_PLAYERS)
+	for i in seats.size():
+		var seat: VBoxContainer = seats[i]
+		_clear_children(seat)
+		var player_index := i + 1
+		if player_index >= seated_players:
+			seat.visible = false
+			continue
+		seat.visible = true
+		var p := gm.players[player_index]
+		var chip := _make_player_chip(p)
+		chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		seat.add_child(chip)
+		var backs := _make_card_backs(p.hand.size(), i == 0)
+		backs.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		seat.add_child(backs)
+		opponent_backs[p.player_id] = backs
 	stock_label.text = "Stock: %d" % gm.deck.size()
 
 func _make_player_chip(p: PlayerState) -> PanelContainer:
@@ -235,6 +325,39 @@ func _make_player_chip(p: PlayerState) -> PanelContainer:
 		lbl.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
 	chip.add_child(lbl)
 	return chip
+
+## A row (top seat) or column (side seats) of face-down cards. The overlap
+## tightens as the hand grows so the seat never exceeds a fixed footprint.
+func _make_card_backs(count: int, horizontal: bool) -> BoxContainer:
+	var box: BoxContainer
+	var back_size: Vector2
+	var max_len: float
+	if horizontal:
+		box = HBoxContainer.new()
+		back_size = BACK_SIZE_TOP
+		max_len = BACKS_MAX_LEN_TOP
+	else:
+		box = VBoxContainer.new()
+		back_size = BACK_SIZE_SIDE
+		max_len = BACKS_MAX_LEN_SIDE
+	var card_len := back_size.x if horizontal else back_size.y
+	if count > 1:
+		var step := minf(card_len * 0.55, (max_len - card_len) / (count - 1))
+		box.add_theme_constant_override("separation", int(step - card_len))
+	for _i in count:
+		box.add_child(_make_card_back(back_size))
+	return box
+
+func _make_card_back(back_size: Vector2) -> Panel:
+	var back := Panel.new()
+	back.custom_minimum_size = back_size
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = COL_CARD_BACK
+	sb.border_color = COL_CARD_BACK_EDGE
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(6)
+	back.add_theme_stylebox_override("panel", sb)
+	return back
 
 func _refresh_board() -> void:
 	_clear_children(board_flow)
@@ -301,6 +424,11 @@ func _make_new_group_zone() -> Button:
 	return zone
 
 func _refresh_hand() -> void:
+	var sb := _panel_style(COL_FELT_DARK, 10)
+	if _is_human_turn():
+		sb.border_color = COL_CHIP_ACTIVE
+		sb.set_border_width_all(2)
+	hand_panel.add_theme_stylebox_override("panel", sb)
 	_clear_children(hand_box)
 	var hand := gm.players[0].hand
 	if gm.players[0].has_opened:
@@ -313,6 +441,7 @@ func _refresh_hand() -> void:
 
 func _refresh_buttons() -> void:
 	var human_turn := _is_human_turn()
+	return_btn.disabled = not human_turn or not gm.can_return_to_hand(selected)
 	undo_action_btn.disabled = not human_turn or not gm.can_undo_action()
 	reset_btn.disabled = not human_turn or not gm.can_undo_action()
 	end_turn_btn.disabled = not human_turn
@@ -329,7 +458,8 @@ func _refresh_buttons() -> void:
 
 ## Card buttons are both click-to-select toggles and drag sources. Cards on the
 ## table (meld != null) are also drop targets for their own group, and are
-## greyed out until the player has opened.
+## greyed out until the player has opened; hand cards are drop targets for
+## returning played cards.
 func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	var on_board := meld != null
 	var b := Button.new()
@@ -337,7 +467,7 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	b.text = c.label()
 	b.button_pressed = selected.has(c)
 	b.custom_minimum_size = CARD_SIZE
-	b.disabled = not _card_is_interactive(on_board)
+	b.disabled = not _card_is_interactive(meld)
 	if on_board and b.disabled and _is_human_turn():
 		b.tooltip_text = "Locked until you open — lay down a valid group " \
 			+ "from your own hand first."
@@ -372,7 +502,9 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 		b.set_drag_forwarding(_get_card_drag_data.bind(c, b),
 			_can_drop_on_meld.bind(meld), _drop_on_meld.bind(meld))
 	else:
-		b.set_drag_forwarding(_get_card_drag_data.bind(c, b), Callable(), Callable())
+		b.set_drag_forwarding(_get_card_drag_data.bind(c, b),
+			_can_drop_on_hand, _drop_on_hand)
+	card_nodes[c] = b
 	return b
 
 func _card_style(bg: Color, border: Color, width: int) -> StyleBoxFlat:
@@ -413,26 +545,35 @@ func _prune_selection() -> void:
 	var in_hand := {}
 	for c in gm.players[0].hand:
 		in_hand[c] = true
-	var on_board := {}
-	for c in gm.board.all_cards():
-		on_board[c] = true
-	# Before opening, table cards can't be moved, so drop them from the
-	# selection too (e.g. after undoing the move that had opened the turn).
+	var meld_of := {}
+	for m in gm.board.melds:
+		for c in m.cards:
+			meld_of[c] = m
+	# Before opening, table cards can't be moved (groups staged from your own
+	# hand excepted), so drop them from the selection too (e.g. after undoing
+	# the move that had opened the turn).
 	var board_locked := _is_human_turn() and not gm.current_player_is_open()
 	for i in range(selected.size() - 1, -1, -1):
 		var c := selected[i]
 		if in_hand.has(c):
 			continue
-		if not on_board.has(c) or board_locked:
+		if not meld_of.has(c):
+			selected.remove_at(i)
+		elif board_locked and not gm.is_own_staged_meld(meld_of[c]):
 			selected.remove_at(i)
 
 func _is_human_turn() -> bool:
 	return not gm.is_game_over and not ai_running and gm.current_player() == gm.players[0]
 
-func _card_is_interactive(on_board: bool) -> bool:
+## Cards in your hand are always usable on your turn. Table cards unlock once
+## you have opened — except cards in a group staged from your own hand this
+## turn, which stay movable so they can always be taken back.
+func _card_is_interactive(meld: CardSet) -> bool:
 	if not _is_human_turn():
 		return false
-	return not on_board or gm.current_player_is_open()
+	if meld == null:
+		return true
+	return gm.current_player_is_open() or gm.is_own_staged_meld(meld)
 
 # --- Drag and drop ---------------------------------------------------------------
 
@@ -485,6 +626,12 @@ func _can_drop_new_group(_at_position: Vector2, data: Variant) -> bool:
 func _drop_new_group(_at_position: Vector2, data: Variant) -> void:
 	_stage_move(_drag_cards(data), null)
 
+func _can_drop_on_hand(_at_position: Vector2, data: Variant) -> bool:
+	return _is_human_turn() and gm.can_return_to_hand(_drag_cards(data))
+
+func _drop_on_hand(_at_position: Vector2, data: Variant) -> void:
+	_return_to_hand(_drag_cards(data))
+
 # --- Input handlers -----------------------------------------------------------
 
 ## Stage a move through the engine (meld == null starts a new group) and show
@@ -497,6 +644,15 @@ func _stage_move(cards: Array[Card], meld: CardSet) -> void:
 		err = gm.move_cards_to_new_meld(cards)
 	else:
 		err = gm.add_cards_to_meld(cards, meld)
+	selected.clear()
+	_set_status(err)
+	_refresh()
+
+## Send cards the player laid down this turn back into their hand.
+func _return_to_hand(cards: Array[Card]) -> void:
+	if cards.is_empty():
+		return
+	var err := gm.return_cards_to_hand(cards)
 	selected.clear()
 	_set_status(err)
 	_refresh()
@@ -514,6 +670,9 @@ func _on_new_meld_pressed() -> void:
 
 func _on_add_to_meld_pressed(meld: CardSet) -> void:
 	_stage_move(selected.duplicate(), meld)
+
+func _on_return_pressed() -> void:
+	_return_to_hand(selected.duplicate())
 
 func _on_undo_action_pressed() -> void:
 	selected.clear()
@@ -568,9 +727,9 @@ func _on_game_over(winners: Array) -> void:
 # --- AI driving ----------------------------------------------------------------
 
 ## Play out every queued enemy turn, one visible move at a time. Each move is
-## staged through the same engine calls the human uses, refreshed on screen,
-## and its cards highlighted in gold; the highlight persists until the next
-## enemy starts acting (or a new game begins).
+## staged through the same engine calls the human uses, its cards fly on
+## screen from where they were to where they land, and stay highlighted in
+## gold until the next enemy starts acting (or a new game begins).
 func _run_ai_turns() -> void:
 	if ai_running or gm.is_game_over:
 		return
@@ -590,12 +749,17 @@ func _run_ai_turns() -> void:
 			var move: Dictionary = GreedyAI.plan_move(gm)
 			if move.is_empty():
 				break
+			var moved: Array[Card] = move["cards"]
+			var sources := _capture_card_positions(enemy, moved)
 			GreedyAI.apply_move(gm, move)
 			played_any = true
-			for c in move["cards"]:
+			for c in moved:
 				highlighted[c] = true
 			_log("%s %s." % [enemy.display_name, move["text"]])
 			_refresh()
+			await _animate_cards(moved, sources)
+			if gen != game_generation:
+				return
 			await get_tree().create_timer(AI_MOVE_DELAY).timeout
 			if gen != game_generation:
 				return
@@ -612,6 +776,74 @@ func _run_ai_turns() -> void:
 		_set_status("Your turn. Drag cards onto a group or empty felt — "
 			+ "or click to select, then use the + buttons.")
 	_refresh()
+
+# --- Enemy move animation --------------------------------------------------------
+
+## Where each card is on screen right now: face-up cards report their button's
+## position, cards still hidden in an enemy hand report the middle of that
+## enemy's card backs. Must be called before the move is applied/refreshed.
+func _capture_card_positions(enemy: PlayerState, cards: Array[Card]) -> Dictionary:
+	var out := {}
+	for c in cards:
+		var node: Control = card_nodes.get(c)
+		if node != null and is_instance_valid(node):
+			out[c] = node.global_position
+		else:
+			out[c] = _enemy_hand_origin(enemy)
+	return out
+
+func _enemy_hand_origin(enemy: PlayerState) -> Vector2:
+	var backs: Control = opponent_backs.get(enemy.player_id)
+	if backs != null and is_instance_valid(backs):
+		return backs.get_global_rect().get_center() - CARD_SIZE / 2.0
+	return get_global_rect().get_center() - CARD_SIZE / 2.0
+
+## Fly card faces from `sources` (Card -> screen position) to wherever the
+## cards sit after the last refresh. Each destination button is hidden while
+## its card is in flight, then revealed when the flight lands.
+func _animate_cards(cards: Array[Card], sources: Dictionary) -> void:
+	# The freshly rebuilt containers need a frame or two to lay out before
+	# destination positions are meaningful.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var last_tween: Tween = null
+	for c in cards:
+		var dest: Control = card_nodes.get(c)
+		if dest == null or not is_instance_valid(dest) or not sources.has(c):
+			continue
+		var proxy := _make_card_face(c)
+		anim_layer.add_child(proxy)
+		proxy.global_position = sources[c]
+		dest.modulate.a = 0.0
+		var tw := proxy.create_tween()
+		tw.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+		tw.tween_property(proxy, "global_position", dest.global_position, AI_ANIM_TIME)
+		tw.tween_callback(func() -> void:
+			if is_instance_valid(dest):
+				dest.modulate.a = 1.0
+			proxy.queue_free())
+		last_tween = tw
+	if last_tween != null:
+		await last_tween.finished
+
+## A non-interactive card face used as an animation proxy; styled like the
+## gold highlight the card will carry once it lands.
+func _make_card_face(c: Card) -> Control:
+	var face := PanelContainer.new()
+	face.custom_minimum_size = CARD_SIZE
+	face.size = CARD_SIZE
+	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_theme_stylebox_override("panel", _card_style(COL_HILITE_BG, COL_HILITE, 3))
+	var lbl := Label.new()
+	lbl.text = c.label()
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", CARD_FONT_SIZE)
+	lbl.add_theme_color_override("font_color",
+		COL_CARD_RED if RED_SUITS.has(c.suit) else COL_CARD_BLACK)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(lbl)
+	return face
 
 # --- Misc ----------------------------------------------------------------------
 

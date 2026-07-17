@@ -25,7 +25,8 @@ extends Node
 ## legal-checked at commit_turn(). This mirrors how the physical game is
 ## played — shuffle the table as much as you like, it just has to be clean
 ## when you take your hand off it. Each staged move is also snapshotted, so
-## undo_action() can take back one move at a time.
+## undo_action() can take back one move at a time, and cards played from the
+## hand this turn can be taken back individually (return_cards_to_hand).
 
 signal turn_started(player: PlayerState)
 signal board_changed
@@ -126,6 +127,36 @@ func reset_turn() -> void:
 
 func cards_played_this_turn() -> int:
 	return _hand_snapshot.size() - current_player().hand.size()
+
+## True when every given card is one the current player laid down from hand
+## this turn (still in the turn-start snapshot but no longer in the hand) —
+## i.e. the whole batch may legally go back into the hand.
+func can_return_to_hand(cards_to_return: Array[Card]) -> bool:
+	if cards_to_return.is_empty():
+		return false
+	var p := current_player()
+	for c in cards_to_return:
+		if p.hand.has(c) or not _hand_snapshot.has(c):
+			return false
+	return true
+
+## Take cards the current player laid down this turn back into their hand.
+## Cards that started the turn on the table stay put. Returns "" on success
+## or a human-readable reason the move is not allowed.
+func return_cards_to_hand(cards_to_return: Array[Card]) -> String:
+	if cards_to_return.is_empty():
+		return ""
+	if not can_return_to_hand(cards_to_return):
+		return "Only cards you played from your hand this turn " \
+			+ "can go back to your hand."
+	_push_undo()
+	var p := current_player()
+	for c in cards_to_return:
+		board.remove_card(c)
+		p.hand.append(c)
+	board.prune_empty()
+	board_changed.emit()
+	return ""
 
 # --- The opening rule --------------------------------------------------------
 

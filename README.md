@@ -22,7 +22,14 @@ layer (card effects, health/gold, encounters) will be built on.
 
 ## Playing it
 
-Open the project in Godot 4.6 and press Run (`F5`). On your turn:
+Open the project in Godot 4.6 and press Run (`F5`).
+
+You sit at the bottom; opponents sit around the table showing the backs of
+their cards — the first enemy directly opposite you, the second on the left,
+and a fourth player (when one exists) on the right (max 4 seats). Backs overlap
+more as a hand grows, so every seat always fits on screen.
+
+On your turn:
 
 1. **Drag** cards — from your hand and from any group on the table. Drop them on a
    group (or any card in it) to add them there, or on empty felt / the
@@ -31,12 +38,16 @@ Open the project in Godot 4.6 and press Run (`F5`). On your turn:
 2. Clicking works too: click cards to select them (they turn blue), then click a
    group's **+** button or **+ New group**. Groups outline green when valid, red
    when not. Table cards are greyed out until you've opened.
-3. **End turn** validates the table and commits. **Undo action** takes back just
+3. Cards you laid down this turn can go back: drag them onto your hand, or select
+   them and press **Return to hand**. (Cards that started the turn on the table
+   can never enter your hand.)
+4. **End turn** validates the table and commits. **Undo action** takes back just
    the last staged move; **Undo turn** puts the whole turn back.
-4. **Draw & end turn** if you can't or won't play (this also abandons staged moves).
+5. **Draw & end turn** if you can't or won't play (this also abandons staged moves).
 
-Enemy turns play out move by move on screen: every card an enemy lays down, lays
-off, or takes from the table is highlighted in gold, and the log narrates each move.
+Enemy turns play out move by move on screen: each card an enemy plays flies from
+where it was (their hidden hand or its previous spot on the table) to where it
+lands, stays highlighted in gold, and the log narrates each move.
 
 ## Layout
 
@@ -58,8 +69,9 @@ off, or takes from the table is highlighted in gold, and the log narrates each m
   hand cards); respects the opening rule; produces one move at a time so the UI
   can animate enemy turns
 - `scripts/main_ui.gd` + `scenes/main.tscn` — drag-and-drop (or click-to-play) UI,
-  built in code: styled cards, felt table, per-group validity outlines, animated
-  enemy turns
+  built in code: styled cards, felt table, per-group validity outlines, opponent
+  seats with face-down card backs, flying-card enemy-turn animations,
+  return-to-hand for cards staged this turn
 - `tests/smoke_test.gd` — headless AI-vs-AI smoke test
 
 ## Headless smoke test
