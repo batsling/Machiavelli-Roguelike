@@ -38,6 +38,8 @@ func _init() -> void:
 		failures += 1
 	if not _test_slime_strategy():
 		failures += 1
+	if not _test_slime_guards_on_draw():
+		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
 			failures += 1
@@ -401,6 +403,62 @@ func _test_slime_strategy() -> bool:
 	gm.free()
 	if ok:
 		print("slime strategy test OK")
+	return ok
+
+## The reported bug: with no ordinary play in hand, the slime used to just draw
+## and skip her guard. Now a turn that only reworks the table (relocating a
+## slimed card to seal it next to another) still happens — she draws AND keeps
+## the rearrangement. Here a slimed 8♦ sitting in a set of four 8s can slide
+## next to a slimed 9♦ in a diamond run, sealing both; her hand can't play.
+func _test_slime_guards_on_draw() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["The Cute Slime", "P1"], 13, 12)
+	var p := gm.current_player()
+	p.has_opened = true
+	p.ignores_sticky = true
+	# A junk hand: no meld, no lay-off, no borrow against the board below.
+	p.hand.assign([_card(2, "spades"), _card(5, "clubs"), _card(7, "spades"),
+		_card(13, "hearts")])
+	gm._hand_snapshot = p.hand.duplicate()
+	# A set of four 8s holding the slimed 8♦ (free to leave — three 8s remain).
+	var eight_d := _sticky(_card(8, "diamonds"))
+	var set_meld := CardSet.new()
+	set_meld.cards.assign([eight_d, _card(8, "spades"), _card(8, "clubs"),
+		_card(8, "hearts")])
+	# A diamond run holding a slimed 9♦; adding the 8♦ seals the two together.
+	var nine_d := _sticky(_card(9, "diamonds"))
+	var run_meld := CardSet.new()
+	run_meld.cards.assign([nine_d, _card(10, "diamonds"), _card(11, "diamonds")])
+	gm.board.melds.append(set_meld)
+	gm.board.melds.append(run_meld)
+	var slime := CuteSlime.new()
+	var stock_before := gm.deck.size()
+	GreedyAI.take_turn(gm, null, slime)
+	# She reworked the felt: the 8♦ now rides in the run, the set is down to
+	# three, and both groups are still valid.
+	if not run_meld.cards.has(eight_d):
+		printerr("slime guards on draw: the 8♦ should have oozed into the run, run = %s"
+			% _labels(run_meld.cards))
+		ok = false
+	elif set_meld.cards.size() != 3 or set_meld.cards.has(eight_d):
+		printerr("slime guards on draw: the set should be down to three 8s, got %s"
+			% _labels(set_meld.cards))
+		ok = false
+	elif not gm.board.all_valid():
+		printerr("slime guards on draw: the kept rearrangement left an invalid group")
+		ok = false
+	# And she still drew (the turn ended in a draw, not a commit) and passed play on.
+	elif gm.deck.size() != stock_before - 1:
+		printerr("slime guards on draw: she should have drawn one card, stock %d -> %d"
+			% [stock_before, gm.deck.size()])
+		ok = false
+	elif gm.current_player() == p:
+		printerr("slime guards on draw: the turn should have ended")
+		ok = false
+	gm.free()
+	if ok:
+		print("slime guards on draw test OK")
 	return ok
 
 func _labels(cards: Array[Card]) -> String:

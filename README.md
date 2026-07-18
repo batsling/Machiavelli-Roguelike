@@ -74,7 +74,9 @@ On your turn:
    can never enter your hand.)
 4. **End turn** validates the table and commits. **Undo action** takes back just
    the last staged move; **Undo turn** puts the whole turn back.
-5. **Draw & end turn** if you can't or won't play (this also abandons staged moves).
+5. **Draw & end turn** if you can't or won't play. A partial or invalid staged
+   play is abandoned first, but a *valid* table rearrangement that laid no card
+   from your hand is kept — you can rework the felt and still draw.
 
 Jokers on the table show a tooltip with what they stand for; when the group
 leaves them a choice, right-click one to pick its stand-in (handy for setting

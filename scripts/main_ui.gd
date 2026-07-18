@@ -1360,7 +1360,6 @@ func _run_ai_turns() -> void:
 		await get_tree().create_timer(AI_THINK_DELAY).timeout
 		if gen != game_generation:
 			return
-		var played_any := false
 		while true:
 			var move: Dictionary = GreedyAI.plan_move(gm, profile, enemy_def)
 			if move.is_empty():
@@ -1368,7 +1367,6 @@ func _run_ai_turns() -> void:
 			var moved: Array[Card] = move["cards"]
 			var sources := _capture_card_positions(enemy, moved)
 			GreedyAI.apply_move(gm, move, profile)
-			played_any = true
 			for c in moved:
 				highlighted[c] = true
 			_log("%s %s." % [enemy.display_name, move["text"]])
@@ -1379,7 +1377,10 @@ func _run_ai_turns() -> void:
 			await get_tree().create_timer(AI_MOVE_DELAY).timeout
 			if gen != game_generation:
 				return
-		if played_any:
+		# A turn that laid a card from hand commits; a turn that only reworked the
+		# table (the slime herding her slime) draws, and GameManager keeps that
+		# valid rearrangement on the felt instead of rolling it back.
+		if gm.cards_played_this_turn() > 0:
 			var err := gm.commit_turn()
 			if err != "":
 				push_warning("AI staged an illegal turn (%s); drawing instead." % err)
