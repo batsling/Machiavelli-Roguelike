@@ -98,7 +98,11 @@ since you last acted; they clear when the enemies start their next round.
 
 ## Settings
 
-The **Settings** button opens a dialog with:
+The **Settings** button opens a dialog with two tabs — **Vanilla sandbox**
+(free-play games only) and **Roguelike run** (the run's own rules, so the
+roguelike can be balanced without touching the sandbox).
+
+The **Vanilla sandbox** tab holds:
 
 - **Enemy AI** — three independent 0–1 sliders:
   - **Skill** (weak → strong) — how much of the move space the AI searches. It
@@ -124,9 +128,22 @@ The **Settings** button opens a dialog with:
   Applies from the next enemy turn.
 - **Enemies** (1-3) — takes effect on the next new game.
 - **Cards drawn per turn** (1-3) — applies immediately, to everyone.
+- **Starting hand size** (5-21) — how many cards each player is dealt;
+  takes effect on the next new game.
 - **Max hand size** (none, or 10-20) — applies immediately, to everyone;
   drawing stops at the cap and a draw on a full hand becomes a pass.
 - **Include 4 jokers** — takes effect on the next new game.
+- **Starting combos** — takes effect on the next new game: every player is
+  dealt a random valid three-card group (a set or a run of naturals) straight
+  from the stock onto the table, which counts as their opening meld — nobody
+  starts locked out of the table on a hand that can't lay a group.
+
+The **Roguelike run** tab holds the run's own copies of the same rules —
+cards drawn per turn (default 2), starting hand size (default 13), max hand
+size (default none), max cards played per turn (default 13), jokers (default
+in) and starting combos (default off). Every change applies from the next
+round; a round in progress keeps the rules it started under, and each enemy
+still brings its own designed AI profile and mechanics.
 
 ## Layout
 
@@ -219,7 +236,8 @@ prints the numbers the roguelike economy needs: game length in player rounds
 (distribution + histogram, split into wins and losses) with suggested 3-tier
 gold cutoffs from the rounds-to-win terciles, and how often the player plays
 a hand vs draws (hands per game, cards per hand) for tuning ultimate-meter
-charge rates (`tests/balance_stats.gd`).
+charge rates (`tests/balance_stats.gd`). Add `--combo` to deal every player
+a starting combo and measure how much it shortens games.
 
 ## Design notes / references
 

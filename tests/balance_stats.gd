@@ -5,6 +5,8 @@ extends SceneTree
 ##   godot --headless --path . --script res://tests/balance_stats.gd
 ## More (or fewer) games per matchup:
 ##   godot --headless --path . --script res://tests/balance_stats.gd -- --games=100
+## With starting combos dealt (every player opens with a random meld):
+##   godot --headless --path . --script res://tests/balance_stats.gd -- --combo
 ##
 ## Plays seeded 1v1 games — a simulated player against the basic enemy and
 ## against each designed enemy — and prints the numbers two roguelike systems
@@ -28,11 +30,17 @@ const PLAYER_STRENGTH := 1.0
 const PLAYER_STYLE := 0.0
 const PLAYER_ATTENTION := 1.0
 
+## --combo: deal every player a random starting meld (see
+## GameManager.deal_starting_melds) in every game, to measure its effect.
+var start_combo := false
+
 func _init() -> void:
 	var games := DEFAULT_GAMES
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--games="):
 			games = maxi(1, int(arg.get_slice("=", 1)))
+		elif arg == "--combo":
+			start_combo = true
 	var matchups: Array[Dictionary] = [
 		{"label": "Basic enemy (no jokers)",
 			"make": func() -> Enemy: return Enemy.new(), "jokers": false},
@@ -44,8 +52,8 @@ func _init() -> void:
 			"make": func() -> Enemy: return SadisticBillionaire.new(), "jokers": true},
 	]
 	print("Balance stats: %d games per matchup, 1v1, player profile " % games
-		+ "strength=%.1f style=%.1f attention=%.1f" % [PLAYER_STRENGTH, PLAYER_STYLE,
-			PLAYER_ATTENTION])
+		+ "strength=%.1f style=%.1f attention=%.1f%s" % [PLAYER_STRENGTH, PLAYER_STYLE,
+			PLAYER_ATTENTION, ", starting combos dealt" if start_combo else ""])
 	var failures := 0
 	var all: Array[Dictionary] = []
 	var per_matchup: Array[Dictionary] = []
@@ -76,6 +84,8 @@ func _play_game(matchup: Dictionary, seed_value: int) -> Dictionary:
 	var enemy: Enemy = matchup["make"].call()
 	gm.setup(["You", enemy.display_name], 13, seed_value, matchup["jokers"])
 	enemy.on_combat_start(gm)
+	if start_combo:
+		gm.deal_starting_melds()
 	var enemy_profile := enemy.make_profile(seed_value)
 	var player_profile := AIProfile.new(PLAYER_STRENGTH, PLAYER_STYLE,
 		PLAYER_ATTENTION, seed_value)

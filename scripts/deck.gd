@@ -46,6 +46,17 @@ func draw() -> Card:
 		return null
 	return cards.pop_back()
 
+## Remove and return a specific natural card from the stock, or null when no
+## copy is left in it. The stock is shuffled, so which copy leaves carries no
+## information. Used to build the optional starting combos.
+func take_card(rank: int, suit: String) -> Card:
+	for i in cards.size():
+		var c := cards[i]
+		if not c.is_joker and c.rank == rank and c.suit == suit:
+			cards.remove_at(i)
+			return c
+	return null
+
 ## The card the next draw() will return (the top of the stock), or null when
 ## the stock is empty. Callers must only act on it when the card is glass —
 ## a glass top is public information, anything else is still face down.

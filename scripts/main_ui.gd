@@ -7,8 +7,9 @@ extends Control
 ## free-play game), Resume (shown once a game exists), Settings and Quit.
 ## The in-game Menu button returns to it without losing the game in progress.
 ##
-## Roguelike run: an endless ladder of 1v1 games under fixed run rules —
-## draw 2 cards per turn, at most 13 cards played per turn, all 4 jokers in.
+## Roguelike run: an endless ladder of 1v1 games under the run rules from the
+## Settings dialog's "Roguelike run" tab (defaults: draw 2 cards per turn, at
+## most 13 cards played per turn, 13-card starting hands, all 4 jokers in).
 ## Beat an enemy to advance to the next round (the "New game" button becomes
 ## "Next round"); lose and the run is over ("New run" starts over at round
 ## 1). Each round faces a designed enemy picked at random from Enemy.roster():
@@ -19,8 +20,8 @@ extends Control
 ## transparent and are
 ## visible from the back — in any hand and on top of the stock — so his glass
 ## cards show face-up in his seat and a glass stock top is shown beside the
-## stock count). Sandbox settings never apply during a run, so the Settings
-## button is disabled in-game while one is active.
+## stock count). Vanilla sandbox settings never apply during a run; roguelike
+## settings apply from the next round.
 ##
 ## Table layout: you sit at the bottom; opponents sit around the table showing
 ## the backs of their cards. The first enemy sits directly opposite you at the
@@ -61,14 +62,21 @@ extends Control
 ## half = after), drag to the hand's empty space to send it to the end, or
 ## use the "Sort: rank" / "Sort: suit" buttons.
 ##
-## The Settings dialog holds: the enemy AI graph (vertical = weak→strong,
-## horizontal = quick→conservative; applies from the next enemy turn), the
-## number of enemies (1-3, next game), cards drawn per turn (1-3, applies
-## immediately), the max hand size (none, or 10-20 — drawing stops at the
-## cap and a draw on a full hand is a pass; applies immediately), the max
-## cards played per turn (none, or 10-20 — only cards leaving your hand
-## count, rearranging the table is free; applies immediately, and binds the
-## AI too), and the joker toggle (next game). Jokers (★) count as any
+## The Settings dialog is split into two tabs. "Vanilla sandbox" holds: the
+## enemy AI dials (apply from the next enemy turn), the number of enemies
+## (1-3, next game), cards drawn per turn (1-3, applies immediately), the
+## starting hand size (5-21, next game), the max hand size (none, or 10-20 —
+## drawing stops at the cap and a draw on a full hand is a pass; applies
+## immediately), the max cards played per turn (none, or 10-20 — only cards
+## leaving your hand count, rearranging the table is free; applies
+## immediately, and binds the AI too), the joker toggle (next game) and the
+## starting-combo toggle (next game). "Roguelike run" holds the run's own
+## copies of the same rules — draw count, starting hand size, hand cap, play
+## cap, jokers, starting combos — all applying from the next round, so the
+## run can be balanced without touching the sandbox. Starting combos deal
+## every player a random valid three-card group from the stock onto the table
+## at game start, which counts as their opening meld — nobody sits locked out
+## of the table on a hand that can't lay a group. Jokers (★) count as any
 ## card while in a hand; the moment one lands in a valid group on the table
 ## it locks to the card it stands for (e.g. ★7♥) and is treated as exactly
 ## that card — no longer a wildcard, even when the group is rearranged or
@@ -90,10 +98,9 @@ const DRAG_TYPE := "machiavelli_cards"
 const MAX_PLAYERS := 4
 const ENEMY_NAMES := ["Rosso", "Nero", "Bianco"]
 
-## Fixed rules for a roguelike run. Each round faces a designed enemy from
-## Enemy.roster(), which brings its own AI profile and mechanics.
-const ROGUE_DRAW_PER_TURN := 2
-const ROGUE_MAX_PLAYS_PER_TURN := 13
+## Sensible bounds for the starting hand size setting (both modes).
+const HAND_SIZE_MIN := 5
+const HAND_SIZE_MAX := 21
 
 const CARD_SIZE := Vector2(78, 108)  # hand cards
 const CARD_FONT_SIZE := 28
@@ -151,17 +158,29 @@ var card_nodes := {}
 # refresh, used as the animation origin for cards played from a hidden hand.
 var opponent_backs := {}
 
-# Settings (the Settings dialog) — sandbox games only; a roguelike run's
-# rules are fixed. The AI graph and draw count apply immediately; enemy count
-# and jokers take effect on the next new game.
+# Vanilla sandbox settings (the Settings dialog's first tab) — sandbox games
+# only. The AI graph and draw count apply immediately; the rest take effect
+# on the next new game.
 var ai_strength := 1.0    # 0 = weak, 1 = strong
 var ai_style := 0.0       # 0 = quick, 1 = conservative
 var ai_attention := 1.0   # 0 = oblivious, 1 = attentive
 var enemy_count := 2      # 1-3
 var draw_per_turn := 1    # 1-3
+var start_hand_size := GameManager.DEFAULT_HAND_SIZE  # cards dealt at the start
 var max_hand_size := 0    # 0 = no cap, otherwise 10-20
 var max_plays_per_turn := 0  # 0 = no cap, otherwise 10-20
 var include_jokers := false
+var start_combo := false  # deal each player a random opening group on the table
+
+# Roguelike run settings (the second tab) — the run's own copies of the same
+# rules, all applying from the next round so a run in progress keeps the rules
+# it started under.
+var rogue_draw_per_turn := 2
+var rogue_start_hand_size := GameManager.DEFAULT_HAND_SIZE
+var rogue_max_hand_size := 0
+var rogue_max_plays_per_turn := 13
+var rogue_jokers := true
+var rogue_start_combo := false
 
 var game_root: VBoxContainer
 var menu_layer: PanelContainer
@@ -207,40 +226,57 @@ func _new_game() -> void:
 	rogue_round_won = false
 	_clear_children(anim_layer)
 	log_box.clear()
+	var combo_start := false
+	var jokers_in := false
 	if game_mode == Mode.ROGUE:
+		combo_start = rogue_start_combo
+		jokers_in = rogue_jokers
 		current_enemy = Enemy.random_enemy()
-		gm.setup(["You", current_enemy.display_name], GameManager.DEFAULT_HAND_SIZE, -1, true)
-		gm.draw_per_turn = ROGUE_DRAW_PER_TURN
-		gm.max_hand_size = 0
-		gm.max_plays_per_turn = ROGUE_MAX_PLAYS_PER_TURN
+		gm.setup(["You", current_enemy.display_name], rogue_start_hand_size, -1, rogue_jokers)
+		gm.draw_per_turn = rogue_draw_per_turn
+		gm.max_hand_size = rogue_max_hand_size
+		gm.max_plays_per_turn = rogue_max_plays_per_turn
 		# Let the enemy plant its mechanics on the freshly dealt game.
 		current_enemy.on_combat_start(gm)
 		_log("[b]Round %d[/b] — you face %s. Run rules: draw %d per turn, "
-			% [rogue_round, current_enemy.display_name, ROGUE_DRAW_PER_TURN]
-			+ "at most %d cards played per turn, 4 jokers in."
-			% ROGUE_MAX_PLAYS_PER_TURN)
+			% [rogue_round, current_enemy.display_name, rogue_draw_per_turn]
+			+ "%s cards played per turn, %d-card hands, %s."
+			% ["at most %d" % rogue_max_plays_per_turn if rogue_max_plays_per_turn > 0
+				else "unlimited", rogue_start_hand_size,
+				"4 jokers in" if rogue_jokers else "no jokers"])
 		var intro := current_enemy.mechanic_intro()
 		if intro != "":
 			_log(intro)
 	else:
+		combo_start = start_combo
+		jokers_in = include_jokers
 		current_enemy = null
 		var names: Array = ["You"]
 		for i in enemy_count:
 			names.append(ENEMY_NAMES[i])
-		gm.setup(names, GameManager.DEFAULT_HAND_SIZE, -1, include_jokers)
+		gm.setup(names, start_hand_size, -1, include_jokers)
 		gm.draw_per_turn = draw_per_turn
 		gm.max_hand_size = max_hand_size
 		gm.max_plays_per_turn = max_plays_per_turn
-		_log("New game: %d enem%s, 13 cards each, double deck, %s." % [enemy_count,
-			"y" if enemy_count == 1 else "ies",
+		_log("New game: %d enem%s, %d cards each, double deck, %s." % [enemy_count,
+			"y" if enemy_count == 1 else "ies", start_hand_size,
 			"4 jokers in" if include_jokers else "no jokers"])
-	_set_status("Your turn. Drag cards to the table (or click to select) — "
-		+ "open by laying down a valid group from your hand.")
-	if game_mode == Mode.ROGUE or include_jokers:
+	if combo_start:
+		# Dealt after the enemy's mechanics so combo cards keep their slime/glass.
+		gm.deal_starting_melds()
+		_set_status("Your turn. Drag cards to the table (or click to select) — "
+			+ "your starting combo already opened you.")
+		_log("Starting combos: every player begins with a random group on the "
+			+ "table and counts as opened — the whole table is playable from turn one.")
+	else:
+		_set_status("Your turn. Drag cards to the table (or click to select) — "
+			+ "open by laying down a valid group from your hand.")
+	if jokers_in:
 		_log("Jokers (★) count as any card. A joker in a valid group shows what "
 			+ "it stands for — drop the real card on it to swap the joker into your hand.")
-	_log("Opening rule: lay down a valid group from your own hand before "
-		+ "you can touch other groups on the table.")
+	if not combo_start:
+		_log("Opening rule: lay down a valid group from your own hand before "
+			+ "you can touch other groups on the table.")
 	_refresh()
 
 # --- Layout -------------------------------------------------------------------
@@ -506,10 +542,17 @@ func _build_settings_dialog() -> void:
 	settings_dialog.ok_button_text = "Done"
 	add_child(settings_dialog)
 
+	var tabs := TabContainer.new()
+	tabs.custom_minimum_size = Vector2(420, 0)
+	settings_dialog.add_child(tabs)
+	tabs.add_child(_build_vanilla_settings())
+	tabs.add_child(_build_rogue_settings())
+
+## The "Vanilla sandbox" tab: everything here touches sandbox games only.
+func _build_vanilla_settings() -> VBoxContainer:
 	var col := VBoxContainer.new()
-	col.custom_minimum_size = Vector2(380, 0)
+	col.name = "Vanilla sandbox"
 	col.add_theme_constant_override("separation", 10)
-	settings_dialog.add_child(col)
 
 	var ai_label := Label.new()
 	ai_label.text = "Enemy AI — three independent dials for the opponents' brains."
@@ -540,6 +583,9 @@ func _build_settings_dialog() -> void:
 		_on_enemy_count_changed))
 	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, draw_per_turn,
 		_on_draw_count_changed))
+	col.add_child(_make_spin_row("Starting hand size (next game):",
+		HAND_SIZE_MIN, HAND_SIZE_MAX, start_hand_size,
+		func(v: float) -> void: start_hand_size = int(v)))
 	# Max hand size: with a cap, drawing stops at the cap and a draw attempted
 	# on a full hand becomes a pass. Applies immediately — but never to a
 	# roguelike run, whose rules are fixed.
@@ -561,6 +607,52 @@ func _build_settings_dialog() -> void:
 	joker_check.button_pressed = include_jokers
 	joker_check.toggled.connect(_on_jokers_toggled)
 	col.add_child(joker_check)
+
+	var combo_check := CheckBox.new()
+	combo_check.text = "Starting combos — deal every player a random opening\n" \
+		+ "group from the stock onto the table (next game)"
+	combo_check.button_pressed = start_combo
+	combo_check.toggled.connect(func(on: bool) -> void: start_combo = on)
+	col.add_child(combo_check)
+	return col
+
+## The "Roguelike run" tab: the run's own rules. Everything applies from the
+## next round, so a round in progress keeps the rules it started under.
+func _build_rogue_settings() -> VBoxContainer:
+	var col := VBoxContainer.new()
+	col.name = "Roguelike run"
+	col.add_theme_constant_override("separation", 10)
+
+	var intro := Label.new()
+	intro.text = "Run rules for balancing the roguelike. Every change applies " \
+		+ "from the next round; enemies keep their own designed AI."
+	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(intro)
+	col.add_child(HSeparator.new())
+
+	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, rogue_draw_per_turn,
+		func(v: float) -> void: rogue_draw_per_turn = int(v)))
+	col.add_child(_make_spin_row("Starting hand size:",
+		HAND_SIZE_MIN, HAND_SIZE_MAX, rogue_start_hand_size,
+		func(v: float) -> void: rogue_start_hand_size = int(v)))
+	col.add_child(_make_cap_row("Max hand size:", rogue_max_hand_size,
+		func(v: int) -> void: rogue_max_hand_size = v))
+	col.add_child(_make_cap_row("Max cards played per turn:", rogue_max_plays_per_turn,
+		func(v: int) -> void: rogue_max_plays_per_turn = v))
+
+	var joker_check := CheckBox.new()
+	joker_check.text = "Include 4 jokers — wildcards"
+	joker_check.button_pressed = rogue_jokers
+	joker_check.toggled.connect(func(on: bool) -> void: rogue_jokers = on)
+	col.add_child(joker_check)
+
+	var combo_check := CheckBox.new()
+	combo_check.text = "Starting combos — deal every player a random opening\n" \
+		+ "group from the stock onto the table"
+	combo_check.button_pressed = rogue_start_combo
+	combo_check.toggled.connect(func(on: bool) -> void: rogue_start_combo = on)
+	col.add_child(combo_check)
+	return col
 
 func _make_spin_row(text: String, minimum: int, maximum: int, value: int,
 		on_changed: Callable) -> HBoxContainer:
@@ -899,15 +991,12 @@ func _refresh_buttons() -> void:
 	if game_mode == Mode.ROGUE:
 		new_game_btn.text = "Next round" if gm.is_game_over and rogue_round_won \
 			else "New run"
-		settings_btn.disabled = true
-		settings_btn.tooltip_text = "Sandbox settings — a run's rules are fixed " \
-			+ "(draw %d, %d plays max, jokers in)" \
-			% [ROGUE_DRAW_PER_TURN, ROGUE_MAX_PLAYS_PER_TURN]
+		settings_btn.tooltip_text = "Roguelike run rules (apply from the next " \
+			+ "round) — the vanilla tab never touches a run"
 	else:
 		new_game_btn.text = "New game"
-		settings_btn.disabled = false
 		settings_btn.tooltip_text = \
-			"Enemy AI, enemy count, draw count, hand cap, play cap and jokers"
+			"Enemy AI, enemy count, draw count, hand size, caps, jokers and starting combos"
 	if selected.is_empty():
 		selection_label.text = ""
 	else:

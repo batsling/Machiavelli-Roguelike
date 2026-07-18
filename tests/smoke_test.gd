@@ -50,6 +50,8 @@ func _init() -> void:
 		failures += 1
 	if not _test_glass_joker_reps():
 		failures += 1
+	if not _test_starting_melds():
+		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
 			failures += 1
@@ -81,6 +83,11 @@ func _init() -> void:
 			failures += 1
 	for seed_value in 5:
 		if not _play_game(seed_value, "play-cap game", false, null, 1, 0, 10):
+			failures += 1
+	# Starting combos: every player begins opened with a random three-card meld
+	# on the table, and the game must still play out cleanly from there.
+	for seed_value in 5:
+		if not _play_game(seed_value, "starting-combo game", true, null, 1, 0, 0, true):
 			failures += 1
 	# Slimed tables: the Cute Slime coats hearts and jokers, so the AI must
 	# handle sticky clusters (never borrowing a card that drags its cluster) and
@@ -1023,6 +1030,47 @@ func _reassign_and_swap(gm: GameManager, hand_card: Card, joker: Card) -> bool:
 	Rules.assign_jokers(gm.board.melds[0].cards)
 	return gm.swap_joker(hand_card, joker, gm.board.melds[0]) == ""
 
+## deal_starting_melds gives every player a valid three-card meld of naturals
+## pulled from the stock, marks them opened, and conserves every card. On a
+## slimed deck the pulled cards keep their slime.
+func _test_starting_melds() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1", "P2"], 13, 5, true)
+	CuteSlime.new().on_combat_start(gm)
+	gm.deal_starting_melds()
+	if gm.board.melds.size() != 3:
+		printerr("starting melds: expected 3 melds on the table, got %d"
+			% gm.board.melds.size())
+		ok = false
+	for m in gm.board.melds:
+		if m.cards.size() != 3 or not m.is_valid():
+			printerr("starting melds: expected a valid 3-card meld, got %s"
+				% _labels(m.cards))
+			ok = false
+		for c in m.cards:
+			if c.is_joker:
+				printerr("starting melds: a joker was dealt into a starting meld")
+				ok = false
+	for p in gm.players:
+		if not p.has_opened:
+			printerr("starting melds: %s should count as opened" % p.display_name)
+			ok = false
+		if p.hand.size() != 13:
+			printerr("starting melds: hands must stay untouched, %s has %d cards"
+				% [p.display_name, p.hand.size()])
+			ok = false
+	var count := gm.deck.size() + gm.board.all_cards().size()
+	for p in gm.players:
+		count += p.hand.size()
+	if count != 108:
+		printerr("starting melds: card conservation broken (%d)" % count)
+		ok = false
+	gm.free()
+	if ok:
+		print("starting melds test OK")
+	return ok
+
 ## A full AI-vs-AI game on a slimed table: the Cute Slime's mechanic is planted
 ## at combat start and both seats play under her profile, so the run exercises
 ## sticky clusters on the board. Core invariants (valid table, card
@@ -1131,12 +1179,14 @@ func _play_glass_slime_game(seed_value: int) -> bool:
 
 func _play_game(seed_value: int, label: String, include_jokers := false,
 		profile: AIProfile = null, draw_per_turn := 1, max_hand_size := 0,
-		max_plays := 0) -> bool:
+		max_plays := 0, start_melds := false) -> bool:
 	var gm := GameManager.new()
 	gm.setup(["P0", "P1", "P2"], 13, seed_value, include_jokers)
 	gm.draw_per_turn = draw_per_turn
 	gm.max_hand_size = max_hand_size
 	gm.max_plays_per_turn = max_plays
+	if start_melds:
+		gm.deal_starting_melds()
 	var total_cards := 108 if include_jokers else 104
 	var turns := 0
 	while not gm.is_game_over and turns < MAX_TURNS:
