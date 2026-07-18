@@ -21,10 +21,11 @@ extends Node
 ##    fewest cards wins (ties shared).
 ##
 ## The turn is *staged*: moves mutate the board/hand immediately, but the
-## whole turn can be rolled back (reset_turn / draw_and_end_turn) and is only
-## legal-checked at commit_turn(). This mirrors how the physical game is
-## played — shuffle the table as much as you like, it just has to be clean
-## when you take your hand off it. Each staged move is also snapshotted, so
+## whole turn can be rolled back (reset_turn, or draw_and_end_turn when the
+## staging isn't a keepable rearrangement) and is only legal-checked at
+## commit_turn(). This mirrors how the physical game is played — shuffle the
+## table as much as you like, it just has to be clean when you take your hand
+## off it. Each staged move is also snapshotted, so
 ## undo_action() can take back one move at a time, and cards played from the
 ## hand this turn can be taken back individually (return_cards_to_hand).
 
@@ -285,12 +286,7 @@ func commit_turn() -> String:
 	# The turn is final: every joker on the table locks to what it was placed
 	# as. From now on it is treated as exactly that card — no longer a
 	# wildcard — until the joker swap sends it back to a hand.
-	for m in board.melds:
-		Rules.assign_jokers(m.cards)
-		for c in m.cards:
-			if c.is_joker and c.joker_lock_rank == 0 and c.joker_rank > 0:
-				c.joker_lock_rank = c.joker_rank
-				c.joker_lock_suit = c.joker_suit
+	_lock_table_jokers()
 	_consecutive_passes = 0
 	p.has_opened = true
 	turn_committed.emit(p, cards_played_this_turn())
@@ -321,10 +317,21 @@ func _commit_error(p: PlayerState) -> String:
 			+ "built only from your own hand."
 	return ""
 
-## Abandon any staged plays, draw draw_per_turn cards (or pass if the stock
-## is empty) and end the turn.
+## Draw draw_per_turn cards (or pass if the stock is empty) and end the turn.
+##
+## A staged table rearrangement that plays no card from the hand — the
+## signature Machiavelli "shuffle the felt" move, which the Cute Slime uses to
+## herd her slime together — is kept when it leaves every group valid, so a
+## player can rework the board and still draw. Any other staging (a partial
+## play, or a table left invalid mid-edit) is abandoned first, as before.
 func draw_and_end_turn() -> void:
-	reset_turn()
+	if cards_played_this_turn() != 0 or not _kept_rearrangement():
+		reset_turn()
+	else:
+		# The rearrangement stays on the table, so lock its jokers exactly as a
+		# committed turn would — the next player inherits a settled board.
+		_lock_table_jokers()
+		_undo_stack.clear()
 	var p := current_player()
 	var drew := 0
 	for _i in draw_per_turn:
@@ -347,6 +354,25 @@ func draw_and_end_turn() -> void:
 	_advance()
 
 # --- Internals ---------------------------------------------------------------
+
+## True when this turn has staged at least one move and left the whole table
+## valid — a pure table rearrangement worth keeping when the player draws
+## instead of committing a hand play. The caller checks cards_played first, so
+## reaching here already means no card left the hand.
+func _kept_rearrangement() -> bool:
+	return not _undo_stack.is_empty() and board.all_valid()
+
+## Lock every joker on the table to the card it currently stands for: from now
+## on every rule treats it as exactly that card (no longer a wildcard) until a
+## swap sends it back to a hand. Runs at commit and when a drawn turn keeps a
+## rearrangement, so a settled board never carries a free wildcard.
+func _lock_table_jokers() -> void:
+	for m in board.melds:
+		Rules.assign_jokers(m.cards)
+		for c in m.cards:
+			if c.is_joker and c.joker_lock_rank == 0 and c.joker_rank > 0:
+				c.joker_lock_rank = c.joker_rank
+				c.joker_lock_suit = c.joker_suit
 
 ## Grow a move so it drags whole slime clusters: any card in cards_to_move that
 ## sits on the table pulls its full sticky_cluster along (see CardSet). Cluster

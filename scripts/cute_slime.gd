@@ -19,7 +19,9 @@ extends Enemy
 ## behind, and she repeats it as long as it helps (still all within her one
 ## turn), always taking the move that guards her most versatile cards first —
 ## jokers, then the flexible 4-8s. She only ever moves on a real improvement, so
-## she consolidates her slime, never shuffles in circles.
+## she consolidates her slime, never shuffles in circles. The guard runs even on
+## a turn with no ordinary play: she reworks the felt and then draws, keeping the
+## rearrangement (GameManager.draw_and_end_turn), so she never wastes the guard.
 
 func _init() -> void:
 	display_name = "The Cute Slime"

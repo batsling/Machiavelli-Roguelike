@@ -50,22 +50,23 @@ const W_BLOCK := 6.0         # holding a card still useful in hand beats dumping
 
 static func take_turn(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> void:
-	var played_any := false
 	while true:
 		var move := plan_move(gm, profile, enemy)
 		if move.is_empty():
 			break
 		apply_move(gm, move, profile)
-		played_any = true
-	if not played_any:
-		gm.draw_and_end_turn()
+	if gm.cards_played_this_turn() > 0:
+		var err := gm.commit_turn()
+		if err != "":
+			# Should be unreachable: every planned move leaves the table valid.
+			# Fail safe by drawing rather than wedging the game.
+			push_warning("GreedyAI staged an illegal turn (%s); drawing instead." % err)
+			gm.draw_and_end_turn()
 		return
-	var err := gm.commit_turn()
-	if err != "":
-		# Should be unreachable: every planned move leaves the table valid.
-		# Fail safe by drawing rather than wedging the game.
-		push_warning("GreedyAI staged an illegal turn (%s); drawing instead." % err)
-		gm.draw_and_end_turn()
+	# No card left the hand. If a designed enemy reworked the table (the slime
+	# herding her slime together, say), draw_and_end_turn keeps that valid
+	# rearrangement; with nothing staged it is just a plain draw.
+	gm.draw_and_end_turn()
 
 ## Plan the next single move for the current player. Returns {} when no move
 ## exists (or the AI chooses not to see/make one), otherwise a Dictionary with:
@@ -73,15 +74,16 @@ static func take_turn(gm: GameManager, profile: AIProfile = null,
 ##   dest:  CardSet|null  existing meld to extend, or null for a new group
 ##   text:  String        human-readable description ("<name> " + text)
 ## Ordinary play comes first; only once the AI is out of ordinary moves does a
-## designed enemy get to act on its strategy — and only on a turn it has already
-## committed a card to, so a table-only strategy move survives the commit (a
-## play-less turn is rolled back when the AI draws instead).
+## designed enemy get to act on its strategy. A strategy move is a table-only
+## rearrangement, so it works whether or not the AI has played a card this turn:
+## if it never lays one from hand, take_turn draws and GameManager keeps the
+## rearrangement on the felt (see draw_and_end_turn) rather than rolling it back.
 static func plan_move(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> Dictionary:
 	var move := _plan_normal_move(gm, profile)
 	if not move.is_empty():
 		return move
-	if enemy != null and gm.current_player_is_open() and gm.cards_played_this_turn() > 0:
+	if enemy != null and gm.current_player_is_open():
 		return enemy.plan_strategy_move(gm)
 	return {}
 
