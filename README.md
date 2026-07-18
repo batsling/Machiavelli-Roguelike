@@ -207,6 +207,20 @@ godot --headless --path . --import                              # once, builds c
 godot --headless --path . --script res://tests/smoke_test.gd    # unit tests + 65 seeded games
 ```
 
+## Headless balance stats
+
+```sh
+godot --headless --path . --script res://tests/balance_stats.gd -- --games=50
+```
+
+Plays seeded 1v1 games — a simulated strong player against the basic enemy
+(with and without jokers), the Cute Slime and the Sadistic Billionaire — and
+prints the numbers the roguelike economy needs: game length in player rounds
+(distribution + histogram, split into wins and losses) with suggested 3-tier
+gold cutoffs from the rounds-to-win terciles, and how often the player plays
+a hand vs draws (hands per game, cards per hand) for tuning ultimate-meter
+charge rates (`tests/balance_stats.gd`).
+
 ## Design notes / references
 
 - The turn model is *staged*: moves mutate state immediately, `commit_turn()` is the
