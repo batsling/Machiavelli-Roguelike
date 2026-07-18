@@ -35,23 +35,37 @@ func _init() -> void:
 	if ui.settings_btn.disabled != true:
 		printerr("settings button should be disabled during a run")
 		ok = false
-	# The round-1 enemy is the Cute Slime: she marks her own seat immune and
-	# slimes hearts, diamonds and jokers across the freshly dealt game.
-	if not (ui.current_enemy is CuteSlime):
-		printerr("round 1 should face the Cute Slime, got %s" % ui.current_enemy)
-		ok = false
-	if not ui.gm.players[1].ignores_sticky:
-		printerr("the slime's seat should ignore sticky")
-		ok = false
-	var slimed := 0
+	# The round-1 enemy is drawn at random from the roster; whichever it is,
+	# its mechanic must be planted across the freshly dealt game.
 	var all_cards: Array = ui.gm.deck.cards.duplicate()
 	for p in ui.gm.players:
 		all_cards.append_array(p.hand)
-	for c in all_cards:
-		if c.is_sticky():
-			slimed += 1
-	if slimed != 30:  # 13 hearts + 13 diamonds + 4 jokers
-		printerr("expected 30 slimed cards at combat start, got %d" % slimed)
+	if ui.current_enemy is CuteSlime:
+		# She marks her own seat immune and slimes hearts, diamonds and jokers.
+		if not ui.gm.players[1].ignores_sticky:
+			printerr("the slime's seat should ignore sticky")
+			ok = false
+		var slimed := 0
+		for c in all_cards:
+			if c.is_sticky():
+				slimed += 1
+		if slimed != 30:  # 13 hearts + 13 diamonds + 4 jokers
+			printerr("expected 30 slimed cards at combat start, got %d" % slimed)
+			ok = false
+	elif ui.current_enemy is SadisticBillionaire:
+		# He glasses all 4 jokers plus three quarters of the 104 naturals.
+		var glass := 0
+		for c in all_cards:
+			if c.is_glass():
+				glass += 1
+			elif c.is_joker:
+				printerr("every joker should be glass at combat start")
+				ok = false
+		if glass != 82:
+			printerr("expected 82 glass cards at combat start, got %d" % glass)
+			ok = false
+	else:
+		printerr("round 1 should face a designed enemy, got %s" % ui.current_enemy)
 		ok = false
 	# Simulate a won round: Next round advances, rules stay fixed.
 	ui.gm._end_game([ui.gm.players[0]])

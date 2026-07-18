@@ -152,16 +152,22 @@ The **Settings** button opens a dialog with:
   for a score-all-candidates "smart brain" that counts the deck, borrows up to
   two table cards at once to reach melds a single borrow can't, steals jokers,
   avoids feeding opponents, holds only cards the deck can still complete (never
-  hoarding toward a dead end), and races the endgame
+  hoarding toward a dead end), and races the endgame. On a glass table the
+  counting is glass-aware: it reads only the public information (glass cards
+  in hands, a glass stock top) — completions visibly locked in opponents'
+  hands are dead ends, visibly held lay-offs are certain feeds, joker
+  stand-ins an opponent holds the swap card for are avoided, and a glass next
+  draw is worth holding a partner for
 - `scripts/ai_profile.gd` — `AIProfile`: the three personality dials GreedyAI
   consults — skill (search depth + the smart brain), style (opening threshold,
   key-card holding), attention (miss chance, capped at 30% and only on
   table-reading plays); unset = strong + quick + attentive and fully
   deterministic
 - `scripts/enemy.gd` — `Enemy`: a designed roguelike opponent — a name, an AI
-  profile, an `on_combat_start` hook to plant mechanics, and a
-  `plan_strategy_move` hook GreedyAI consults once ordinary play is spent; plus
-  the roster the rogue ladder picks from at random
+  profile, an `on_combat_start` hook to plant mechanics, a `mechanic_intro`
+  blurb for the game log, and a `plan_strategy_move` hook GreedyAI consults
+  once ordinary play is spent; plus the roster the rogue ladder picks from at
+  random (the Cute Slime and the Sadistic Billionaire)
 - `scripts/cute_slime.gd` — `CuteSlime`: the first designed enemy (strong,
   oblivious, quick). At combat start she slimes a random 13 hearts, 13 diamonds
   and all jokers (the Sticky effect); on her turns she legally combines slimed
@@ -169,17 +175,28 @@ The **Settings** button opens a dialog with:
   still lift (weighting by versatility: jokers, then the flexible 4-8s), as much
   as helps while keeping every group valid with no leftover cards; she alone
   moves slimed cards freely
+- `scripts/sadistic_billionaire.gd` — `SadisticBillionaire`: the second designed
+  enemy (strong, conservative, attentive). At combat start he turns every
+  joker and a random three quarters of the other cards — stock and hands —
+  to glass (the Clear effect): see-through from the back, visible in any
+  player's hand and on top of the stock, rendered transparent. The information cuts both
+  ways — the player reads his hand off his card backs, and the smart brain
+  counts every glass card in its planning
 - `scripts/main_ui.gd` + `scenes/main.tscn` — main menu plus the drag-and-drop
   (or click-to-play) UI, built in code: styled cards, felt table, per-group
-  validity outlines, opponent seats with face-down card backs, flying-card
-  enemy-turn animations with round-long gold highlights, the right-click joker
-  menu, Balatro-style hand ordering, return-to-hand for cards staged this
-  turn, the settings dialog
+  validity outlines, opponent seats with face-down card backs (glass cards
+  show their face right in the row, and a glass stock top is shown beside the
+  stock count), flying-card enemy-turn animations with round-long gold
+  highlights, the right-click joker menu, Balatro-style hand ordering,
+  return-to-hand for cards staged this turn, the settings dialog
 - `tests/smoke_test.gd` — headless AI-vs-AI smoke test plus unit tests for the
   joker rules, the joker swap, joker stand-in choice, joker locking, the AI's
   safe stand-in picking, the hand cap, the slime's sticky clusters (cluster
-  detection, cluster moves, the slime's free movement), the slime setup, and
-  her joker-guarding strategy — including a full slimed AI-vs-AI game
+  detection, cluster moves, the slime's free movement), the slime setup, her
+  joker-guarding strategy, the billionaire's glass setup, and the AI's glass
+  counting (visible copies, obtainable copies, glass feed threats, glass-aware
+  holding and joker stand-ins) — including full slimed, glass, and
+  glass-plus-slimed AI-vs-AI games
 
 ## Headless smoke test
 
@@ -203,22 +220,39 @@ godot --headless --path . --script res://tests/smoke_test.gd    # unit tests + 6
 
 ## Roguelike layer
 
-The first designed enemy is in: **The Cute Slime** (round 1 of a roguelike run).
-The **Sticky** card effect is now live — slimed cards (a green splotch, top
-right) stick to *each other*, so a run of them on the table moves as one lump:
-dragging any one drags them all, and the leftover has to stay a valid group. The
-slime slimes a random 13 hearts, 13 diamonds and every joker at combat start,
-moves her own slime freely (`PlayerState.ignores_sticky`), and runs a
-"slime strategy" that legally combines slimed cards to guard her most valuable
-ones — oozing them next to the most valuable slimed card the player could still
-lift, prizing versatility (jokers, then the flexible 4-8s), as much as helps
-while keeping every group valid with no leftover cards. The smart AI understands
-the slime and never plans a move that would drag a cluster it didn't mean to.
-Enemies live in `scripts/enemy.gd` (+ `cute_slime.gd`); the rogue ladder picks
-one at random each round (only the slime exists for now).
+Two designed enemies are in; the rogue ladder picks one at random each round
+(enemies live in `scripts/enemy.gd` + `cute_slime.gd` +
+`sadistic_billionaire.gd`).
+
+**The Cute Slime** brings the **Sticky** effect — slimed cards (a green
+splotch, top right) stick to *each other*, so a run of them on the table moves
+as one lump: dragging any one drags them all, and the leftover has to stay a
+valid group. The slime slimes a random 13 hearts, 13 diamonds and every joker
+at combat start, moves her own slime freely (`PlayerState.ignores_sticky`),
+and runs a "slime strategy" that legally combines slimed cards to guard her
+most valuable ones — oozing them next to the most valuable slimed card the
+player could still lift, prizing versatility (jokers, then the flexible 4-8s),
+as much as helps while keeping every group valid with no leftover cards. The
+smart AI understands the slime and never plans a move that would drag a
+cluster it didn't mean to.
+
+**The Sadistic Billionaire** brings the **Clear** (glass) effect — glass cards
+render transparent and are see-through from the back: everyone can see them
+in any player's hand and on top of the stock. He turns every joker and a
+random three quarters of all other cards to glass at combat start (like the
+slime, no joker escapes him), so his hand shows most of its faces
+in his seat, your hand leaks the same way, and a glass stock top telegraphs
+the next draw to the whole table. The smart AI uses exactly that public
+information — counting glass cards in every hand and reading a glass stock
+top — to decide what to play and what to hold back: completions visibly
+locked in an opponent's hand are dead ends it stops waiting for, lay-offs an
+opponent visibly holds are feeds it avoids, joker stand-ins whose swap card
+an opponent visibly holds are never picked, and a card that pairs with a
+known upcoming draw is held. Glass is pure information — it never restricts
+movement — so a card can be both glass and slimed.
 
 Still kept as data stubs so the vanilla engine stays clean: the other card
-effect flags on `Card` (Clear, Spiked, Brittle, Bomb, Clone, Trigger, Mirrored),
+effect flags on `Card` (Spiked, Brittle, Bomb, Clone, Trigger, Mirrored),
 trigger stubs on `CardSet`, health/gold on `PlayerState`. Phantom-turn damage,
 encounters, and the shared-deck-corruption idea live in the concept doc and git
 history.

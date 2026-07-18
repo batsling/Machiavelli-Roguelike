@@ -9,8 +9,7 @@ extends RefCounted
 ##
 ## For now every enemy plays at the strongest skill (strength 1); only style and
 ## attention vary between enemies. The rogue ladder picks an enemy at random
-## from Enemy.roster() each round — with a single designed enemy so far, that is
-## always the Cute Slime.
+## from Enemy.roster() each round.
 
 var display_name := "Enemy"
 var strength := 1.0
@@ -27,6 +26,11 @@ func make_profile(seed_value: int = -1) -> AIProfile:
 func on_combat_start(_gm: GameManager) -> void:
 	pass
 
+## A short description of this enemy's mechanic for the game log, shown once
+## when the round starts ("" for an enemy without one).
+func mechanic_intro() -> String:
+	return ""
+
 ## The enemy's special strategy move for the current (its own) turn, tried by
 ## GreedyAI once its ordinary plays are spent — a chance to act on a mechanic
 ## rather than just empty its hand. Returns a move Dictionary in GreedyAI's
@@ -39,11 +43,11 @@ func plan_strategy_move(_gm: GameManager) -> Dictionary:
 static func roster() -> Array[Enemy]:
 	var out: Array[Enemy] = []
 	out.append(CuteSlime.new())
+	out.append(SadisticBillionaire.new())
 	return out
 
 ## Pick an enemy for a rogue round. `rng` (when given) keeps the choice
-## reproducible; otherwise it is randomized. With one enemy in the roster this
-## always returns the Cute Slime.
+## reproducible; otherwise it is randomized.
 static func random_enemy(rng: RandomNumberGenerator = null) -> Enemy:
 	var pool := roster()
 	var idx := 0

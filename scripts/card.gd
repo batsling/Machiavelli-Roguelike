@@ -72,6 +72,12 @@ func has_effect(e: Effect) -> bool:
 func is_sticky() -> bool:
 	return effects.has(Effect.STICKY)
 
+## Turned to glass by the Sadistic Billionaire: the card is see-through from the
+## back, so everyone can see it while it sits in any player's hand or on top of
+## the stock. Convenience for has_effect(CLEAR).
+func is_glass() -> bool:
+	return effects.has(Effect.CLEAR)
+
 func can_move() -> bool:
 	if has_effect(Effect.BRITTLE) and has_moved:
 		return false
