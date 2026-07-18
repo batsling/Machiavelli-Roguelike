@@ -67,6 +67,11 @@ func rep_label() -> String:
 func has_effect(e: Effect) -> bool:
 	return effects.has(e)
 
+## Slimed by the Cute Slime: this card binds to whatever sits directly beside it
+## on the table (see CardSet.sticky_cluster). Convenience for has_effect(STICKY).
+func is_sticky() -> bool:
+	return effects.has(Effect.STICKY)
+
 func can_move() -> bool:
 	if has_effect(Effect.BRITTLE) and has_moved:
 		return false

@@ -28,6 +28,16 @@ func _init() -> void:
 		failures += 1
 	if not _test_play_cap():
 		failures += 1
+	if not _test_sticky_cluster():
+		failures += 1
+	if not _test_sticky_move():
+		failures += 1
+	if not _test_slime_free_move():
+		failures += 1
+	if not _test_slime_setup():
+		failures += 1
+	if not _test_slime_strategy():
+		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
 			failures += 1
@@ -59,6 +69,12 @@ func _init() -> void:
 			failures += 1
 	for seed_value in 5:
 		if not _play_game(seed_value, "play-cap game", false, null, 1, 0, 10):
+			failures += 1
+	# Slimed tables: the Cute Slime coats hearts and jokers, so the AI must
+	# handle sticky clusters (never borrowing a card that drags its cluster) and
+	# still finish with a valid table.
+	for seed_value in 8:
+		if not _play_slime_game(seed_value):
 			failures += 1
 	if failures == 0:
 		print("SMOKE TEST OK: all games completed cleanly")
@@ -148,6 +164,250 @@ func _test_play_cap() -> bool:
 	if ok:
 		print("play cap test OK")
 	return ok
+
+func _sticky(card: Card) -> Card:
+	card.effects.append(Card.Effect.STICKY)
+	return card
+
+## Same cards in the same order (by identity)?
+func _same(got: Array, want: Array) -> bool:
+	if got.size() != want.size():
+		return false
+	for i in got.size():
+		if got[i] != want[i]:
+			return false
+	return true
+
+## Slimed cards only stick to each other: the cluster is the run of consecutive
+## slimed cards, read in display order. A plain card, or a slimed card with no
+## slimed neighbour, is its own singleton.
+func _test_sticky_cluster() -> bool:
+	var ok := true
+	# A run of hearts with the two middle cards slimed: they bind each other, the
+	# plain ends stay free.
+	var meld := CardSet.new()
+	var c2 := _card(2, "hearts")
+	var c3 := _sticky(_card(3, "hearts"))
+	var c4 := _sticky(_card(4, "hearts"))
+	var c5 := _card(5, "hearts")
+	meld.cards.assign([c2, c3, c4, c5])
+	if not _same(meld.sticky_cluster(c3), [c3, c4]):
+		printerr("sticky cluster: 3♥+4♥ slime should bind just {3,4}, got %s"
+			% _labels(meld.sticky_cluster(c3)))
+		ok = false
+	if not _same(meld.sticky_cluster(c4), [c3, c4]):
+		printerr("sticky cluster: 4♥ should report the same {3,4} cluster")
+		ok = false
+	if not _same(meld.sticky_cluster(c2), [c2]):
+		printerr("sticky cluster: plain 2♥ should be a singleton, got %s"
+			% _labels(meld.sticky_cluster(c2)))
+		ok = false
+	# A lone slimed card among plain cards has no slimed neighbour: singleton.
+	var lonely := CardSet.new()
+	var s8 := _sticky(_card(8, "spades"))
+	lonely.cards.assign([_card(7, "spades"), s8, _card(9, "spades")])
+	if not _same(lonely.sticky_cluster(s8), [s8]):
+		printerr("sticky cluster: a lone slimed card should be a singleton, got %s"
+			% _labels(lonely.sticky_cluster(s8)))
+		ok = false
+	if ok:
+		print("sticky cluster test OK")
+	return ok
+
+## Moving one card of a slime cluster drags the whole cluster with it; a slimed
+## card with no slimed neighbour, and a plain card, move on their own.
+func _test_sticky_move() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 4)
+	gm.current_player().has_opened = true
+	var c4 := _card(4, "hearts")
+	var c5 := _sticky(_card(5, "hearts"))
+	var c6 := _sticky(_card(6, "hearts"))
+	var c7 := _card(7, "hearts")
+	var meld := CardSet.new()
+	meld.cards.assign([c4, c5, c6, c7])
+	gm.board.melds.append(meld)
+	# Grabbing just the 5♥ pulls its {5,6} slime cluster onto the new group; the
+	# plain 4♥ and 7♥ stay behind.
+	var grab: Array[Card] = [c5]
+	if gm.move_cards_to_new_meld(grab) != "":
+		printerr("sticky move: staging the cluster move was rejected")
+		ok = false
+	elif gm.board.melds.size() != 2:
+		printerr("sticky move: expected 2 groups after the move, got %d"
+			% gm.board.melds.size())
+		ok = false
+	else:
+		if not _same(gm.board.melds[1].cards, [c5, c6]):
+			printerr("sticky move: new group should hold {5,6} in order, got %s"
+				% _labels(gm.board.melds[1].cards))
+			ok = false
+		elif not _same(gm.board.melds[0].cards, [c4, c7]):
+			printerr("sticky move: 4♥ and 7♥ should have stayed behind, got %s"
+				% _labels(gm.board.melds[0].cards))
+			ok = false
+	gm.free()
+	if ok:
+		print("sticky move test OK")
+	return ok
+
+## A player that ignores_sticky (the Cute Slime) moves a slimed card on its own,
+## leaving its cluster-mates behind.
+func _test_slime_free_move() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 4)
+	var p := gm.current_player()
+	p.has_opened = true
+	p.ignores_sticky = true
+	var c4 := _card(4, "hearts")
+	var c5 := _sticky(_card(5, "hearts"))
+	var c6 := _sticky(_card(6, "hearts"))
+	var c7 := _card(7, "hearts")
+	var meld := CardSet.new()
+	meld.cards.assign([c4, c5, c6, c7])
+	gm.board.melds.append(meld)
+	# The slime lifts 5♥ alone onto a new group even though 6♥ is stuck to it.
+	var grab: Array[Card] = [c5]
+	if gm.move_cards_to_new_meld(grab) != "":
+		printerr("slime free move: staging the free move was rejected")
+		ok = false
+	elif not _same(gm.board.melds[-1].cards, [c5]):
+		printerr("slime free move: only 5♥ should have moved, got %s"
+			% _labels(gm.board.melds[-1].cards))
+		ok = false
+	elif not _same(gm.board.melds[0].cards, [c4, c6, c7]):
+		printerr("slime free move: 6♥ should have stayed behind, got %s"
+			% _labels(gm.board.melds[0].cards))
+		ok = false
+	gm.free()
+	if ok:
+		print("slime free move test OK")
+	return ok
+
+## The Cute Slime coats a random half of the hearts (13 of 26), a random half of
+## the diamonds (13 of 26) and every joker at combat start, and no other suit.
+func _test_slime_setup() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["You", "The Cute Slime"], 13, 6, true)
+	CuteSlime.new().on_combat_start(gm)
+	var all_cards: Array[Card] = gm.deck.cards.duplicate()
+	for p in gm.players:
+		all_cards.append_array(p.hand)
+	var counts := {"hearts": 0, "diamonds": 0}
+	var totals := {"hearts": 0, "diamonds": 0}
+	var sticky_jokers := 0
+	var total_jokers := 0
+	var stray := 0
+	for c in all_cards:
+		if c.is_joker:
+			total_jokers += 1
+			if c.is_sticky():
+				sticky_jokers += 1
+		elif c.suit == "hearts" or c.suit == "diamonds":
+			totals[c.suit] += 1
+			if c.is_sticky():
+				counts[c.suit] += 1
+		elif c.is_sticky():
+			stray += 1
+	for suit in ["hearts", "diamonds"]:
+		if totals[suit] != 26 or counts[suit] != 13:
+			printerr("slime setup: expected 13 of 26 %s slimed, got %d of %d"
+				% [suit, counts[suit], totals[suit]])
+			ok = false
+	if sticky_jokers != total_jokers or total_jokers != Deck.JOKER_COUNT:
+		printerr("slime setup: expected all %d jokers slimed, got %d of %d"
+			% [Deck.JOKER_COUNT, sticky_jokers, total_jokers])
+		ok = false
+	if stray != 0:
+		printerr("slime setup: %d clubs/spades cards were slimed" % stray)
+		ok = false
+	# She marks her own seat immune so she moves slimed cards freely.
+	if not gm.players[1].ignores_sticky:
+		printerr("slime setup: the slime's seat should ignore sticky")
+		ok = false
+	gm.free()
+	if ok:
+		print("slime setup test OK")
+	return ok
+
+## The slime legally combines slimed cards to guard her most valuable ones,
+## keeping every group valid with no leftover cards, and does nothing when no
+## legal combine helps.
+func _test_slime_strategy() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["You", "The Cute Slime"], 13, 6, true)
+	gm.current_player().has_opened = true
+	# A run whose joker sits (by default high extension) at the 8♥ slot with a
+	# plain 7♥ neighbour — exposed.
+	var joker := _sticky(_joker())
+	var meld_a := CardSet.new()
+	meld_a.cards.assign([_card(6, "hearts"), _card(7, "hearts"), joker])
+	Rules.assign_jokers(meld_a.cards)
+	# A slimed 9♥ parked in a set of nines, free to leave (three nines remain).
+	var nine_h := _sticky(_card(9, "hearts"))
+	var meld_b := CardSet.new()
+	meld_b.cards.assign([nine_h, _card(9, "spades"), _card(9, "clubs"), _card(9, "diamonds")])
+	gm.board.melds.append(meld_a)
+	gm.board.melds.append(meld_b)
+	var slime := CuteSlime.new()
+	var move := slime.plan_strategy_move(gm)
+	if move.is_empty():
+		printerr("slime strategy: expected a guarding move, got none")
+		ok = false
+	elif not _same(move["cards"], [nine_h]):
+		printerr("slime strategy: should relocate the slimed 9♥, moved %s"
+			% _labels(move["cards"]))
+		ok = false
+	elif move["dest"] != meld_a:
+		printerr("slime strategy: should ooze the 9♥ onto the joker's group to seal it")
+		ok = false
+	else:
+		# The combine is legal and leaves no unmatched card: the group she oozes
+		# onto stays a valid meld, and the one she takes from stays valid.
+		var grown: Array[Card] = meld_a.cards.duplicate()
+		grown.append(nine_h)
+		var rest: Array[Card] = meld_b.cards.duplicate()
+		rest.erase(nine_h)
+		if not Rules.is_valid_meld(grown):
+			printerr("slime strategy: the guarded group should stay a valid meld")
+			ok = false
+		elif not Rules.is_valid_meld(rest):
+			printerr("slime strategy: the source group should stay valid, no orphans")
+			ok = false
+	# Versatility ranking: joker over the middle ranks 4-8, and those over the
+	# edge ranks (aces and faces rate no higher than any other plain card).
+	if slime._importance(_joker()) <= slime._importance(_card(6, "hearts")) \
+			or slime._importance(_card(6, "hearts")) <= slime._importance(_card(1, "hearts")) \
+			or slime._importance(_card(1, "hearts")) != slime._importance(_card(13, "hearts")):
+		printerr("slime strategy: importance should rank joker > 4-8 > edge ranks")
+		ok = false
+	# A lone group offers no second group to bring a bodyguard from: no move.
+	if ok:
+		var gm2 := GameManager.new()
+		gm2.setup(["You", "The Cute Slime"], 13, 6, true)
+		gm2.current_player().has_opened = true
+		var solo := CardSet.new()
+		solo.cards.assign([_card(6, "hearts"), _card(7, "hearts"), _sticky(_joker())])
+		gm2.board.melds.append(solo)
+		Rules.assign_jokers(solo.cards)
+		if not slime.plan_strategy_move(gm2).is_empty():
+			printerr("slime strategy: a lone group offers no bodyguard to move")
+			ok = false
+		gm2.free()
+	gm.free()
+	if ok:
+		print("slime strategy test OK")
+	return ok
+
+func _labels(cards: Array[Card]) -> String:
+	var parts := PackedStringArray()
+	for c in cards:
+		parts.append(c.label())
+	return " ".join(parts)
 
 ## Cards staged from the hand this turn can be taken back into the hand;
 ## cards still in the hand (or never played) cannot be "returned".
@@ -454,6 +714,42 @@ func _test_joker_swap() -> bool:
 func _reassign_and_swap(gm: GameManager, hand_card: Card, joker: Card) -> bool:
 	Rules.assign_jokers(gm.board.melds[0].cards)
 	return gm.swap_joker(hand_card, joker, gm.board.melds[0]) == ""
+
+## A full AI-vs-AI game on a slimed table: the Cute Slime's mechanic is planted
+## at combat start and both seats play under her profile, so the run exercises
+## sticky clusters on the board. Core invariants (valid table, card
+## conservation) must hold after every turn, exactly as in a plain game.
+func _play_slime_game(seed_value: int) -> bool:
+	var gm := GameManager.new()
+	gm.setup(["You", "The Cute Slime"], 13, seed_value, true)
+	gm.draw_per_turn = 2
+	gm.max_plays_per_turn = 13
+	var slime := CuteSlime.new()
+	slime.on_combat_start(gm)
+	var profile := slime.make_profile(seed_value)
+	var turns := 0
+	while not gm.is_game_over and turns < MAX_TURNS:
+		# Only the slime's own turns carry her strategy; the other seat plays a
+		# plain game against the slimed table.
+		var enemy: Enemy = slime if gm.current_player().is_opponent else null
+		GreedyAI.take_turn(gm, profile, enemy)
+		turns += 1
+		if not gm.board.all_valid():
+			printerr("slime game %d: invalid meld on table after turn %d" % [seed_value, turns])
+			return false
+		var count := gm.deck.size() + gm.board.all_cards().size()
+		for p in gm.players:
+			count += p.hand.size()
+		if count != 108:
+			printerr("slime game %d: card conservation broken (%d) after turn %d"
+				% [seed_value, count, turns])
+			return false
+	if not gm.is_game_over:
+		printerr("slime game %d: did not finish within %d turns" % [seed_value, MAX_TURNS])
+		return false
+	print("slime game %d: finished in %d turns" % [seed_value, turns])
+	gm.free()
+	return true
 
 func _play_game(seed_value: int, label: String, include_jokers := false,
 		profile: AIProfile = null, draw_per_turn := 1, max_hand_size := 0,

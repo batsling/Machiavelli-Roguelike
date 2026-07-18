@@ -26,18 +26,33 @@ extends RefCounted
 ## Style hooks: a conservative AI sits on its opening meld until the meld is
 ## big enough (or the game forces its hand) and won't lay off cards that
 ## still look useful with the rest of its hand (pairs, near-runs, jokers).
-## A weak AI additionally rolls AIProfile.misses_move() before every planned
-## move and may simply miss a play it could have made.
+## An oblivious AI rolls AIProfile.misses_move() before every table-reading
+## play (lay-offs and rearrangements, not laying a group from hand) and may
+## simply overlook it, cutting its streak short for the turn.
+##
+## Slime awareness: a card slimed into a cluster with its neighbours can't be
+## borrowed on its own (lifting it drags the whole cluster), so the AI's
+## rearrangement search skips such cards — it plans only moves it can actually
+## make on a slimed table.
 ##
 ## Joker smarts: a capable AI (AIProfile.picks_safe_joker_reps) points every
 ## joker it plays at the safest card it can stand for — the choice with the
 ## fewest copies still unseen — so opponents rarely hold the exact card
 ## needed to swap the joker away from it.
 
-static func take_turn(gm: GameManager, profile: AIProfile = null) -> void:
+# Smart-brain (top skill tier) scoring weights; see the "Smart brain" section
+# below for how each is used.
+const W_PROGRESS := 10.0     # per own hand card the move commits
+const GO_OUT_BONUS := 100.0  # emptying the hand this move
+const JOKER_STEAL_BONUS := 30.0  # pulling a joker off another meld into ours
+const W_FEED := 2.0          # per unseen copy an open end hands to opponents
+const W_BLOCK := 6.0         # holding a card still useful in hand beats dumping it
+
+static func take_turn(gm: GameManager, profile: AIProfile = null,
+		enemy: Enemy = null) -> void:
 	var played_any := false
 	while true:
-		var move := plan_move(gm, profile)
+		var move := plan_move(gm, profile, enemy)
 		if move.is_empty():
 			break
 		apply_move(gm, move, profile)
@@ -57,9 +72,22 @@ static func take_turn(gm: GameManager, profile: AIProfile = null) -> void:
 ##   cards: Array[Card]   every card that moves (from hand and/or table)
 ##   dest:  CardSet|null  existing meld to extend, or null for a new group
 ##   text:  String        human-readable description ("<name> " + text)
-static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
-	if profile != null and profile.misses_move():
-		return {}
+## Ordinary play comes first; only once the AI is out of ordinary moves does a
+## designed enemy get to act on its strategy — and only on a turn it has already
+## committed a card to, so a table-only strategy move survives the commit (a
+## play-less turn is rolled back when the AI draws instead).
+static func plan_move(gm: GameManager, profile: AIProfile = null,
+		enemy: Enemy = null) -> Dictionary:
+	var move := _plan_normal_move(gm, profile)
+	if not move.is_empty():
+		return move
+	if enemy != null and gm.current_player_is_open() and gm.cards_played_this_turn() > 0:
+		return enemy.plan_strategy_move(gm)
+	return {}
+
+## The AI's ordinary move search (complete melds, lay-offs, rearrangements),
+## independent of any enemy strategy. See plan_move for the return shape.
+static func _plan_normal_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 	if profile != null and profile.uses_smart_brain():
 		return _plan_smart_move(gm, profile)
 	# Cards still playable under the play cap this turn (-1 = unlimited).
@@ -70,7 +98,8 @@ static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 		if budget <= 0:
 			return {}
 	var hand := gm.current_player().hand
-	# 1. Complete meld straight from hand.
+	# 1. Complete meld straight from hand. An oblivious AI never fumbles this —
+	# the blunder roll only covers the table-reading plays below.
 	var meld := _find_meld(hand)
 	if not meld.is_empty() and (budget < 0 or meld.size() <= budget) \
 			and _will_lay_meld(gm, meld, profile):
@@ -79,6 +108,10 @@ static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 	# Not yet opened (no valid own meld on the table): the rules forbid
 	# touching other melds, so there is nothing more to plan.
 	if not gm.current_player_is_open():
+		return {}
+	# Every play from here reads the table; an oblivious AI may overlook it,
+	# cutting its streak short (see AIProfile.misses_move).
+	if profile != null and profile.misses_move():
 		return {}
 	var hold_keys := profile != null and profile.holds_key_cards()
 	# 2. Single-card lay-off onto an existing meld.
@@ -114,6 +147,8 @@ static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 	if profile == null or profile.can_rearrange():
 		for m in gm.board.melds:
 			for t in m.cards:
+				if _borrow_drags_cluster(gm, m, t):
+					continue  # lifting it alone is impossible: it drags its cluster
 				var rest: Array[Card] = m.cards.duplicate()
 				rest.erase(t)
 				if not Rules.is_valid_meld(rest):
@@ -136,12 +171,7 @@ static func plan_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
 # (plan_move above). At the top it instead enumerates every legal move for the
 # turn and plays the highest-scoring one, using the same deck-count math that
 # picks safe joker stand-ins to reason about what opponents can do next.
-
-const W_PROGRESS := 10.0     # per own hand card the move commits
-const GO_OUT_BONUS := 100.0  # emptying the hand this move
-const JOKER_STEAL_BONUS := 30.0  # pulling a joker off another meld into ours
-const W_FEED := 2.0          # per unseen copy an open end hands to opponents
-const W_BLOCK := 6.0         # holding a card still useful in hand beats dumping it
+# Its scoring weights (W_PROGRESS etc.) live at the top of the file.
 
 ## Enumerate every legal move for the current player, score each, and return
 ## the best (or {} to hold and draw when nothing scores positive). Mirrors
@@ -154,6 +184,10 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 		if budget <= 0:
 			return {}
 	var hand := gm.current_player().hand
+	# The blunder roll covers only the table-reading plays (steps 2-5 below); an
+	# oblivious AI still lays a group straight from hand every time. On a miss it
+	# considers nothing but that hand meld this move, cutting its streak short.
+	var oblivious := profile != null and profile.misses_move()
 	# Race mode: stop denying/blocking and simply push to empty the hand. Two
 	# triggers — the endgame is close, or (accounting for how many cards the play
 	# cap still lets it play) the whole hand can actually go out this turn. When
@@ -167,7 +201,7 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 			and (race or _will_lay_meld(gm, meld, profile)):
 		candidates.append({"cards": meld, "dest": null,
 			"text": "lays down %s" % _cards_text(meld)})
-	if gm.current_player_is_open():
+	if gm.current_player_is_open() and not oblivious:
 		# 2. Single-card lay-offs.
 		for c in hand:
 			for m in gm.board.melds:
@@ -195,6 +229,8 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 		# new meld together with hand cards.
 		for m in gm.board.melds:
 			for t in m.cards:
+				if _borrow_drags_cluster(gm, m, t):
+					continue  # slimed: it can't be lifted alone, it drags its cluster
 				if not _leftover_valid(m, [t]):
 					continue
 				var pool: Array[Card] = hand.duplicate()
@@ -221,6 +257,8 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 					var m1: CardSet = table[i][1]
 					var t2: Card = table[j][0]
 					var m2: CardSet = table[j][1]
+					if _borrow_drags_cluster(gm, m1, t1) or _borrow_drags_cluster(gm, m2, t2):
+						continue  # slimed cards can't be lifted alone, they drag a cluster
 					if m1 == m2:
 						if not _leftover_valid(m1, [t1, t2]):
 							continue
@@ -348,6 +386,16 @@ static func _meld_fixed_rank(cards: Array[Card]) -> int:
 			return r
 	return 0
 
+## Whether borrowing this card on its own would drag extra cards along: it is
+## slimed into a cluster with its neighbours and the current player is bound by
+## the slime (a player that ignores_sticky — the Cute Slime herself — lifts it
+## freely). The smart brain understands the slime by simply leaving such cards
+## where they are, planning only moves it can actually make.
+static func _borrow_drags_cluster(gm: GameManager, meld: CardSet, card: Card) -> bool:
+	if gm.current_player().ignores_sticky:
+		return false
+	return meld.sticky_cluster(card).size() > 1
+
 ## Whether a meld stays legal after `removed` cards leave it: either nothing is
 ## left (the whole meld was consumed) or the remainder is still a valid meld.
 ## Guards every table rearrangement so the committed table never goes invalid.
@@ -445,7 +493,9 @@ static func apply_move(gm: GameManager, move: Dictionary, profile: AIProfile = n
 		# Should be unreachable: plan_move only proposes legal moves.
 		push_warning("GreedyAI staged an illegal move (%s)" % err)
 		return
-	if profile != null and profile.picks_safe_joker_reps():
+	# A strategy move deliberately arranges the table (e.g. the slime guarding a
+	# joker); leave its jokers pointed where the strategy wants them.
+	if profile != null and profile.picks_safe_joker_reps() and not move.get("strategy", false):
 		# A new meld is appended last by move_cards_to_new_meld.
 		_choose_joker_reps(gm, dest if dest != null else gm.board.melds[-1])
 

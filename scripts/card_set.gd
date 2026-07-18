@@ -42,25 +42,29 @@ func _fire_trigger(trigger_card: Card, played_card: Card) -> void:
 	# TODO: hook into damage/heal system once that exists.
 	print("Trigger fired: %s reacting to %s" % [trigger_card.label(), played_card.label()])
 
+## The cluster of cards that must move together with start_card because of the
+## Sticky (slime) effect. Slimed cards only stick to each other: two neighbours
+## are bound only when BOTH are slimed. The cluster is the maximal run of
+## consecutive slimed cards containing start_card, so a plain card (or a slimed
+## card with no slimed neighbour) is always its own singleton. Adjacency is read
+## from the meld's display order — what the player actually sees on the felt —
+## so the cards it drags are the cards sitting next to it, and the cluster is
+## returned in that left-to-right order.
 func sticky_cluster(start_card: Card) -> Array[Card]:
-	# Returns the connected cluster of cards bound together by Sticky, starting
-	# from start_card. Naive adjacency walk for the prototype — refine once
-	# board topology (rows vs. runs) is settled.
 	var cluster: Array[Card] = []
-	var idx := cards.find(start_card)
-	if idx == -1:
+	if not cards.has(start_card):
 		return cluster
-	cluster.append(start_card)
-	if not start_card.has_effect(Card.Effect.STICKY):
+	if not start_card.is_sticky():
+		cluster.append(start_card)
 		return cluster
-	# Walk left
-	var i := idx - 1
-	while i >= 0 and cards[i].has_effect(Card.Effect.STICKY):
-		cluster.push_front(cards[i])
-		i -= 1
-	# Walk right
-	var j := idx + 1
-	while j < cards.size() and cards[j].has_effect(Card.Effect.STICKY):
-		cluster.append(cards[j])
-		j += 1
+	var order := Rules.display_order(cards)
+	var idx := order.find(start_card)
+	var lo := idx
+	var hi := idx
+	while lo > 0 and order[lo - 1].is_sticky():
+		lo -= 1
+	while hi < order.size() - 1 and order[hi + 1].is_sticky():
+		hi += 1
+	for i in range(lo, hi + 1):
+		cluster.append(order[i])
 	return cluster

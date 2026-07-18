@@ -96,6 +96,7 @@ func current_player() -> PlayerState:
 func move_cards_to_new_meld(cards_to_move: Array[Card]) -> String:
 	if cards_to_move.is_empty():
 		return ""
+	cards_to_move = _expand_sticky(cards_to_move)
 	var err := _stage_error(cards_to_move, null)
 	if err != "":
 		return err
@@ -110,6 +111,7 @@ func move_cards_to_new_meld(cards_to_move: Array[Card]) -> String:
 func add_cards_to_meld(cards_to_move: Array[Card], meld: CardSet) -> String:
 	if cards_to_move.is_empty():
 		return ""
+	cards_to_move = _expand_sticky(cards_to_move)
 	var err := _stage_error(cards_to_move, meld)
 	if err != "":
 		return err
@@ -187,21 +189,25 @@ func return_cards_to_hand(cards_to_return: Array[Card]) -> String:
 ## human-readable reason the swap is not allowed.
 func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	var p := current_player()
+	# Collect the first reason (if any) the swap is illegal, then bail once.
+	var err := ""
 	if not joker.is_joker or joker.joker_rank == 0:
-		return "That card is not a joker with a known value."
-	if not meld.cards.has(joker):
-		return "That joker is not in that group."
-	if not p.hand.has(hand_card) or hand_card.is_joker:
-		return "Only a real card from your hand can swap for a joker."
-	if hand_card.rank != joker.joker_rank or hand_card.suit != joker.joker_suit:
-		return "That joker stands for %s — only that exact card can swap for it." \
+		err = "That card is not a joker with a known value."
+	elif not meld.cards.has(joker):
+		err = "That joker is not in that group."
+	elif not p.hand.has(hand_card) or hand_card.is_joker:
+		err = "Only a real card from your hand can swap for a joker."
+	elif hand_card.rank != joker.joker_rank or hand_card.suit != joker.joker_suit:
+		err = "That joker stands for %s — only that exact card can swap for it." \
 			% joker.rep_label()
-	if not current_player_is_open() and not is_own_staged_meld(meld):
-		return "You can't touch the table before opening — " \
+	elif not current_player_is_open() and not is_own_staged_meld(meld):
+		err = "You can't touch the table before opening — " \
 			+ "lay down a valid group from your own hand first."
 	# The swap counts as playing a card, so it needs room under the play cap.
-	if max_plays_per_turn > 0 and cards_played_this_turn() >= max_plays_per_turn:
-		return "You can only play %d cards in a turn." % max_plays_per_turn
+	elif max_plays_per_turn > 0 and cards_played_this_turn() >= max_plays_per_turn:
+		err = "You can only play %d cards in a turn." % max_plays_per_turn
+	if err != "":
+		return err
 	_push_undo()
 	meld.cards[meld.cards.find(joker)] = hand_card
 	p.hand.erase(hand_card)
@@ -273,6 +279,30 @@ func _stage_error(cards_to_move: Array[Card], dest: CardSet) -> String:
 ## failure, so the player can fix the table and try again).
 func commit_turn() -> String:
 	var p := current_player()
+	var err := _commit_error(p)
+	if err != "":
+		return err
+	# The turn is final: every joker on the table locks to what it was placed
+	# as. From now on it is treated as exactly that card — no longer a
+	# wildcard — until the joker swap sends it back to a hand.
+	for m in board.melds:
+		Rules.assign_jokers(m.cards)
+		for c in m.cards:
+			if c.is_joker and c.joker_lock_rank == 0 and c.joker_rank > 0:
+				c.joker_lock_rank = c.joker_rank
+				c.joker_lock_suit = c.joker_suit
+	_consecutive_passes = 0
+	p.has_opened = true
+	turn_committed.emit(p, cards_played_this_turn())
+	if p.hand.is_empty():
+		_end_game([p])
+	else:
+		_advance()
+	return ""
+
+## Why the current turn can't be committed, or "" if it is legal. Split out so
+## commit_turn keeps a single success path (the guard clauses live here).
+func _commit_error(p: PlayerState) -> String:
 	if cards_played_this_turn() <= 0:
 		return "You must play at least one card from your hand (or draw instead)."
 	# Normally unreachable (staging enforces the cap), but the cap can be
@@ -289,22 +319,6 @@ func commit_turn() -> String:
 	if not p.has_opened and not _staged_open_meld_exists():
 		return "To open you must lay down at least one valid group " \
 			+ "built only from your own hand."
-	# The turn is final: every joker on the table locks to what it was placed
-	# as. From now on it is treated as exactly that card — no longer a
-	# wildcard — until the joker swap sends it back to a hand.
-	for m in board.melds:
-		Rules.assign_jokers(m.cards)
-		for c in m.cards:
-			if c.is_joker and c.joker_lock_rank == 0 and c.joker_rank > 0:
-				c.joker_lock_rank = c.joker_rank
-				c.joker_lock_suit = c.joker_suit
-	_consecutive_passes = 0
-	p.has_opened = true
-	turn_committed.emit(p, cards_played_this_turn())
-	if p.hand.is_empty():
-		_end_game([p])
-		return ""
-	_advance()
 	return ""
 
 ## Abandon any staged plays, draw draw_per_turn cards (or pass if the stock
@@ -333,6 +347,30 @@ func draw_and_end_turn() -> void:
 	_advance()
 
 # --- Internals ---------------------------------------------------------------
+
+## Grow a move so it drags whole slime clusters: any card in cards_to_move that
+## sits on the table pulls its full sticky_cluster along (see CardSet). Cluster
+## members are emitted contiguously in board order so the cluster keeps its
+## arrangement wherever it lands, which keeps the bonds intact for next time.
+## Hand cards (not on any meld) pass through untouched, so a hand-only play is
+## never affected. The Cute Slime slips her own slime freely, so a player that
+## ignores_sticky is never expanded. Idempotent: expanding an already-whole
+## cluster changes nothing, so it is safe to call over UI moves that expanded.
+func _expand_sticky(cards_to_move: Array[Card]) -> Array[Card]:
+	if current_player().ignores_sticky:
+		return cards_to_move
+	var out: Array[Card] = []
+	for c in cards_to_move:
+		if out.has(c):
+			continue
+		var meld := board.meld_of(c)
+		if meld == null:
+			out.append(c)
+			continue
+		for m in meld.sticky_cluster(c):
+			if not out.has(m):
+				out.append(m)
+	return out
 
 func _move_cards(cards_to_move: Array[Card], dest: CardSet) -> void:
 	var p := current_player()

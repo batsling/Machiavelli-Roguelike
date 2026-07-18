@@ -28,7 +28,7 @@ extends RefCounted
 ## uses no randomness, so seeded headless games stay reproducible. Pass a seed
 ## here to make a profiled game reproducible too.
 
-const MISS_CHANCE_AT_MOST_OBLIVIOUS := 0.6
+const MISS_CHANCE_AT_MOST_OBLIVIOUS := 0.3
 ## At or above this skill the AI drops the greedy first-legal-move search for
 ## the deck-counting, opponent-aware brain (GreedyAI._plan_smart_move).
 const SMART_BRAIN_SKILL := 0.85
@@ -48,8 +48,12 @@ func _init(strength_value := 1.0, style_value := 0.0,
 	else:
 		rng.randomize()
 
-## Rolled once per planned move; an oblivious AI regularly overlooks its next
-## play, cutting its streak short for the turn (or missing the turn entirely).
+## The blunder roll, capped at MISS_CHANCE_AT_MOST_OBLIVIOUS (30%) when fully
+## oblivious. GreedyAI only consults it for plays that read the table — laying
+## off onto an existing group or rearranging the table — never for laying a
+## group straight from hand. So an oblivious AI still empties its hand into
+## fresh groups reliably but keeps overlooking the plays that need it to notice
+## what is already on the felt, cutting its streak short (or missing the turn).
 func misses_move() -> bool:
 	return rng.randf() < (1.0 - attention) * MISS_CHANCE_AT_MOST_OBLIVIOUS
 

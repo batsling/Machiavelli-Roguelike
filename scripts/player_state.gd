@@ -12,6 +12,10 @@ extends Resource
 # valid meld built entirely from their own hand. Until then they may not add
 # to or take from other melds on the table.
 @export var has_opened: bool = false
+# True for a player the slime (Sticky) effect does not bind: they move a slimed
+# card on its own instead of dragging its whole cluster. The Cute Slime sets
+# this on herself, so she alone slips her slime around freely.
+@export var ignores_sticky: bool = false
 
 func take_damage(amount: int) -> void:
 	health = max(0, health - amount)

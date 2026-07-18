@@ -109,11 +109,13 @@ The **Settings** button opens a dialog with:
     possible; a conservative one sits on its opening meld until it's big enough
     (unless the endgame forces its hand) and holds cards that still pair up with
     the rest of its hand.
-  - **Attention** (oblivious → attentive) — purely the blunder roll: an
-    oblivious AI regularly overlooks a play it could have made (cutting its
-    streak short, or missing a turn); an attentive one never forgets. It is
-    independent of skill — a strong but oblivious AI sees the clever plays yet
-    keeps fumbling the obvious ones.
+  - **Attention** (oblivious → attentive) — the blunder roll, capped at a 30%
+    miss chance when fully oblivious. It only covers the plays that read the
+    table — laying off onto an existing group or rearranging the felt — never
+    laying a group straight from hand, so an oblivious AI still empties its hand
+    into fresh groups reliably but keeps overlooking the table plays (cutting
+    its streak short). It is independent of skill — a strong but oblivious AI
+    sees the clever plays yet keeps fumbling the obvious ones.
 
   Applies from the next enemy turn.
 - **Enemies** (1-3) — takes effect on the next new game.
@@ -151,8 +153,20 @@ The **Settings** button opens a dialog with:
   hoarding toward a dead end), and races the endgame
 - `scripts/ai_profile.gd` — `AIProfile`: the three personality dials GreedyAI
   consults — skill (search depth + the smart brain), style (opening threshold,
-  key-card holding), attention (miss chance); unset = strong + quick +
-  attentive and fully deterministic
+  key-card holding), attention (miss chance, capped at 30% and only on
+  table-reading plays); unset = strong + quick + attentive and fully
+  deterministic
+- `scripts/enemy.gd` — `Enemy`: a designed roguelike opponent — a name, an AI
+  profile, an `on_combat_start` hook to plant mechanics, and a
+  `plan_strategy_move` hook GreedyAI consults once ordinary play is spent; plus
+  the roster the rogue ladder picks from at random
+- `scripts/cute_slime.gd` — `CuteSlime`: the first designed enemy (strong,
+  oblivious, quick). At combat start she slimes a random 13 hearts, 13 diamonds
+  and all jokers (the Sticky effect); on her turns she legally combines slimed
+  cards — oozing them next to the most valuable slimed card the player could
+  still lift (weighting by versatility: jokers, then the flexible 4-8s), as much
+  as helps while keeping every group valid with no leftover cards; she alone
+  moves slimed cards freely
 - `scripts/main_ui.gd` + `scenes/main.tscn` — main menu plus the drag-and-drop
   (or click-to-play) UI, built in code: styled cards, felt table, per-group
   validity outlines, opponent seats with face-down card backs, flying-card
@@ -161,7 +175,9 @@ The **Settings** button opens a dialog with:
   turn, the settings dialog
 - `tests/smoke_test.gd` — headless AI-vs-AI smoke test plus unit tests for the
   joker rules, the joker swap, joker stand-in choice, joker locking, the AI's
-  safe stand-in picking, and the hand cap
+  safe stand-in picking, the hand cap, the slime's sticky clusters (cluster
+  detection, cluster moves, the slime's free movement), the slime setup, and
+  her joker-guarding strategy — including a full slimed AI-vs-AI game
 
 ## Headless smoke test
 
@@ -183,9 +199,24 @@ godot --headless --path . --script res://tests/smoke_test.gd    # unit tests + 6
   [mjpieters/rummikub-solver](https://github.com/mjpieters/rummikub-solver) for
   reference implementations.
 
-## Roguelike layer (not built yet)
+## Roguelike layer
 
-Kept as data stubs so the vanilla engine stays clean: card effect flags on `Card`
-(Clear, Sticky, Spiked, Brittle, Bomb, Clone, Trigger, Mirrored), trigger/cluster
-stubs on `CardSet`, health/gold on `PlayerState`. Phantom-turn damage, encounters,
-and the shared-deck-corruption idea live in the concept doc and git history.
+The first designed enemy is in: **The Cute Slime** (round 1 of a roguelike run).
+The **Sticky** card effect is now live — slimed cards (a green splotch, top
+right) stick to *each other*, so a run of them on the table moves as one lump:
+dragging any one drags them all, and the leftover has to stay a valid group. The
+slime slimes a random 13 hearts, 13 diamonds and every joker at combat start,
+moves her own slime freely (`PlayerState.ignores_sticky`), and runs a
+"slime strategy" that legally combines slimed cards to guard her most valuable
+ones — oozing them next to the most valuable slimed card the player could still
+lift, prizing versatility (jokers, then the flexible 4-8s), as much as helps
+while keeping every group valid with no leftover cards. The smart AI understands
+the slime and never plans a move that would drag a cluster it didn't mean to.
+Enemies live in `scripts/enemy.gd` (+ `cute_slime.gd`); the rogue ladder picks
+one at random each round (only the slime exists for now).
+
+Still kept as data stubs so the vanilla engine stays clean: the other card
+effect flags on `Card` (Clear, Spiked, Brittle, Bomb, Clone, Trigger, Mirrored),
+trigger stubs on `CardSet`, health/gold on `PlayerState`. Phantom-turn damage,
+encounters, and the shared-deck-corruption idea live in the concept doc and git
+history.
