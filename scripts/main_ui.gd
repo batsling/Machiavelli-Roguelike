@@ -14,8 +14,9 @@ extends Control
 ## 1). Each round faces a designed enemy picked at random from Enemy.roster():
 ## the Cute Slime, who slimes half the hearts, half the diamonds and every
 ## joker (slimed cards carry a green splotch and stick to each other, so a run
-## of them moves as one lump), or the Sadistic Billionaire, who turns three
-## quarters of every card to glass (glass cards render transparent and are
+## of them moves as one lump), or the Sadistic Billionaire, who turns every
+## joker and three quarters of the other cards to glass (glass cards render
+## transparent and are
 ## visible from the back — in any hand and on top of the stock — so his glass
 ## cards show face-up in his seat and a glass stock top is shown beside the
 ## stock count). Sandbox settings never apply during a run, so the Settings

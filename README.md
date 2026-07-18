@@ -176,10 +176,10 @@ The **Settings** button opens a dialog with:
   as helps while keeping every group valid with no leftover cards; she alone
   moves slimed cards freely
 - `scripts/sadistic_billionaire.gd` — `SadisticBillionaire`: the second designed
-  enemy (strong, conservative, attentive). At combat start he turns a random
-  three quarters of every card — stock and hands, jokers included — to glass
-  (the Clear effect): see-through from the back, visible in any player's hand
-  and on top of the stock, rendered transparent. The information cuts both
+  enemy (strong, conservative, attentive). At combat start he turns every
+  joker and a random three quarters of the other cards — stock and hands —
+  to glass (the Clear effect): see-through from the back, visible in any
+  player's hand and on top of the stock, rendered transparent. The information cuts both
   ways — the player reads his hand off his card backs, and the smart brain
   counts every glass card in its planning
 - `scripts/main_ui.gd` + `scenes/main.tscn` — main menu plus the drag-and-drop
@@ -238,8 +238,9 @@ cluster it didn't mean to.
 
 **The Sadistic Billionaire** brings the **Clear** (glass) effect — glass cards
 render transparent and are see-through from the back: everyone can see them
-in any player's hand and on top of the stock. He turns a random three quarters
-of *all* cards to glass at combat start, so his hand shows most of its faces
+in any player's hand and on top of the stock. He turns every joker and a
+random three quarters of all other cards to glass at combat start (like the
+slime, no joker escapes him), so his hand shows most of its faces
 in his seat, your hand leaks the same way, and a glass stock top telegraphs
 the next draw to the whole table. The smart AI uses exactly that public
 information — counting glass cards in every hand and reading a glass stock

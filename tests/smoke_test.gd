@@ -484,10 +484,10 @@ func _test_slime_guards_on_draw() -> bool:
 		print("slime guards on draw test OK")
 	return ok
 
-## The Sadistic Billionaire turns exactly three quarters of all cards — the
-## stock and every hand, jokers included — to glass at combat start; glass is
-## pure information, so it stacks with slime on the same card; and the rogue
-## roster now offers both designed enemies.
+## The Sadistic Billionaire turns every joker and exactly three quarters of
+## all other cards — the stock and every hand — to glass at combat start;
+## glass is pure information, so it stacks with slime on the same card; and
+## the rogue roster now offers both designed enemies.
 func _test_glass_setup() -> bool:
 	var gm := GameManager.new()
 	var ok := true
@@ -497,12 +497,23 @@ func _test_glass_setup() -> bool:
 	for p in gm.players:
 		all_cards.append_array(p.hand)
 	var glass := 0
+	var glass_jokers := 0
+	var total_jokers := 0
 	for c in all_cards:
 		if c.is_glass():
 			glass += 1
-	if all_cards.size() != 108 or glass != 81:
-		printerr("glass setup: expected 81 of 108 cards glass, got %d of %d"
+		if c.is_joker:
+			total_jokers += 1
+			if c.is_glass():
+				glass_jokers += 1
+	# 78 of the 104 naturals (3/4) plus all 4 jokers.
+	if all_cards.size() != 108 or glass != 82:
+		printerr("glass setup: expected 82 of 108 cards glass, got %d of %d"
 			% [glass, all_cards.size()])
+		ok = false
+	if glass_jokers != total_jokers or total_jokers != Deck.JOKER_COUNT:
+		printerr("glass setup: expected all %d jokers glass, got %d of %d"
+			% [Deck.JOKER_COUNT, glass_jokers, total_jokers])
 		ok = false
 	var both := _glass(_sticky(_card(5, "hearts")))
 	if not (both.is_glass() and both.is_sticky()):

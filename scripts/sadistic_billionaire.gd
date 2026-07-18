@@ -5,10 +5,11 @@ extends Enemy
 ## his opening meld until it is big enough and holds cards that still pair up)
 ## and fully attentive (never blunders). His mechanic is glass.
 ##
-## At combat start he turns a random three quarters of ALL cards — the stock
-## and every hand, jokers included — to glass (the Clear effect). A glass card
-## is see-through from the back: everyone can see it while it sits in any
-## player's hand or on top of the stock. The information cuts both ways: the
+## At combat start he turns every joker and a random three quarters of all
+## other cards — wherever the deal put them, the stock and every hand — to
+## glass (the Clear effect). A glass card is see-through from the back:
+## everyone can see it while it sits in any player's hand or on top of the
+## stock. The information cuts both ways: the
 ## player reads his glass cards straight off his card backs, but the smart AI
 ## counts every glass card too (GreedyAI's glass awareness) — it knows which
 ## cards it wants are visibly locked in an opponent's hand (not worth waiting
@@ -20,7 +21,8 @@ extends Enemy
 ## Glass is pure information — it never restricts how a card moves — so a card
 ## can be both glass and slimed without conflict.
 
-## The fraction of all cards turned to glass at combat start (3/4).
+## The fraction of the non-joker cards turned to glass at combat start (3/4);
+## every joker is glassed on top of that, like the slime slimes them all.
 const GLASS_NUMERATOR := 3
 const GLASS_DENOMINATOR := 4
 
@@ -31,20 +33,27 @@ func _init() -> void:
 	attention = 1.0    # attentive
 
 func mechanic_intro() -> String:
-	return "[b]%s[/b] turns three quarters of every card to glass " \
+	return "[b]%s[/b] turns every joker and three quarters of the other cards " \
 		% display_name \
-		+ "(transparent). A glass card is see-through from the back: everyone " \
-		+ "can see it in any player's hand and on top of the stock. He reads " \
-		+ "your glass cards and knows a glass next draw — but you can read his " \
-		+ "hand the same way."
+		+ "to glass (transparent). A glass card is see-through from the back: " \
+		+ "everyone can see it in any player's hand and on top of the stock. He " \
+		+ "reads your glass cards and knows a glass next draw — but you can " \
+		+ "read his hand the same way."
 
-## Turn a random three quarters of every card in the game — the stock and all
-## hands, wherever the deal put them — to glass. Rides the deck's own RNG, so a
-## seeded game glasses the same cards every replay.
+## Turn every joker and a random three quarters of all other cards in the game
+## — the stock and all hands, wherever the deal put them — to glass. The random
+## share rides the deck's own RNG, so a seeded game glasses the same cards
+## every replay.
 func on_combat_start(gm: GameManager) -> void:
-	var pool: Array[Card] = gm.deck.cards.duplicate()
+	var all_cards: Array[Card] = gm.deck.cards.duplicate()
 	for p in gm.players:
-		pool.append_array(p.hand)
+		all_cards.append_array(p.hand)
+	var pool: Array[Card] = []
+	for c in all_cards:
+		if c.is_joker:
+			_glass(c)
+		else:
+			pool.append(c)
 	var rng := gm.deck.rng
 	for i in range(pool.size() - 1, 0, -1):
 		var j := rng.randi_range(0, i)

@@ -53,13 +53,16 @@ func _init() -> void:
 			printerr("expected 30 slimed cards at combat start, got %d" % slimed)
 			ok = false
 	elif ui.current_enemy is SadisticBillionaire:
-		# He turns three quarters of all 108 cards to glass.
+		# He glasses all 4 jokers plus three quarters of the 104 naturals.
 		var glass := 0
 		for c in all_cards:
 			if c.is_glass():
 				glass += 1
-		if glass != 81:
-			printerr("expected 81 glass cards at combat start, got %d" % glass)
+			elif c.is_joker:
+				printerr("every joker should be glass at combat start")
+				ok = false
+		if glass != 82:
+			printerr("expected 82 glass cards at combat start, got %d" % glass)
 			ok = false
 	else:
 		printerr("round 1 should face a designed enemy, got %s" % ui.current_enemy)
