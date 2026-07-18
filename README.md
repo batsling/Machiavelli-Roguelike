@@ -24,17 +24,18 @@ health/gold, encounters) will be built on.
   it out and take the wildcard into their hand. The real card leaves your hand
   for the table, so the swap counts as playing a card — a swap alone lets you
   end your turn.
+- **Joker locking**: a joker is only a wildcard while it sits in someone's
+  hand. The moment it lands in a valid group on the table it locks to the card
+  it stands for, and from then on every rule treats it as exactly that card —
+  anyone may rearrange it into other groups (or break its group mid-turn), but
+  it never changes face and is no longer a wildcard — until a swap sends it
+  back to a hand, where it becomes a free joker again.
 - **Choosing what a joker stands for**: some groups leave the joker a genuine
   choice — a set of three is missing two suits, and a spare joker on a run could
-  extend either end. Right-click the joker to pick from the valid options;
-  inner run gaps are forced, so those offer no choice. The choice is open only
-  while the joker is freshly placed — until the turn that played it is
-  committed.
-- **Joker locking**: when the turn that placed a joker ends, the joker locks to
-  the card it was placed as. From then on every rule treats it as exactly that
-  card — anyone may rearrange it into other groups, but it is no longer a
-  wildcard — until the swap sends it back to a hand, where it becomes a free
-  joker again.
+  extend either end. Right-click the joker to re-point it at any card it could
+  stand for; inner run gaps are forced, so those offer no choice. Only the
+  player who placed the joker may do this, and only until their turn ends —
+  then the choice is final.
 - **Max hand size** (optional, settings: none or 10-20): drawing stops at the
   cap, so trying to draw on a full hand is a pass. A full round of passes ends
   the game as usual, fewest cards winning.
@@ -78,9 +79,10 @@ On your turn:
    play is abandoned first, but a *valid* table rearrangement that laid no card
    from your hand is kept — you can rework the felt and still draw.
 
-Jokers on the table show a tooltip with what they stand for; when the group
-leaves them a choice, right-click one to pick its stand-in (handy for setting
-up — or blocking — the swap).
+Jokers on the table show a tooltip with what they stand for; while a joker you
+placed this turn still has a choice, right-click it to pick its stand-in (handy
+for setting up — or blocking — the swap). Right-clicking anything else — a
+card, the felt, your hand — clears the current selection.
 
 Your hand works like Balatro's: it keeps whatever order you give it. Drag a card
 onto another hand card to slot it there (left half = before, right half = after),

@@ -526,31 +526,43 @@ static func apply_move(gm: GameManager, move: Dictionary, profile: AIProfile = n
 ## the fewest copies still unseen (not on the table and not in this AI's own
 ## hand). An opponent can only swap-claim a joker by holding the exact card it
 ## stands for, so fewer possible holders means less chance anyone ever takes
-## the wildcard.
+## the wildcard. A joker locks the moment it lands in a valid meld, so one
+## the AI placed this turn is re-pointed through the engine
+## (GameManager.set_joker_stand_in); a still-free joker just gets its
+## preference set for the assignment to honor.
 static func _choose_joker_reps(gm: GameManager, meld: CardSet) -> void:
-	var alts := Rules.joker_alternatives(meld.cards)
-	if alts.is_empty():
-		return
-	var scored: Array[Dictionary] = []
-	for alt in alts:
-		scored.append({"rank": alt["rank"], "suit": alt["suit"],
-			"unseen": _unseen_copies(gm, alt["rank"], alt["suit"]),
-			"held": _glass_copies_in_other_hands(gm, alt["rank"], alt["suit"])})
-	scored.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if a["held"] != b["held"]:
-			return a["held"] < b["held"]
-		if a["unseen"] != b["unseen"]:
-			return a["unseen"] < b["unseen"]
-		if a["rank"] != b["rank"]:
-			return a["rank"] < b["rank"]
-		return a["suit"] < b["suit"])
-	var i := 0
 	for c in meld.cards:
-		if c.is_joker and c.joker_lock_rank == 0:
-			var alt: Dictionary = scored[mini(i, scored.size() - 1)]
-			c.joker_pref_rank = alt["rank"]
-			c.joker_pref_suit = alt["suit"]
-			i += 1
+		if not c.is_joker:
+			continue
+		if c.joker_lock_rank > 0 and not gm.placed_this_turn(c):
+			continue  # locked on an earlier turn: no longer choosable
+		var alts := Rules.rechoice_alternatives(meld.cards, c)
+		if alts.is_empty():
+			continue
+		var best: Dictionary = {}
+		for alt in alts:
+			var cand := {"rank": alt["rank"], "suit": alt["suit"],
+				"unseen": _unseen_copies(gm, alt["rank"], alt["suit"]),
+				"held": _glass_copies_in_other_hands(gm, alt["rank"], alt["suit"])}
+			if best.is_empty() or _safer_rep(cand, best):
+				best = cand
+		if c.joker_lock_rank > 0:
+			if best["rank"] != c.joker_lock_rank or best["suit"] != c.joker_lock_suit:
+				gm.set_joker_stand_in(c, meld, best["rank"], best["suit"])
+		else:
+			c.joker_pref_rank = best["rank"]
+			c.joker_pref_suit = best["suit"]
+
+## Ordering for joker stand-in safety: fewest visibly-held swap cards, then
+## fewest unseen copies, then lowest rank/suit as a stable tie-break.
+static func _safer_rep(a: Dictionary, b: Dictionary) -> bool:
+	if a["held"] != b["held"]:
+		return a["held"] < b["held"]
+	if a["unseen"] != b["unseen"]:
+		return a["unseen"] < b["unseen"]
+	if a["rank"] != b["rank"]:
+		return a["rank"] < b["rank"]
+	return a["suit"] < b["suit"]
 
 ## Copies of the exact card that could still sit in an opponent's hand or the
 ## stock: 2 in the double deck, minus those visible on the table and those

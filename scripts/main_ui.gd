@@ -37,6 +37,8 @@ extends Control
 ## and turn blue), then click the "+ New group" zone — it appears only while
 ## cards are selected, keeping the table clean. Adding to an existing group
 ## is done by dragging. Dragging a selected card drags the whole selection.
+## Right-clicking anywhere (a card, the felt, the hand) clears the selection;
+## on a joker you placed this turn the stand-in menu takes precedence.
 ##
 ## Opening rule: until you have laid down at least one valid group built only
 ## from your own hand, you cannot add to other groups or take cards from them
@@ -67,14 +69,14 @@ extends Control
 ## cards played per turn (none, or 10-20 — only cards leaving your hand
 ## count, rearranging the table is free; applies immediately, and binds the
 ## AI too), and the joker toggle (next game). Jokers (★) count as any
-## card; a joker in a valid group shows the card it currently stands for
-## (e.g. ★7♥), and if you hold that exact card you can drop it on the joker
-## to swap it out and take the wildcard into your hand. When a group leaves
-## the joker a choice (say, two missing suits in a set of three), right-click
-## the joker on your turn to pick which card it stands for — but only until
-## the turn that placed it is committed: from then on the joker is locked to
-## that card (no longer a wildcard, even when rearranged) until the swap
-## sends it back to a hand.
+## card while in a hand; the moment one lands in a valid group on the table
+## it locks to the card it stands for (e.g. ★7♥) and is treated as exactly
+## that card — no longer a wildcard, even when the group is rearranged or
+## broken — until a swap sends it back to a hand: hold the real card it
+## stands for and drop it on the joker to take the wildcard. While the turn
+## that placed a joker is still yours, right-click it to pick a different
+## card it could stand for (say, the other missing suit in a set of three);
+## once the turn ends the choice is final.
 
 enum Mode { SANDBOX, ROGUE }
 
@@ -313,6 +315,7 @@ func _build_layout() -> void:
 	table_scroll.add_child(board_flow)
 	for zone: Control in [table_panel, table_scroll, board_flow]:
 		zone.set_drag_forwarding(Callable(), _can_drop_new_group, _drop_new_group)
+		zone.gui_input.connect(_on_background_gui_input)
 
 	seat_right = _make_seat()
 	seat_right.custom_minimum_size = Vector2(SIDE_SEAT_WIDTH, 0)
@@ -351,6 +354,7 @@ func _build_layout() -> void:
 	hand_col.add_child(hand_box)
 	for zone: Control in [hand_panel, hand_col, hand_top, hand_title, hand_box]:
 		zone.set_drag_forwarding(Callable(), _can_drop_on_hand, _drop_on_hand)
+		zone.gui_input.connect(_on_background_gui_input)
 
 	# Action row.
 	var actions := HBoxContainer.new()
@@ -937,17 +941,13 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	if c.is_joker:
 		font_col = COL_JOKER
 		if not b.disabled:
-			if c.joker_lock_rank > 0:
+			if c.joker_rank > 0:
 				b.tooltip_text = ("Joker placed as %s — it stays that card until " \
 					+ "it leaves the table. Hold the real %s? Drop it on this " \
 					+ "joker to swap it into your hand.") % [c.rep_label(), c.rep_label()]
-			elif c.joker_rank > 0:
-				b.tooltip_text = "Joker standing in for %s. Hold the real %s? " \
-					% [c.rep_label(), c.rep_label()] \
-					+ "Drop it on this joker to swap it into your hand."
-				if on_board and not Rules.joker_alternatives(meld.cards).is_empty():
-					b.tooltip_text += "\nRight-click to choose what the joker stands for."
-					b.gui_input.connect(_on_joker_gui_input.bind(c, meld))
+				if on_board and _joker_is_rechoosable(c, meld):
+					b.tooltip_text += "\nRight-click to change what it stands for " \
+						+ "(only until your turn ends)."
 			else:
 				b.tooltip_text = "Joker — counts as any card."
 	for state in ["font_color", "font_pressed_color", "font_hover_color",
@@ -987,6 +987,7 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 		_add_slime_blob(b)
 
 	b.toggled.connect(_on_card_toggled.bind(c))
+	b.gui_input.connect(_on_card_gui_input.bind(c, meld))
 	if on_board:
 		b.set_drag_forwarding(_get_card_drag_data.bind(c, b),
 			_can_drop_on_meld.bind(meld), _drop_on_meld.bind(meld))
@@ -1247,20 +1248,44 @@ func _matching_joker(c: Card, meld: CardSet) -> Card:
 			return t
 	return null
 
-## Right-clicking a joker on the table (when its group leaves it a choice)
-## opens a menu of the cards it could stand for.
-func _on_joker_gui_input(event: InputEvent, joker: Card, meld: CardSet) -> void:
+## Right-click on any card: a joker you placed this turn opens the stand-in
+## menu; everything else clears the selection.
+func _on_card_gui_input(event: InputEvent, c: Card, meld: CardSet) -> void:
 	if event is InputEventMouseButton and event.pressed \
 			and event.button_index == MOUSE_BUTTON_RIGHT:
-		_show_joker_menu(joker, meld)
+		if meld != null and c.is_joker and _show_joker_menu(c, meld):
+			return
+		_clear_selection()
 
-func _show_joker_menu(joker: Card, meld: CardSet) -> void:
-	if not _card_is_interactive(meld) or joker.joker_lock_rank > 0:
+## Right-click on the felt or the hand panel (not on a card) clears the
+## selection.
+func _on_background_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_RIGHT:
+		_clear_selection()
+
+func _clear_selection() -> void:
+	if selected.is_empty():
 		return
+	selected.clear()
+	_refresh()
+
+## True when the player can still pick what this table joker stands for: it
+## is their turn, they placed the joker this turn (a joker locks the moment
+## its group is valid, and only the placer may re-point it before the turn
+## ends), and the group actually offers a choice.
+func _joker_is_rechoosable(joker: Card, meld: CardSet) -> bool:
+	return _card_is_interactive(meld) and gm.placed_this_turn(joker) \
+		and not Rules.rechoice_alternatives(meld.cards, joker).is_empty()
+
+## Menu of the cards a joker placed this turn could stand for; picking one
+## re-locks the joker to it (an undoable move). Returns false when there is
+## nothing to choose, so the right-click can fall through to deselection.
+func _show_joker_menu(joker: Card, meld: CardSet) -> bool:
+	if not _joker_is_rechoosable(joker, meld):
+		return false
 	Rules.assign_jokers(meld.cards)
-	var alts := Rules.joker_alternatives(meld.cards)
-	if alts.is_empty():
-		return
+	var alts := Rules.rechoice_alternatives(meld.cards, joker)
 	var menu := PopupMenu.new()
 	add_child(menu)
 	for i in alts.size():
@@ -1270,12 +1295,12 @@ func _show_joker_menu(joker: Card, meld: CardSet) -> void:
 			alt["rank"] == joker.joker_rank and alt["suit"] == joker.joker_suit)
 	menu.id_pressed.connect(func(id: int) -> void:
 		var alt: Dictionary = alts[id]
-		joker.joker_pref_rank = alt["rank"]
-		joker.joker_pref_suit = alt["suit"]
+		_set_status(gm.set_joker_stand_in(joker, meld, alt["rank"], alt["suit"]))
 		_refresh())
 	menu.popup_hide.connect(menu.queue_free)
 	menu.position = Vector2i(get_global_mouse_position())
 	menu.popup()
+	return true
 
 func _rep_text(rank: int, suit: String) -> String:
 	return "%s%s" % [Card.RANK_NAMES.get(rank, str(rank)),

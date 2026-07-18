@@ -105,6 +105,7 @@ func move_cards_to_new_meld(cards_to_move: Array[Card]) -> String:
 	var meld := CardSet.new()
 	board.melds.append(meld)
 	_move_cards(cards_to_move, meld)
+	_lock_table_jokers()
 	return ""
 
 ## Move cards (from hand and/or table) into an existing meld. Returns "" on
@@ -118,6 +119,7 @@ func add_cards_to_meld(cards_to_move: Array[Card], meld: CardSet) -> String:
 		return err
 	_push_undo()
 	_move_cards(cards_to_move, meld)
+	_lock_table_jokers()
 	return ""
 
 ## Undo just the last staged move this turn. Returns false if there was
@@ -178,7 +180,11 @@ func return_cards_to_hand(cards_to_return: Array[Card]) -> String:
 	for c in cards_to_return:
 		board.remove_card(c)
 		p.hand.append(c)
+		if c.is_joker:
+			_free_joker(c)
 	board.prune_empty()
+	# Removing cards can leave a meld newly valid, so settle its jokers too.
+	_lock_table_jokers()
 	board_changed.emit()
 	return ""
 
@@ -218,12 +224,48 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	# the table, which is what makes the swap count as one played card.
 	if not _hand_snapshot.has(joker):
 		_hand_snapshot.append(joker)
+	_free_joker(joker)
+	board_changed.emit()
+	return ""
+
+## A joker back in a hand is a free wildcard again: shed the representation,
+## the holder's old choice and the lock it carried on the table.
+func _free_joker(joker: Card) -> void:
 	joker.joker_rank = 0
 	joker.joker_suit = ""
 	joker.joker_pref_rank = 0
 	joker.joker_pref_suit = ""
 	joker.joker_lock_rank = 0
 	joker.joker_lock_suit = ""
+
+## True when this card left the current player's hand for the table this turn
+## (it is in the turn-start snapshot but no longer in the hand).
+func placed_this_turn(c: Card) -> bool:
+	return _hand_snapshot.has(c) and not current_player().hand.has(c)
+
+## Re-point a joker the current player placed this turn at another card it
+## could stand for in its meld (see Rules.rechoice_alternatives). Jokers lock
+## the moment they land in a valid meld, so this is the placer's one way to
+## pick a different stand-in before their turn ends. Returns "" on success or
+## a human-readable reason the choice is not allowed.
+func set_joker_stand_in(joker: Card, meld: CardSet, rank: int, suit: String) -> String:
+	if not joker.is_joker or not meld.cards.has(joker):
+		return "That card is not a joker in that group."
+	if not placed_this_turn(joker):
+		return "Only a joker you placed this turn can be re-pointed."
+	var fits := false
+	for alt in Rules.rechoice_alternatives(meld.cards, joker):
+		if alt["rank"] == rank and alt["suit"] == suit:
+			fits = true
+			break
+	if not fits:
+		return "The joker can't stand for that card in this group."
+	_push_undo()
+	joker.joker_pref_rank = rank
+	joker.joker_pref_suit = suit
+	joker.joker_lock_rank = rank
+	joker.joker_lock_suit = suit
+	Rules.assign_jokers(meld.cards)
 	board_changed.emit()
 	return ""
 
@@ -283,9 +325,8 @@ func commit_turn() -> String:
 	var err := _commit_error(p)
 	if err != "":
 		return err
-	# The turn is final: every joker on the table locks to what it was placed
-	# as. From now on it is treated as exactly that card — no longer a
-	# wildcard — until the joker swap sends it back to a hand.
+	# Jokers lock as they are placed, but settle the table once more so no
+	# free wildcard ever survives a committed turn.
 	_lock_table_jokers()
 	_consecutive_passes = 0
 	p.has_opened = true
@@ -362,10 +403,14 @@ func draw_and_end_turn() -> void:
 func _kept_rearrangement() -> bool:
 	return not _undo_stack.is_empty() and board.all_valid()
 
-## Lock every joker on the table to the card it currently stands for: from now
-## on every rule treats it as exactly that card (no longer a wildcard) until a
-## swap sends it back to a hand. Runs at commit and when a drawn turn keeps a
-## rearrangement, so a settled board never carries a free wildcard.
+## Lock every joker sitting in a valid meld to the card it currently stands
+## for: from then on every rule treats it as exactly that card (no longer a
+## wildcard) until it returns to a hand. Runs after every staged move — a
+## joker is only wild while it is in someone's hand — plus at commit and when
+## a drawn turn keeps a rearrangement, as a final settle. Jokers in a meld
+## that is still invalid mid-edit have no representation yet, so they stay
+## free until the meld first turns valid. The placer can still re-point a
+## joker this turn via set_joker_stand_in.
 func _lock_table_jokers() -> void:
 	for m in board.melds:
 		Rules.assign_jokers(m.cards)
@@ -419,10 +464,12 @@ func _push_undo() -> void:
 	})
 
 ## Joker locks live on the cards, not in the board's card lists, so undoing a
-## swap must put the lock back explicitly.
+## move must put the lock back explicitly: a swap cleared it, a staged play
+## set it. The current player's hand is included so undoing the play of a
+## joker also undoes the lock it picked up on the table.
 func _joker_locks() -> Dictionary:
 	var out := {}
-	for c in board.all_cards():
+	for c in board.all_cards() + current_player().hand:
 		if c.is_joker:
 			out[c] = [c.joker_lock_rank, c.joker_lock_suit]
 	return out
