@@ -40,6 +40,14 @@ extends RefCounted
 ## fewest copies still unseen — so opponents rarely hold the exact card
 ## needed to swap the joker away from it.
 
+# Smart-brain (top skill tier) scoring weights; see the "Smart brain" section
+# below for how each is used.
+const W_PROGRESS := 10.0     # per own hand card the move commits
+const GO_OUT_BONUS := 100.0  # emptying the hand this move
+const JOKER_STEAL_BONUS := 30.0  # pulling a joker off another meld into ours
+const W_FEED := 2.0          # per unseen copy an open end hands to opponents
+const W_BLOCK := 6.0         # holding a card still useful in hand beats dumping it
+
 static func take_turn(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> void:
 	var played_any := false
@@ -163,12 +171,7 @@ static func _plan_normal_move(gm: GameManager, profile: AIProfile = null) -> Dic
 # (plan_move above). At the top it instead enumerates every legal move for the
 # turn and plays the highest-scoring one, using the same deck-count math that
 # picks safe joker stand-ins to reason about what opponents can do next.
-
-const W_PROGRESS := 10.0     # per own hand card the move commits
-const GO_OUT_BONUS := 100.0  # emptying the hand this move
-const JOKER_STEAL_BONUS := 30.0  # pulling a joker off another meld into ours
-const W_FEED := 2.0          # per unseen copy an open end hands to opponents
-const W_BLOCK := 6.0         # holding a card still useful in hand beats dumping it
+# Its scoring weights (W_PROGRESS etc.) live at the top of the file.
 
 ## Enumerate every legal move for the current player, score each, and return
 ## the best (or {} to hold and draw when nothing scores positive). Mirrors

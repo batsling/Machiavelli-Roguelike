@@ -71,6 +71,8 @@ extends Control
 ## that card (no longer a wildcard, even when rearranged) until the swap
 ## sends it back to a hand.
 
+enum Mode { SANDBOX, ROGUE }
+
 const AI_THINK_DELAY := 0.6
 const AI_MOVE_DELAY := 0.5
 const AI_ANIM_TIME := 0.45
@@ -118,8 +120,6 @@ const COL_JOKER := Color(0.48, 0.20, 0.62)
 const COL_JOKER_BG := Color(0.96, 0.92, 0.98)
 const COL_SLIME := Color(0.44, 0.82, 0.30)      # the slime splotch on a slimed card
 const COL_SLIME_EDGE := Color(0.20, 0.52, 0.16)
-
-enum Mode { SANDBOX, ROGUE }
 
 var gm: GameManager
 var game_mode := Mode.SANDBOX
