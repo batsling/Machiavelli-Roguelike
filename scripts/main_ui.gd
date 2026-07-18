@@ -214,8 +214,8 @@ func _new_game() -> void:
 				% current_enemy.display_name
 				+ "joker (green splotch). Slimed cards stick to each other, so a "
 				+ "run of them is one lump — dragging one drags them all. She "
-				+ "oozes freely and clumps her slime around her best cards "
-				+ "(jokers first) to keep them out of your reach.")
+				+ "oozes freely and each turn guards her most valuable slimed card "
+				+ "(jokers, then the versatile 4-8s) to keep it out of your reach.")
 	else:
 		current_enemy = null
 		var names: Array = ["You"]

@@ -162,10 +162,10 @@ The **Settings** button opens a dialog with:
   the roster the rogue ladder picks from at random
 - `scripts/cute_slime.gd` — `CuteSlime`: the first designed enemy (strong,
   oblivious, quick). At combat start she slimes a random 13 hearts, 13 diamonds
-  and all jokers (the Sticky effect); her strategy oozes slimed cards together
-  into clusters the player can't pick apart, weighting each locked card by
-  importance (jokers > aces > faces > rest) and making several such moves a turn
-  (up to `MAX_GUARDS_PER_TURN`); she alone moves slimed cards freely
+  and all jokers (the Sticky effect); once per turn she makes one smart guarding
+  move, oozing a slimed card next to the most valuable slimed card the player
+  could still lift — weighting by versatility (jokers, then the flexible 4-8s,
+  then anything); she alone moves slimed cards freely
 - `scripts/main_ui.gd` + `scenes/main.tscn` — main menu plus the drag-and-drop
   (or click-to-play) UI, built in code: styled cards, felt table, per-group
   validity outlines, opponent seats with face-down card backs, flying-card
@@ -206,12 +206,12 @@ right) stick to *each other*, so a run of them on the table moves as one lump:
 dragging any one drags them all, and the leftover has to stay a valid group. The
 slime slimes a random 13 hearts, 13 diamonds and every joker at combat start,
 moves her own slime freely (`PlayerState.ignores_sticky`), and runs a
-"slime strategy" that consolidates slimed cards into clusters the player can't
-pick apart — prizing the cards she most wants denied (jokers, then aces, then
-faces) and making several guarding moves a turn. The smart AI understands the
-slime and never plans a move that would drag a cluster it didn't mean to.
-Enemies live in `scripts/enemy.gd` (+ `cute_slime.gd`); the rogue ladder picks
-one at random each round (only the slime exists for now).
+"slime strategy" that makes one smart guarding move a turn — oozing a slimed
+card next to the most valuable slimed card the player could still lift, prizing
+versatility (jokers, then the flexible 4-8s). The smart AI understands the slime
+and never plans a move that would drag a cluster it didn't mean to. Enemies live
+in `scripts/enemy.gd` (+ `cute_slime.gd`); the rogue ladder picks one at random
+each round (only the slime exists for now).
 
 Still kept as data stubs so the vanilla engine stays clean: the other card
 effect flags on `Card` (Clear, Spiked, Brittle, Bomb, Clone, Trigger, Mirrored),

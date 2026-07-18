@@ -12,20 +12,15 @@ extends Enemy
 ## dragging one drags them all. The Cute Slime herself is immune (ignores_sticky
 ## on her PlayerState), so she slides her slime around freely.
 ##
-## Slime strategy: once she has spent her ordinary plays for the turn, she uses
-## that free movement to ooze slimed cards together into clusters the player
-## can't pick apart, weighting each locked card by how badly she wants it kept
-## away — jokers first, then aces, then faces, then anything. She makes several
-## such moves a turn (up to MAX_GUARDS_PER_TURN), always the highest-value one,
-## and only ever on a strict increase in that lock score, so the slime only ever
-## thickens — no shuffling in circles.
+## Slime strategy: once she has spent her ordinary plays for the turn, she makes
+## a single smart guarding move — using her free movement to ooze one slimed card
+## next to the most important slimed card the player could still lift, sealing it
+## in slime. She values the versatile ranks most (jokers, then 4-8), so she
+## guards those first. At most one guard a turn: she picks her best play, not a
+## flailing pile-up of slime.
 
-## How many guarding moves she'll make in a single turn. She consolidates
-## aggressively, but a cap keeps a turn watchable instead of oozing the whole
-## table around at once.
-const MAX_GUARDS_PER_TURN := 4
-
-var _guards_left := MAX_GUARDS_PER_TURN
+# True once she has made her one guarding move for the current turn.
+var _guarded_this_turn := false
 
 func _init() -> void:
 	display_name = "The Cute Slime"
@@ -72,20 +67,17 @@ func _slime(card: Card) -> void:
 
 # --- Slime strategy ---------------------------------------------------------
 
-## Fresh guarding budget at the start of each of her turns.
+## Clears her one-guard-per-turn flag at the start of each of her turns.
 func on_turn_begin(_gm: GameManager) -> void:
-	_guards_left = MAX_GUARDS_PER_TURN
+	_guarded_this_turn = false
 
-## Her best consolidating move: relocate one slimed card so that more of her
-## slime — weighted by how badly she wants each locked card kept from the player
-## — ends up stuck together in clusters the player can't pick a single card out
-## of. She prizes jokers most, then aces, then faces, then anything, and takes
-## the move that gains the most. Returns {} when no move improves her grip (or
-## the turn's guarding budget is spent). She only ever moves on a strict
-## increase in that bounded, importance-weighted lock score, so she makes
-## finitely many moves a turn and never shuffles in circles.
+## Her single best guarding move for the turn: relocate one slimed card so it
+## locks the most valuable slimed card the player could still lift, weighting
+## each card by how badly she wants it kept away — jokers most, then the
+## versatile 4-8s, then anything. She makes at most one such move a turn (a smart
+## pick, not a pile-up) and only when it strictly improves her grip; otherwise {}.
 func plan_strategy_move(gm: GameManager) -> Dictionary:
-	if _guards_left <= 0 or not gm.current_player_is_open():
+	if _guarded_this_turn or not gm.current_player_is_open():
 		return {}
 	var melds := gm.board.melds
 	# The lock score each group contributes right now, so a candidate only has
@@ -122,18 +114,18 @@ func plan_strategy_move(gm: GameManager) -> Dictionary:
 					best = {"cards": moved, "dest": m2, "borrowed": moved, "strategy": true,
 						"text": _guard_text(c, _has_joker(grown))}
 	if not best.is_empty():
-		_guards_left -= 1
+		_guarded_this_turn = true
 	return best
 
 func _guard_text(c: Card, seals_joker: bool) -> String:
 	if seals_joker:
 		return "oozes %s over to seal a joker in slime" % c.label()
-	return "oozes %s over to thicken her slime" % c.label()
+	return "oozes %s over to guard a card in slime" % c.label()
 
 ## The total importance of the locked slimed cards in one group: a slimed card
-## is locked when a slimed card sits next to it in display order (so the player
-## can't peel it off on its own). Bigger clusters lock more cards, so they score
-## higher, and jokers/aces/faces are worth more than plain cards.
+## is locked when a slimed card sits next to it in display order, so the player
+## can't peel it off on its own. Jokers and the versatile 4-8s are worth more
+## than other cards (see _importance).
 func _meld_lock_score(cards: Array[Card]) -> int:
 	var order := Rules.display_order(cards)
 	var score := 0
@@ -147,14 +139,14 @@ func _meld_lock_score(cards: Array[Card]) -> int:
 	return score
 
 ## How badly she wants a card kept away from the player: jokers most of all,
-## then aces, then faces, then any other card.
+## then the versatile middle ranks 4-8 (the most flexible cards in play), then
+## any other card. Aces and faces are edge ranks, so they rate no higher than
+## the rest.
 func _importance(c: Card) -> int:
 	if c.is_joker:
 		return 100
-	if c.rank == 1:
+	if c.rank >= 4 and c.rank <= 8:
 		return 8
-	if c.rank >= 11:
-		return 4
 	return 1
 
 func _has_joker(cards: Array[Card]) -> bool:

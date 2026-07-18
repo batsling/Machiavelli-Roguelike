@@ -366,11 +366,12 @@ func _test_slime_strategy() -> bool:
 	elif move["dest"] != meld_a:
 		printerr("slime strategy: should ooze the 9♥ onto the joker's group to seal it")
 		ok = false
-	# She wants a joker kept from the player more than any plain card.
-	if slime._importance(_joker()) <= slime._importance(_card(1, "hearts")) \
-			or slime._importance(_card(1, "hearts")) <= slime._importance(_card(13, "hearts")) \
-			or slime._importance(_card(13, "hearts")) <= slime._importance(_card(5, "hearts")):
-		printerr("slime strategy: importance should rank joker > ace > face > plain")
+	# Versatility ranking: joker over the middle ranks 4-8, and those over the
+	# edge ranks (aces and faces rate no higher than any other plain card).
+	if slime._importance(_joker()) <= slime._importance(_card(6, "hearts")) \
+			or slime._importance(_card(6, "hearts")) <= slime._importance(_card(1, "hearts")) \
+			or slime._importance(_card(1, "hearts")) != slime._importance(_card(13, "hearts")):
+		printerr("slime strategy: importance should rank joker > 4-8 > edge ranks")
 		ok = false
 	# A lone group offers no second group to bring a bodyguard from: no move.
 	if ok:
@@ -386,10 +387,15 @@ func _test_slime_strategy() -> bool:
 			printerr("slime strategy: a lone group offers no bodyguard to move")
 			ok = false
 		gm2.free()
-	# The per-turn budget stops her after a few guards.
-	if ok and CuteSlime.MAX_GUARDS_PER_TURN <= 0:
-		printerr("slime strategy: guarding budget should be positive")
-		ok = false
+	# One guard per turn: after guarding once, she holds until her next turn.
+	if ok:
+		slime.on_turn_begin(gm)
+		if slime.plan_strategy_move(gm).is_empty():
+			printerr("slime strategy: expected a guard on a fresh turn")
+			ok = false
+		elif not slime.plan_strategy_move(gm).is_empty():
+			printerr("slime strategy: should make at most one guard per turn")
+			ok = false
 	gm.free()
 	if ok:
 		print("slime strategy test OK")
