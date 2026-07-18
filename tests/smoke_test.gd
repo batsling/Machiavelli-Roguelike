@@ -838,10 +838,13 @@ func _test_safe_joker_reps() -> bool:
 		print("safe joker reps test OK")
 	return ok
 
-## Committing a turn locks every joker on the table to what it was placed
-## as: it is then treated as exactly that card (not a wildcard) when
-## rearranged, keeps its face even in a broken meld, and only unlocks when
-## the swap takes it off the board — with undo restoring the lock.
+## A joker locks to the card it stands for the moment it lands in a valid
+## meld on the table: it is then treated as exactly that card (not a
+## wildcard) when rearranged, keeps its face even in a broken meld, and only
+## unlocks when it returns to a hand (swap, undo or return). While the
+## placing turn is still open the placer may re-point it among the valid
+## alternatives (set_joker_stand_in); every step is undoable and the choice
+## is final once the turn ends.
 func _test_joker_lock() -> bool:
 	var gm := GameManager.new()
 	var ok := true
@@ -853,18 +856,60 @@ func _test_joker_lock() -> bool:
 	for c: Card in played:
 		p.hand.append(c)
 		gm._hand_snapshot.append(c)
+	var take_back: Array[Card] = [joker]
 	if gm.move_cards_to_new_meld(played) != "":
 		printerr("lock test: staging the joker run was rejected")
 		ok = false
-	elif joker.joker_lock_rank != 0:
-		printerr("lock test: joker locked before the turn was committed")
+	elif joker.joker_lock_rank != 7 or joker.joker_lock_suit != "hearts":
+		printerr("lock test: joker should lock as 7 of hearts on placement, got %s"
+			% joker.rep_label())
+		ok = false
+	# Taking the played joker back into the hand frees it; undoing the return
+	# locks it again.
+	elif gm.return_cards_to_hand(take_back) != "":
+		printerr("lock test: returning the played joker was rejected")
+		ok = false
+	elif joker.joker_lock_rank != 0 or joker.joker_rank != 0:
+		printerr("lock test: a joker back in the hand should be a free wildcard")
+		ok = false
+	elif not gm.undo_action():
+		printerr("lock test: the return was not undoable")
+		ok = false
+	elif joker.joker_lock_rank != 7 or joker.joker_lock_suit != "hearts":
+		printerr("lock test: undoing the return should restore the lock")
+		ok = false
+	if not ok:
+		gm.free()
+		return false
+	# The placer may re-point the joker among the valid alternatives this
+	# turn — an undoable move — but never at a card that doesn't fit.
+	var meld: CardSet = gm.board.melds[0]
+	if gm.set_joker_stand_in(joker, meld, 4, "hearts") != "":
+		printerr("lock test: re-pointing the just-placed joker was rejected")
+		ok = false
+	elif joker.joker_lock_rank != 4 or joker.joker_lock_suit != "hearts":
+		printerr("lock test: joker should re-lock as 4 of hearts, got %s"
+			% joker.rep_label())
+		ok = false
+	elif gm.set_joker_stand_in(joker, meld, 9, "hearts") == "":
+		printerr("lock test: an impossible stand-in was accepted")
+		ok = false
+	elif not gm.undo_action():
+		printerr("lock test: the re-choice was not undoable")
+		ok = false
+	elif joker.joker_lock_rank != 7:
+		printerr("lock test: undo should restore the 7 of hearts lock")
 		ok = false
 	elif gm.commit_turn() != "":
 		printerr("lock test: committing the joker run failed")
 		ok = false
 	elif joker.joker_lock_rank != 7 or joker.joker_lock_suit != "hearts":
-		printerr("lock test: joker should lock as 7 of hearts at commit, got %s"
+		printerr("lock test: joker should stay locked as 7 of hearts after commit, got %s"
 			% joker.rep_label())
+		ok = false
+	# The placing turn is over: the choice is final.
+	elif gm.set_joker_stand_in(joker, gm.board.melds[0], 4, "hearts") == "":
+		printerr("lock test: re-pointing after the placing turn was allowed")
 		ok = false
 	if not ok:
 		gm.free()

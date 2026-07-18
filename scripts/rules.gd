@@ -11,11 +11,14 @@ extends RefCounted
 ## represent a card that actually fits (no fifth suit in a set, no rank past
 ## the ace).
 ##
-## Locking: once the turn that placed a joker is committed, the joker locks
-## to the card it was placed as (Card.joker_lock_rank / joker_lock_suit, set
-## by GameManager.commit_turn). A locked joker is "fixed": every rule here
-## treats it as exactly that card — it can be rearranged like any card but is
-## no longer a wildcard — until the joker swap sends it back to a hand.
+## Locking: the moment a joker sits in a valid meld on the table it locks to
+## the card it stands for (Card.joker_lock_rank / joker_lock_suit, set by
+## GameManager after every staged move). A locked joker is "fixed": every
+## rule here treats it as exactly that card — it can be rearranged like any
+## card but is no longer a wildcard — until it returns to a hand (the joker
+## swap, an undo, or taking a just-played joker back). The player who placed
+## it may still re-point it among the valid alternatives until their turn
+## ends (GameManager.set_joker_stand_in).
 
 const MIN_MELD_SIZE := 3
 const MAX_SET_SIZE := 4
@@ -235,6 +238,24 @@ static func _pref_coverage(fill: Array[int], prefs: Array[int]) -> int:
 			remaining.remove_at(idx)
 			score += 1
 	return score
+
+## Every card this joker could be made to stand for in its meld if it were
+## free, regardless of its current lock — the choices open to the player who
+## placed it this turn (see GameManager.set_joker_stand_in). Same entries as
+## joker_alternatives; empty when the meld (with the joker wild again) is
+## invalid or leaves no actual choice. Restores the lock before returning, so
+## the cards are never left mutated.
+static func rechoice_alternatives(cards: Array[Card], joker: Card) -> Array[Dictionary]:
+	if not joker.is_joker or not cards.has(joker):
+		return []
+	var lock_rank := joker.joker_lock_rank
+	var lock_suit := joker.joker_lock_suit
+	joker.joker_lock_rank = 0
+	joker.joker_lock_suit = ""
+	var out := joker_alternatives(cards)
+	joker.joker_lock_rank = lock_rank
+	joker.joker_lock_suit = lock_suit
+	return out
 
 ## Every card a free (unlocked) joker in this meld could be made to stand
 ## for, as {"rank": int, "suit": String} entries (aces reported as rank 1).

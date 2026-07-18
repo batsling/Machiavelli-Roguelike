@@ -40,10 +40,12 @@ var joker_suit: String = ""
 var joker_pref_rank: int = 0
 var joker_pref_suit: String = ""
 
-# Once a turn that placed this joker is committed, the joker locks to the
-# card it was placed as (GameManager.commit_turn): from then on the rules
-# treat it as exactly that card — rearrange it anywhere, it is no longer a
-# wildcard — until it returns to a hand via the joker swap. 0/"" = free.
+# The moment this joker sits in a valid meld on the table it locks to the
+# card it stands for (GameManager._lock_table_jokers, run after every staged
+# move): from then on the rules treat it as exactly that card — rearrange it
+# anywhere, it is no longer a wildcard — until it returns to a hand (swap,
+# undo, or taking a just-played joker back). The player who placed it can
+# still re-point it this turn via GameManager.set_joker_stand_in. 0/"" = free.
 var joker_lock_rank: int = 0
 var joker_lock_suit: String = ""
 
