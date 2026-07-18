@@ -29,6 +29,14 @@ func _init() -> void:
 	style = 0.0        # quick
 	attention = 0.0    # oblivious
 
+func mechanic_intro() -> String:
+	return "[b]%s[/b] slimes half the hearts, half the diamonds and every " \
+		% display_name \
+		+ "joker (green splotch). Slimed cards stick to each other, so a " \
+		+ "run of them is one lump — dragging one drags them all. She " \
+		+ "oozes freely and combines her slime to guard her most valuable " \
+		+ "cards (jokers, then the versatile 4-8s) out of your reach."
+
 ## Slime a random half of the hearts, a random half of the diamonds, and all of
 ## the jokers, wherever they sit right after the deal (the stock and every
 ## player's hand). The random halves ride on the deck's own RNG, so a seeded

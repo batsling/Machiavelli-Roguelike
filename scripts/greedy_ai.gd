@@ -39,6 +39,16 @@ extends RefCounted
 ## joker it plays at the safest card it can stand for — the choice with the
 ## fewest copies still unseen — so opponents rarely hold the exact card
 ## needed to swap the joker away from it.
+##
+## Glass awareness: a glass (Clear) card is visible from the back — in any
+## player's hand and on top of the stock — so that information is public, not
+## a peek. The AI folds it into its deck counting: copies visibly locked in
+## opponents' hands are not obtainable (_obtainable_copies), so pairs whose
+## completions all sit in glass opponent hands are dead ends it stops holding;
+## a lay-off an opponent visibly holds counts as a certain feed
+## (_layoff_threat); a joker stand-in an opponent visibly holds the swap card
+## for is avoided (_choose_joker_reps); and a glass top of the stock is a
+## known upcoming draw worth holding a partner for (_worth_holding).
 
 # Smart-brain (top skill tier) scoring weights; see the "Smart brain" section
 # below for how each is used.
@@ -323,9 +333,11 @@ static func _score_move(gm: GameManager, move: Dictionary, hand: Array[Card],
 				score -= W_BLOCK
 	return score
 
-## Copies of the cards that would extend this meld's open ends and are still
-## unseen — i.e. what an opponent could hold to lay off onto it next turn. A
-## set counts its one missing suit; a run counts the ranks just past each end.
+## Threat of the cards that would extend this meld's open ends landing in an
+## opponent's play — what an opponent could hold to lay off onto it next turn.
+## A set counts its one missing suit; a run counts the ranks just past each
+## end, each weighted by _layoff_threat (a copy visibly held in a glass
+## opponent hand is a certain feed and counts double the unseen estimate).
 ## Uses natural/locked-joker identities only, so it is an estimate for tie-
 ## breaking, not an exact reading of a joker-filled meld.
 static func _open_end_exposure(gm: GameManager, cards: Array[Card]) -> int:
@@ -343,7 +355,7 @@ static func _open_end_exposure(gm: GameManager, cards: Array[Card]) -> int:
 		var worst := 0
 		for s in Deck.SUITS:
 			if not present.has(s):
-				worst = maxi(worst, _unseen_copies(gm, rank, s))
+				worst = maxi(worst, _layoff_threat(gm, rank, s))
 		return worst
 	if not Rules.is_valid_run(cards):
 		return 0
@@ -362,9 +374,9 @@ static func _open_end_exposure(gm: GameManager, cards: Array[Card]) -> int:
 		return 0
 	var exposure := 0
 	if lo - 1 >= 1:
-		exposure += _unseen_copies(gm, lo - 1, suit)
+		exposure += _layoff_threat(gm, lo - 1, suit)
 	if hi + 1 <= 13:
-		exposure += _unseen_copies(gm, hi + 1, suit)
+		exposure += _layoff_threat(gm, hi + 1, suit)
 	return exposure
 
 ## Natural rank of a card, or the rank a locked joker stands for (0 for a free
@@ -409,27 +421,34 @@ static func _leftover_valid(meld: CardSet, removed: Array[Card]) -> bool:
 
 ## Whether keeping this card in hand is still worth more than playing it now: a
 ## joker, or a card that pairs toward a meld the deck can still complete (a set
-## whose third suit is still unseen, or a run whose next rank is still unseen).
-## A pair whose only completions are already all on the table or in hand is a
-## dead end — not worth holding — so the AI stops hoarding and goes out.
+## whose third suit is still obtainable, or a run whose next rank is). A pair
+## whose only completions are already all on the table, in hand, or visibly
+## locked in glass opponent hands is a dead end — not worth holding — so the AI
+## stops hoarding and goes out. A glass top of the stock is a known upcoming
+## draw, so it counts as a pairing partner too: the AI holds a card that
+## combines with the draw everyone can see coming.
 static func _worth_holding(gm: GameManager, c: Card, rest: Array[Card]) -> bool:
 	if c.is_joker:
 		return true
-	for o in rest:
+	var partners: Array[Card] = rest.duplicate()
+	var top := gm.deck.peek()
+	if top != null and top.is_glass() and not top.is_joker:
+		partners.append(top)
+	for o in partners:
 		if o == c or o.is_joker:
 			continue
-		# Toward a set: same rank, another suit — needs a still-unseen third suit.
+		# Toward a set: same rank, another suit — needs an obtainable third suit.
 		if o.rank == c.rank and o.suit != c.suit:
 			for s in Deck.SUITS:
-				if s != c.suit and s != o.suit and _unseen_copies(gm, c.rank, s) > 0:
+				if s != c.suit and s != o.suit and _obtainable_copies(gm, c.rank, s) > 0:
 					return true
-		# Toward a run: same suit, adjacent rank — needs a still-unseen end card.
+		# Toward a run: same suit, adjacent rank — needs an obtainable end card.
 		if o.suit == c.suit and absi(o.rank - c.rank) == 1:
 			var lo := mini(c.rank, o.rank)
 			var hi := maxi(c.rank, o.rank)
-			if lo - 1 >= 1 and _unseen_copies(gm, lo - 1, c.suit) > 0:
+			if lo - 1 >= 1 and _obtainable_copies(gm, lo - 1, c.suit) > 0:
 				return true
-			if hi + 1 <= 13 and _unseen_copies(gm, hi + 1, c.suit) > 0:
+			if hi + 1 <= 13 and _obtainable_copies(gm, hi + 1, c.suit) > 0:
 				return true
 	return false
 
@@ -502,10 +521,12 @@ static func apply_move(gm: GameManager, move: Dictionary, profile: AIProfile = n
 		_choose_joker_reps(gm, dest if dest != null else gm.board.melds[-1])
 
 ## Point every joker in the meld the AI just touched at the safest card it
-## can stand for: the alternative with the fewest copies still unseen (not on
-## the table and not in this AI's own hand). An opponent can only swap-claim
-## a joker by holding the exact card it stands for, so fewer unseen copies
-## means less chance anyone ever takes the wildcard.
+## can stand for: never one whose swap card is visibly held by an opponent (a
+## glass card in their hand is a guaranteed claim), then the alternative with
+## the fewest copies still unseen (not on the table and not in this AI's own
+## hand). An opponent can only swap-claim a joker by holding the exact card it
+## stands for, so fewer possible holders means less chance anyone ever takes
+## the wildcard.
 static func _choose_joker_reps(gm: GameManager, meld: CardSet) -> void:
 	var alts := Rules.joker_alternatives(meld.cards)
 	if alts.is_empty():
@@ -513,8 +534,11 @@ static func _choose_joker_reps(gm: GameManager, meld: CardSet) -> void:
 	var scored: Array[Dictionary] = []
 	for alt in alts:
 		scored.append({"rank": alt["rank"], "suit": alt["suit"],
-			"unseen": _unseen_copies(gm, alt["rank"], alt["suit"])})
+			"unseen": _unseen_copies(gm, alt["rank"], alt["suit"]),
+			"held": _glass_copies_in_other_hands(gm, alt["rank"], alt["suit"])})
 	scored.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if a["held"] != b["held"]:
+			return a["held"] < b["held"]
 		if a["unseen"] != b["unseen"]:
 			return a["unseen"] < b["unseen"]
 		if a["rank"] != b["rank"]:
@@ -541,6 +565,51 @@ static func _unseen_copies(gm: GameManager, rank: int, suit: String) -> int:
 		if not c.is_joker and c.rank == rank and c.suit == suit:
 			seen += 1
 	return maxi(2 - seen, 0)
+
+# --- Glass (Clear) awareness -------------------------------------------------
+# A glass card is visible from the back: everyone can see it in any player's
+# hand and on top of the stock. These helpers read only that public
+# information — never a face-down card — so the AI reasons with exactly what a
+# human player at the table could count.
+
+## Copies of the exact card visibly held by other players: glass cards in
+## their hands. Certain knowledge, unlike the _unseen_copies estimate.
+static func _glass_copies_in_other_hands(gm: GameManager, rank: int, suit: String) -> int:
+	var held := 0
+	for p in gm.players:
+		if p == gm.current_player():
+			continue
+		for c in p.hand:
+			if c.is_glass() and not c.is_joker and c.rank == rank and c.suit == suit:
+				held += 1
+	return held
+
+## Whether the top of the stock is a glass card of exactly this rank and suit —
+## public knowledge of the next card anyone draws.
+static func _glass_top_matches(gm: GameManager, rank: int, suit: String) -> bool:
+	var top := gm.deck.peek()
+	return top != null and top.is_glass() and not top.is_joker \
+		and top.rank == rank and top.suit == suit
+
+## Copies the current player could still realistically obtain: the unseen
+## estimate minus the copies visibly locked in glass opponent hands. A needed
+## card sitting glass on top of the stock stays counted — it is still in the
+## unseen pool and demonstrably live.
+static func _obtainable_copies(gm: GameManager, rank: int, suit: String) -> int:
+	return maxi(_unseen_copies(gm, rank, suit)
+		- _glass_copies_in_other_hands(gm, rank, suit), 0)
+
+## How hard this exact card threatens to land in an opponent's play: the
+## unseen estimate, plus one extra for every copy visibly held in a glass
+## opponent hand (a certain threat counts double the uncertain one), plus one
+## when the card sits glass on top of the stock (the next drawer simply picks
+## it up).
+static func _layoff_threat(gm: GameManager, rank: int, suit: String) -> int:
+	var threat := _unseen_copies(gm, rank, suit) \
+		+ _glass_copies_in_other_hands(gm, rank, suit)
+	if _glass_top_matches(gm, rank, suit):
+		threat += 1
+	return threat
 
 ## Whether the AI commits to laying this meld right now. Always yes once
 ## open; a conservative AI holds its opening meld until it is big enough,

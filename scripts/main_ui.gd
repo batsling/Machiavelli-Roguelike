@@ -11,11 +11,15 @@ extends Control
 ## draw 2 cards per turn, at most 13 cards played per turn, all 4 jokers in.
 ## Beat an enemy to advance to the next round (the "New game" button becomes
 ## "Next round"); lose and the run is over ("New run" starts over at round
-## 1). Each round faces a designed enemy picked at random from Enemy.roster()
-## — for now the only one is the Cute Slime, who slimes half the hearts, half
-## the diamonds and every joker (slimed cards carry a green splotch and stick to
-## each other, so a run of them moves as one lump). Sandbox settings never apply
-## during a run, so the Settings button is disabled in-game while one is active.
+## 1). Each round faces a designed enemy picked at random from Enemy.roster():
+## the Cute Slime, who slimes half the hearts, half the diamonds and every
+## joker (slimed cards carry a green splotch and stick to each other, so a run
+## of them moves as one lump), or the Sadistic Billionaire, who turns three
+## quarters of every card to glass (glass cards render transparent and are
+## visible from the back — in any hand and on top of the stock — so his glass
+## cards show face-up in his seat and a glass stock top is shown beside the
+## stock count). Sandbox settings never apply during a run, so the Settings
+## button is disabled in-game while one is active.
 ##
 ## Table layout: you sit at the bottom; opponents sit around the table showing
 ## the backs of their cards. The first enemy sits directly opposite you at the
@@ -120,6 +124,8 @@ const COL_JOKER := Color(0.48, 0.20, 0.62)
 const COL_JOKER_BG := Color(0.96, 0.92, 0.98)
 const COL_SLIME := Color(0.44, 0.82, 0.30)      # the slime splotch on a slimed card
 const COL_SLIME_EDGE := Color(0.20, 0.52, 0.16)
+const COL_GLASS_EDGE := Color(0.62, 0.84, 0.92)  # icy border of a glass card
+const GLASS_BG_ALPHA := 0.3   # glass cards let the felt show through
 
 var gm: GameManager
 var game_mode := Mode.SANDBOX
@@ -161,6 +167,7 @@ var seat_top: VBoxContainer
 var seat_left: VBoxContainer
 var seat_right: VBoxContainer
 var stock_label: Label
+var stock_top_slot: HBoxContainer
 var status_label: Label
 var log_box: RichTextLabel
 var board_flow: HFlowContainer
@@ -209,13 +216,9 @@ func _new_game() -> void:
 			% [rogue_round, current_enemy.display_name, ROGUE_DRAW_PER_TURN]
 			+ "at most %d cards played per turn, 4 jokers in."
 			% ROGUE_MAX_PLAYS_PER_TURN)
-		if current_enemy is CuteSlime:
-			_log("[b]%s[/b] slimes half the hearts, half the diamonds and every "
-				% current_enemy.display_name
-				+ "joker (green splotch). Slimed cards stick to each other, so a "
-				+ "run of them is one lump — dragging one drags them all. She "
-				+ "oozes freely and combines her slime to guard her most valuable "
-				+ "cards (jokers, then the versatile 4-8s) out of your reach.")
+		var intro := current_enemy.mechanic_intro()
+		if intro != "":
+			_log(intro)
 	else:
 		current_enemy = null
 		var names: Array = ["You"]
@@ -269,9 +272,17 @@ func _build_layout() -> void:
 	var top_pad_right := Control.new()
 	top_pad_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(top_pad_right)
+	# Stock corner: the count, plus the top card of the stock when it is glass
+	# (a glass top is public — everyone can see the next draw).
+	var stock_box := HBoxContainer.new()
+	stock_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	stock_box.add_theme_constant_override("separation", 6)
+	top_bar.add_child(stock_box)
 	stock_label = Label.new()
-	stock_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	top_bar.add_child(stock_label)
+	stock_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	stock_box.add_child(stock_label)
+	stock_top_slot = HBoxContainer.new()
+	stock_box.add_child(stock_top_slot)
 
 	# Middle row: left seat, the felt, right seat (hidden until a 4th player).
 	var mid_row := HBoxContainer.new()
@@ -686,11 +697,24 @@ func _refresh_seats() -> void:
 		var chip := _make_player_chip(p)
 		chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seat.add_child(chip)
-		var backs := _make_card_backs(p.hand.size(), i == 0)
+		var backs := _make_card_backs(p.hand, i == 0)
 		backs.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seat.add_child(backs)
 		opponent_backs[p.player_id] = backs
 	stock_label.text = "Stock: %d" % gm.deck.size()
+	_refresh_stock_top()
+
+## Show the top card of the stock beside the count when it is glass: the next
+## draw is public knowledge, for the player exactly as for the AI.
+func _refresh_stock_top() -> void:
+	_clear_children(stock_top_slot)
+	var top := gm.deck.peek()
+	if top == null or not top.is_glass():
+		return
+	var face := _make_glass_face(top, BACK_SIZE_TOP)
+	face.tooltip_text = "Top of the stock is glass — everyone can see " \
+		+ "the next card drawn."
+	stock_top_slot.add_child(face)
 
 func _make_player_chip(p: PlayerState) -> PanelContainer:
 	var is_current: bool = p == gm.current_player() and not gm.is_game_over
@@ -708,9 +732,11 @@ func _make_player_chip(p: PlayerState) -> PanelContainer:
 	chip.add_child(lbl)
 	return chip
 
-## A row (top seat) or column (side seats) of face-down cards. The overlap
-## tightens as the hand grows so the seat never exceeds a fixed footprint.
-func _make_card_backs(count: int, horizontal: bool) -> BoxContainer:
+## A row (top seat) or column (side seats) of an opponent's cards, seen from
+## the back. Glass cards are see-through, so they show their face right in the
+## row; everything else is a plain card back. The overlap tightens as the hand
+## grows so the seat never exceeds a fixed footprint.
+func _make_card_backs(hand: Array[Card], horizontal: bool) -> BoxContainer:
 	var box: BoxContainer
 	var back_size: Vector2
 	var max_len: float
@@ -723,11 +749,18 @@ func _make_card_backs(count: int, horizontal: bool) -> BoxContainer:
 		back_size = BACK_SIZE_SIDE
 		max_len = BACKS_MAX_LEN_SIDE
 	var card_len := back_size.x if horizontal else back_size.y
-	if count > 1:
-		var step := minf(card_len * 0.55, (max_len - card_len) / (count - 1))
+	if hand.size() > 1:
+		var step := minf(card_len * 0.55, (max_len - card_len) / (hand.size() - 1))
 		box.add_theme_constant_override("separation", int(step - card_len))
-	for _i in count:
-		box.add_child(_make_card_back(back_size))
+	for c in hand:
+		if c.is_glass():
+			var face := _make_glass_face(c, back_size)
+			face.tooltip_text = "Glass — you can see this card through the back."
+			box.add_child(face)
+			# Registered so enemy-move animations start from the visible card.
+			card_nodes[c] = face
+		else:
+			box.add_child(_make_card_back(back_size))
 	return box
 
 func _make_card_back(back_size: Vector2) -> Panel:
@@ -740,6 +773,34 @@ func _make_card_back(back_size: Vector2) -> Panel:
 	sb.set_corner_radius_all(6)
 	back.add_theme_stylebox_override("panel", sb)
 	return back
+
+## A small face-up rendering of a glass card in a card-back footprint: the
+## card is transparent, so its face shows even from the back (in an opponent's
+## hand, or on top of the stock). Non-interactive.
+func _make_glass_face(c: Card, face_size: Vector2) -> Panel:
+	var face := Panel.new()
+	face.custom_minimum_size = face_size
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(COL_CARD_BG, GLASS_BG_ALPHA)
+	sb.border_color = COL_GLASS_EDGE
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(6)
+	face.add_theme_stylebox_override("panel", sb)
+	var lbl := Label.new()
+	lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	lbl.text = c.label()
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 15)
+	var col := COL_CARD_RED if RED_SUITS.has(c.suit) else COL_CARD_BLACK
+	if c.is_joker:
+		col = COL_JOKER
+	lbl.add_theme_color_override("font_color", col)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(lbl)
+	if c.is_sticky():
+		_add_slime_blob(face)
+	return face
 
 func _refresh_board() -> void:
 	_clear_children(board_flow)
@@ -904,6 +965,17 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 		bg = COL_SELECT_BG
 		border = COL_SELECT
 		border_w = 3
+	# Glass cards render transparent — the felt shows through whatever state
+	# the card is in. The selection/highlight border stays so they still read.
+	if c.is_glass():
+		bg = Color(bg, GLASS_BG_ALPHA)
+		if not selected.has(c) and not highlighted.has(c):
+			border = COL_GLASS_EDGE
+			border_w = 2
+		if not on_board:
+			b.tooltip_text = "Glass — see-through from the back: opponents " \
+				+ "can see this card in your hand." \
+				+ ("" if b.tooltip_text == "" else "\n" + b.tooltip_text)
 	var style := _card_style(bg, border, border_w)
 	for state in ["normal", "pressed", "disabled"]:
 		b.add_theme_stylebox_override(state, style)

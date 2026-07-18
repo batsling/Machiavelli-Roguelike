@@ -46,6 +46,14 @@ func draw() -> Card:
 		return null
 	return cards.pop_back()
 
+## The card the next draw() will return (the top of the stock), or null when
+## the stock is empty. Callers must only act on it when the card is glass —
+## a glass top is public information, anything else is still face down.
+func peek() -> Card:
+	if cards.is_empty():
+		return null
+	return cards[-1]
+
 func is_empty() -> bool:
 	return cards.is_empty()
 

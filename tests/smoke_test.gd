@@ -40,6 +40,16 @@ func _init() -> void:
 		failures += 1
 	if not _test_slime_guards_on_draw():
 		failures += 1
+	if not _test_glass_setup():
+		failures += 1
+	if not _test_glass_counting():
+		failures += 1
+	if not _test_glass_worth_holding():
+		failures += 1
+	if not _test_glass_exposure():
+		failures += 1
+	if not _test_glass_joker_reps():
+		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
 			failures += 1
@@ -77,6 +87,15 @@ func _init() -> void:
 	# still finish with a valid table.
 	for seed_value in 8:
 		if not _play_slime_game(seed_value):
+			failures += 1
+	# Glass tables: the Sadistic Billionaire turns 3/4 of all cards to glass,
+	# so the smart brain runs its glass counting every turn.
+	for seed_value in 8:
+		if not _play_glass_game(seed_value):
+			failures += 1
+	# Glass and slime together on one table (and on the same cards).
+	for seed_value in 4:
+		if not _play_glass_slime_game(seed_value):
 			failures += 1
 	if failures == 0:
 		print("SMOKE TEST OK: all games completed cleanly")
@@ -169,6 +188,10 @@ func _test_play_cap() -> bool:
 
 func _sticky(card: Card) -> Card:
 	card.effects.append(Card.Effect.STICKY)
+	return card
+
+func _glass(card: Card) -> Card:
+	card.effects.append(Card.Effect.CLEAR)
 	return card
 
 ## Same cards in the same order (by identity)?
@@ -459,6 +482,177 @@ func _test_slime_guards_on_draw() -> bool:
 	gm.free()
 	if ok:
 		print("slime guards on draw test OK")
+	return ok
+
+## The Sadistic Billionaire turns exactly three quarters of all cards — the
+## stock and every hand, jokers included — to glass at combat start; glass is
+## pure information, so it stacks with slime on the same card; and the rogue
+## roster now offers both designed enemies.
+func _test_glass_setup() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["You", "The Sadistic Billionaire"], 13, 6, true)
+	SadisticBillionaire.new().on_combat_start(gm)
+	var all_cards: Array[Card] = gm.deck.cards.duplicate()
+	for p in gm.players:
+		all_cards.append_array(p.hand)
+	var glass := 0
+	for c in all_cards:
+		if c.is_glass():
+			glass += 1
+	if all_cards.size() != 108 or glass != 81:
+		printerr("glass setup: expected 81 of 108 cards glass, got %d of %d"
+			% [glass, all_cards.size()])
+		ok = false
+	var both := _glass(_sticky(_card(5, "hearts")))
+	if not (both.is_glass() and both.is_sticky()):
+		printerr("glass setup: a card should be able to be both glass and slimed")
+		ok = false
+	if Enemy.roster().size() != 2:
+		printerr("glass setup: roster should hold the slime and the billionaire, got %d"
+			% Enemy.roster().size())
+		ok = false
+	gm.free()
+	if ok:
+		print("glass setup test OK")
+	return ok
+
+## The AI's glass counting reads only public information: glass cards in other
+## players' hands and a glass top of the stock — never a face-down card.
+func _test_glass_counting() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 3)
+	gm.players[0].hand.clear()
+	gm.players[1].hand.clear()
+	gm.players[1].hand.append(_glass(_card(8, "hearts")))
+	gm.players[1].hand.append(_card(8, "spades"))
+	if GreedyAI._glass_copies_in_other_hands(gm, 8, "hearts") != 1:
+		printerr("glass counting: the glass 8♥ in P1's hand should be visible")
+		ok = false
+	if GreedyAI._glass_copies_in_other_hands(gm, 8, "spades") != 0:
+		printerr("glass counting: a non-glass hand card must stay hidden")
+		ok = false
+	# The top of the stock is public only when the card there is glass.
+	gm.deck.cards.append(_card(12, "spades"))
+	if GreedyAI._glass_top_matches(gm, 12, "spades"):
+		printerr("glass counting: a face-down stock top must not be readable")
+		ok = false
+	gm.deck.cards.append(_glass(_card(11, "clubs")))
+	if not GreedyAI._glass_top_matches(gm, 11, "clubs"):
+		printerr("glass counting: a glass stock top should be readable")
+		ok = false
+	# Obtainable copies: one 8♥ on the table plus one visibly locked in P1's
+	# glass hand leaves nothing for P0 to chase; the hidden 8♠ stays a maybe.
+	var meld := CardSet.new()
+	meld.cards.assign([_card(8, "hearts"), _card(9, "hearts"), _card(10, "hearts")])
+	gm.board.melds.append(meld)
+	if GreedyAI._obtainable_copies(gm, 8, "hearts") != 0:
+		printerr("glass counting: both 8♥ are accounted for — none obtainable")
+		ok = false
+	if GreedyAI._obtainable_copies(gm, 8, "spades") != 2:
+		printerr("glass counting: the face-down 8♠ must still count as obtainable")
+		ok = false
+	gm.free()
+	if ok:
+		print("glass counting test OK")
+	return ok
+
+## Glass steers what the smart AI holds back: a lone card pairing with the
+## glass top of the stock is worth keeping (the next draw is public), and a
+## pair whose completions all sit visibly in glass opponent hands is a dead
+## end it stops holding.
+func _test_glass_worth_holding() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 3)
+	gm.players[0].hand.clear()
+	gm.players[1].hand.clear()
+	var none: Array[Card] = []
+	var five := _card(5, "hearts")
+	if GreedyAI._worth_holding(gm, five, none):
+		printerr("glass hold: a lone 5♥ with no partner is not worth holding")
+		ok = false
+	gm.deck.cards.append(_glass(_card(6, "hearts")))
+	if not GreedyAI._worth_holding(gm, five, none):
+		printerr("glass hold: the glass 6♥ atop the stock should make 5♥ worth holding")
+		ok = false
+	# A 9♥/9♠ pair: one copy each of 9♦ and 9♣ is on the table. While the
+	# remaining copies could be anywhere the pair is worth holding; once they
+	# show glass in P1's hand the set can never be completed by P0.
+	var nine := _card(9, "hearts")
+	var partner: Array[Card] = [_card(9, "spades")]
+	var run_d := CardSet.new()
+	run_d.cards.assign([_card(9, "diamonds"), _card(10, "diamonds"), _card(11, "diamonds")])
+	var run_c := CardSet.new()
+	run_c.cards.assign([_card(9, "clubs"), _card(10, "clubs"), _card(11, "clubs")])
+	gm.board.melds.append(run_d)
+	gm.board.melds.append(run_c)
+	if not GreedyAI._worth_holding(gm, nine, partner):
+		printerr("glass hold: with a 9♦/9♣ still unaccounted the pair is worth holding")
+		ok = false
+	gm.players[1].hand.append(_glass(_card(9, "diamonds")))
+	gm.players[1].hand.append(_glass(_card(9, "clubs")))
+	if GreedyAI._worth_holding(gm, nine, partner):
+		printerr("glass hold: every completion visibly locked in P1's hand is a dead end")
+		ok = false
+	gm.free()
+	if ok:
+		print("glass worth-holding test OK")
+	return ok
+
+## Feed avoidance weighs certain threats: a run's open end an opponent visibly
+## holds (glass) counts double an unseen one, and a matching glass top of the
+## stock adds the draw threat on top.
+func _test_glass_exposure() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 3)
+	gm.players[0].hand.clear()
+	gm.players[1].hand.clear()
+	var run: Array[Card] = [_card(5, "hearts"), _card(6, "hearts"), _card(7, "hearts")]
+	var base := GreedyAI._open_end_exposure(gm, run)
+	if base != 4:
+		printerr("glass exposure: baseline 4♥+8♥ exposure should be 4, got %d" % base)
+		ok = false
+	gm.players[1].hand.append(_glass(_card(8, "hearts")))
+	var held := GreedyAI._open_end_exposure(gm, run)
+	if held != 5:
+		printerr("glass exposure: the glass 8♥ in P1's hand should add 1, got %d" % held)
+		ok = false
+	gm.deck.cards.append(_glass(_card(4, "hearts")))
+	var topped := GreedyAI._open_end_exposure(gm, run)
+	if topped != 6:
+		printerr("glass exposure: the glass 4♥ atop the stock should add 1, got %d" % topped)
+		ok = false
+	gm.free()
+	if ok:
+		print("glass exposure test OK")
+	return ok
+
+## A joker is never pointed at a stand-in whose swap card an opponent visibly
+## holds: with the glass 9♣ in P1's hand, clubs is a guaranteed claim, so the
+## joker stands for the 9♦ instead (without glass the tie-break picks clubs).
+func _test_glass_joker_reps() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 11, true)
+	gm.players[0].hand.clear()
+	gm.players[1].hand.clear()
+	gm.players[1].hand.append(_glass(_card(9, "clubs")))
+	var joker := _joker()
+	var meld := CardSet.new()
+	meld.cards.assign([_card(9, "hearts"), _card(9, "spades"), joker])
+	gm.board.melds.append(meld)
+	GreedyAI._choose_joker_reps(gm, meld)
+	Rules.assign_jokers(meld.cards)
+	if joker.joker_suit != "diamonds":
+		printerr("glass joker reps: joker should avoid the visibly-held 9♣, got %s"
+			% joker.rep_label())
+		ok = false
+	gm.free()
+	if ok:
+		print("glass joker reps test OK")
 	return ok
 
 func _labels(cards: Array[Card]) -> String:
@@ -806,6 +1000,76 @@ func _play_slime_game(seed_value: int) -> bool:
 		printerr("slime game %d: did not finish within %d turns" % [seed_value, MAX_TURNS])
 		return false
 	print("slime game %d: finished in %d turns" % [seed_value, turns])
+	gm.free()
+	return true
+
+## A full AI-vs-AI game on a glass table: the Sadistic Billionaire's mechanic
+## is planted at combat start and both seats play under his (smart,
+## conservative, attentive) profile, so every turn exercises the glass-aware
+## brain — obtainable counting, glass feed threats, glass joker stand-ins and
+## the public stock top. Core invariants must hold after every turn.
+func _play_glass_game(seed_value: int) -> bool:
+	var gm := GameManager.new()
+	gm.setup(["You", "The Sadistic Billionaire"], 13, seed_value, true)
+	gm.draw_per_turn = 2
+	gm.max_plays_per_turn = 13
+	var billionaire := SadisticBillionaire.new()
+	billionaire.on_combat_start(gm)
+	var profile := billionaire.make_profile(seed_value)
+	var turns := 0
+	while not gm.is_game_over and turns < MAX_TURNS:
+		GreedyAI.take_turn(gm, profile)
+		turns += 1
+		if not gm.board.all_valid():
+			printerr("glass game %d: invalid meld on table after turn %d" % [seed_value, turns])
+			return false
+		var count := gm.deck.size() + gm.board.all_cards().size()
+		for p in gm.players:
+			count += p.hand.size()
+		if count != 108:
+			printerr("glass game %d: card conservation broken (%d) after turn %d"
+				% [seed_value, count, turns])
+			return false
+	if not gm.is_game_over:
+		printerr("glass game %d: did not finish within %d turns" % [seed_value, MAX_TURNS])
+		return false
+	print("glass game %d: finished in %d turns" % [seed_value, turns])
+	gm.free()
+	return true
+
+## Glass and slime planted on the same table (so plenty of cards carry both
+## effects): glass is pure information and must not disturb sticky movement or
+## any invariant. The slime's seat still runs her guard strategy.
+func _play_glass_slime_game(seed_value: int) -> bool:
+	var gm := GameManager.new()
+	gm.setup(["You", "The Cute Slime"], 13, seed_value, true)
+	gm.draw_per_turn = 2
+	gm.max_plays_per_turn = 13
+	var slime := CuteSlime.new()
+	slime.on_combat_start(gm)
+	SadisticBillionaire.new().on_combat_start(gm)
+	var profile := slime.make_profile(seed_value)
+	var turns := 0
+	while not gm.is_game_over and turns < MAX_TURNS:
+		var enemy: Enemy = slime if gm.current_player().is_opponent else null
+		GreedyAI.take_turn(gm, profile, enemy)
+		turns += 1
+		if not gm.board.all_valid():
+			printerr("glass+slime game %d: invalid meld on table after turn %d"
+				% [seed_value, turns])
+			return false
+		var count := gm.deck.size() + gm.board.all_cards().size()
+		for p in gm.players:
+			count += p.hand.size()
+		if count != 108:
+			printerr("glass+slime game %d: card conservation broken (%d) after turn %d"
+				% [seed_value, count, turns])
+			return false
+	if not gm.is_game_over:
+		printerr("glass+slime game %d: did not finish within %d turns"
+			% [seed_value, MAX_TURNS])
+		return false
+	print("glass+slime game %d: finished in %d turns" % [seed_value, turns])
 	gm.free()
 	return true
 
