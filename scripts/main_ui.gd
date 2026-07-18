@@ -214,8 +214,8 @@ func _new_game() -> void:
 				% current_enemy.display_name
 				+ "joker (green splotch). Slimed cards stick to each other, so a "
 				+ "run of them is one lump — dragging one drags them all. She "
-				+ "oozes freely and each turn guards her most valuable slimed card "
-				+ "(jokers, then the versatile 4-8s) to keep it out of your reach.")
+				+ "oozes freely and combines her slime to guard her most valuable "
+				+ "cards (jokers, then the versatile 4-8s) out of your reach.")
 	else:
 		current_enemy = null
 		var names: Array = ["You"]
@@ -1355,8 +1355,6 @@ func _run_ai_turns() -> void:
 	_refresh()
 	while not gm.is_game_over and gm.current_player().is_opponent:
 		var enemy := gm.current_player()
-		if enemy_def != null:
-			enemy_def.on_turn_begin(gm)
 		_set_status("%s is thinking…" % enemy.display_name)
 		_refresh()
 		await get_tree().create_timer(AI_THINK_DELAY).timeout

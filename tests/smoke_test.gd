@@ -333,9 +333,9 @@ func _test_slime_setup() -> bool:
 		print("slime setup test OK")
 	return ok
 
-## The slime consolidates her slime aggressively, prizing a joker above plain
-## cards, and stops when no move improves her grip (or she has no bodyguard to
-## bring over).
+## The slime legally combines slimed cards to guard her most valuable ones,
+## keeping every group valid with no leftover cards, and does nothing when no
+## legal combine helps.
 func _test_slime_strategy() -> bool:
 	var gm := GameManager.new()
 	var ok := true
@@ -354,7 +354,6 @@ func _test_slime_strategy() -> bool:
 	gm.board.melds.append(meld_a)
 	gm.board.melds.append(meld_b)
 	var slime := CuteSlime.new()
-	slime.on_turn_begin(gm)
 	var move := slime.plan_strategy_move(gm)
 	if move.is_empty():
 		printerr("slime strategy: expected a guarding move, got none")
@@ -366,6 +365,19 @@ func _test_slime_strategy() -> bool:
 	elif move["dest"] != meld_a:
 		printerr("slime strategy: should ooze the 9♥ onto the joker's group to seal it")
 		ok = false
+	else:
+		# The combine is legal and leaves no unmatched card: the group she oozes
+		# onto stays a valid meld, and the one she takes from stays valid.
+		var grown: Array[Card] = meld_a.cards.duplicate()
+		grown.append(nine_h)
+		var rest: Array[Card] = meld_b.cards.duplicate()
+		rest.erase(nine_h)
+		if not Rules.is_valid_meld(grown):
+			printerr("slime strategy: the guarded group should stay a valid meld")
+			ok = false
+		elif not Rules.is_valid_meld(rest):
+			printerr("slime strategy: the source group should stay valid, no orphans")
+			ok = false
 	# Versatility ranking: joker over the middle ranks 4-8, and those over the
 	# edge ranks (aces and faces rate no higher than any other plain card).
 	if slime._importance(_joker()) <= slime._importance(_card(6, "hearts")) \
@@ -382,20 +394,10 @@ func _test_slime_strategy() -> bool:
 		solo.cards.assign([_card(6, "hearts"), _card(7, "hearts"), _sticky(_joker())])
 		gm2.board.melds.append(solo)
 		Rules.assign_jokers(solo.cards)
-		slime.on_turn_begin(gm2)
 		if not slime.plan_strategy_move(gm2).is_empty():
 			printerr("slime strategy: a lone group offers no bodyguard to move")
 			ok = false
 		gm2.free()
-	# One guard per turn: after guarding once, she holds until her next turn.
-	if ok:
-		slime.on_turn_begin(gm)
-		if slime.plan_strategy_move(gm).is_empty():
-			printerr("slime strategy: expected a guard on a fresh turn")
-			ok = false
-		elif not slime.plan_strategy_move(gm).is_empty():
-			printerr("slime strategy: should make at most one guard per turn")
-			ok = false
 	gm.free()
 	if ok:
 		print("slime strategy test OK")

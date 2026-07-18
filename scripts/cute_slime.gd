@@ -12,15 +12,14 @@ extends Enemy
 ## dragging one drags them all. The Cute Slime herself is immune (ignores_sticky
 ## on her PlayerState), so she slides her slime around freely.
 ##
-## Slime strategy: once she has spent her ordinary plays for the turn, she makes
-## a single smart guarding move — using her free movement to ooze one slimed card
-## next to the most important slimed card the player could still lift, sealing it
-## in slime. She values the versatile ranks most (jokers, then 4-8), so she
-## guards those first. At most one guard a turn: she picks her best play, not a
-## flailing pile-up of slime.
-
-# True once she has made her one guarding move for the current turn.
-var _guarded_this_turn := false
+## Slime strategy: once she has spent her ordinary plays for the turn, she uses
+## her free movement to legally combine slimed cards — moving one slimed card
+## next to the most valuable slimed card the player could still lift, sealing it
+## in slime. Every combine keeps both groups valid and leaves no unmatched card
+## behind, and she repeats it as long as it helps (still all within her one
+## turn), always taking the move that guards her most versatile cards first —
+## jokers, then the flexible 4-8s. She only ever moves on a real improvement, so
+## she consolidates her slime, never shuffles in circles.
 
 func _init() -> void:
 	display_name = "The Cute Slime"
@@ -67,17 +66,14 @@ func _slime(card: Card) -> void:
 
 # --- Slime strategy ---------------------------------------------------------
 
-## Clears her one-guard-per-turn flag at the start of each of her turns.
-func on_turn_begin(_gm: GameManager) -> void:
-	_guarded_this_turn = false
-
-## Her single best guarding move for the turn: relocate one slimed card so it
-## locks the most valuable slimed card the player could still lift, weighting
-## each card by how badly she wants it kept away — jokers most, then the
-## versatile 4-8s, then anything. She makes at most one such move a turn (a smart
-## pick, not a pile-up) and only when it strictly improves her grip; otherwise {}.
+## Her best guarding move right now: relocate one slimed card so it locks the
+## most valuable slimed card the player could still lift, weighting each card by
+## how badly she wants it kept away — jokers most, then the versatile 4-8s, then
+## anything. The move keeps both groups valid and leaves no unmatched card, and
+## she only makes it when it strictly improves her grip; otherwise {}. The turn
+## loop calls this repeatedly, so she guards as much as legally helps in a turn.
 func plan_strategy_move(gm: GameManager) -> Dictionary:
-	if _guarded_this_turn or not gm.current_player_is_open():
+	if not gm.current_player_is_open():
 		return {}
 	var melds := gm.board.melds
 	# The lock score each group contributes right now, so a candidate only has
@@ -113,8 +109,6 @@ func plan_strategy_move(gm: GameManager) -> Dictionary:
 					var moved: Array[Card] = [c]
 					best = {"cards": moved, "dest": m2, "borrowed": moved, "strategy": true,
 						"text": _guard_text(c, _has_joker(grown))}
-	if not best.is_empty():
-		_guarded_this_turn = true
 	return best
 
 func _guard_text(c: Card, seals_joker: bool) -> String:
