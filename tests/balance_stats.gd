@@ -7,6 +7,8 @@ extends SceneTree
 ##   godot --headless --path . --script res://tests/balance_stats.gd -- --games=100
 ## With starting combos dealt (every player opens with a random meld):
 ##   godot --headless --path . --script res://tests/balance_stats.gd -- --combo
+## With a different starting hand size (default 13):
+##   godot --headless --path . --script res://tests/balance_stats.gd -- --hand=15
 ##
 ## Plays seeded 1v1 games — a simulated player against the basic enemy and
 ## against each designed enemy — and prints the numbers two roguelike systems
@@ -33,6 +35,8 @@ const PLAYER_ATTENTION := 1.0
 ## --combo: deal every player a random starting meld (see
 ## GameManager.deal_starting_melds) in every game, to measure its effect.
 var start_combo := false
+## --hand=N: cards dealt to each player at the start (default 13).
+var hand_size := GameManager.DEFAULT_HAND_SIZE
 
 func _init() -> void:
 	var games := DEFAULT_GAMES
@@ -41,6 +45,8 @@ func _init() -> void:
 			games = maxi(1, int(arg.get_slice("=", 1)))
 		elif arg == "--combo":
 			start_combo = true
+		elif arg.begins_with("--hand="):
+			hand_size = clampi(int(arg.get_slice("=", 1)), 3, 21)
 	var matchups: Array[Dictionary] = [
 		{"label": "Basic enemy (no jokers)",
 			"make": func() -> Enemy: return Enemy.new(), "jokers": false},
@@ -51,7 +57,8 @@ func _init() -> void:
 		{"label": "The Sadistic Billionaire",
 			"make": func() -> Enemy: return SadisticBillionaire.new(), "jokers": true},
 	]
-	print("Balance stats: %d games per matchup, 1v1, player profile " % games
+	print("Balance stats: %d games per matchup, 1v1, %d-card hands, player profile "
+		% [games, hand_size]
 		+ "strength=%.1f style=%.1f attention=%.1f%s" % [PLAYER_STRENGTH, PLAYER_STYLE,
 			PLAYER_ATTENTION, ", starting combos dealt" if start_combo else ""])
 	var failures := 0
@@ -82,7 +89,7 @@ func _init() -> void:
 func _play_game(matchup: Dictionary, seed_value: int) -> Dictionary:
 	var gm := GameManager.new()
 	var enemy: Enemy = matchup["make"].call()
-	gm.setup(["You", enemy.display_name], 13, seed_value, matchup["jokers"])
+	gm.setup(["You", enemy.display_name], hand_size, seed_value, matchup["jokers"])
 	enemy.on_combat_start(gm)
 	if start_combo:
 		gm.deal_starting_melds()
