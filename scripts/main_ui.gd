@@ -224,6 +224,8 @@ var end_turn_btn: Button
 var draw_btn: Button
 var settings_btn: Button
 var new_game_btn: Button
+var sort_board_btn: Button
+var randomize_board_btn: Button
 var settings_dialog: AcceptDialog
 var ai_desc_label: Label
 var settings_save_note: Label
@@ -460,9 +462,42 @@ func _build_layout() -> void:
 	table_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	table_panel.add_theme_stylebox_override("panel", _panel_style(COL_FELT, 10))
 	mid_row.add_child(table_panel)
+	var table_col := VBoxContainer.new()
+	table_col.add_theme_constant_override("separation", 4)
+	table_panel.add_child(table_col)
+
+	# Table header: a title plus buttons that reorder the groups on the felt so a
+	# crowded table is easy to read. Sort lays straights out first (by colour,
+	# then starting rank) and sets after (by rank); Randomize keeps each group
+	# intact but shuffles where the groups sit.
+	var table_top := HBoxContainer.new()
+	table_top.add_theme_constant_override("separation", 8)
+	table_col.add_child(table_top)
+	var table_title := Label.new()
+	table_title.text = "Table"
+	table_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	table_title.add_theme_font_size_override("font_size", 15)
+	table_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	table_top.add_child(table_title)
+	sort_board_btn = Button.new()
+	sort_board_btn.text = "Sort"
+	sort_board_btn.tooltip_text = "Reorder the groups on the table: straights first " \
+		+ "(by colour, then starting rank), then sets (by rank)"
+	sort_board_btn.focus_mode = Control.FOCUS_NONE
+	sort_board_btn.pressed.connect(_on_sort_board_pressed)
+	table_top.add_child(sort_board_btn)
+	randomize_board_btn = Button.new()
+	randomize_board_btn.text = "Randomize"
+	randomize_board_btn.tooltip_text = "Shuffle where the groups sit on the table, " \
+		+ "keeping each group together"
+	randomize_board_btn.focus_mode = Control.FOCUS_NONE
+	randomize_board_btn.pressed.connect(_on_randomize_board_pressed)
+	table_top.add_child(randomize_board_btn)
+
 	var table_scroll := ScrollContainer.new()
+	table_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	table_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	table_panel.add_child(table_scroll)
+	table_col.add_child(table_scroll)
 	board_flow = HFlowContainer.new()
 	board_flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	board_flow.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -495,17 +530,12 @@ func _build_layout() -> void:
 	hand_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 	hand_top.add_child(hand_title)
 
-	# Right-hand controls, stacked: a row of suit filters sits directly above the
-	# sort buttons. Hovering a suit outlines those cards in your hand and fades
+	# Suit filter: hovering a suit outlines those cards in your hand and fades
 	# the rest, so you can pick a colour out of a crowded hand at a glance.
-	var controls := VBoxContainer.new()
-	controls.add_theme_constant_override("separation", 4)
-	hand_top.add_child(controls)
-
 	var filter_row := HBoxContainer.new()
 	filter_row.add_theme_constant_override("separation", 4)
 	filter_row.alignment = BoxContainer.ALIGNMENT_END
-	controls.add_child(filter_row)
+	hand_top.add_child(filter_row)
 	var filter_hint := Label.new()
 	filter_hint.text = "Highlight suit:"
 	filter_hint.add_theme_font_size_override("font_size", 12)
@@ -515,24 +545,6 @@ func _build_layout() -> void:
 	for suit in ["hearts", "diamonds", "clubs", "spades"]:
 		filter_row.add_child(_make_suit_filter_button(suit))
 
-	var sort_row := HBoxContainer.new()
-	sort_row.add_theme_constant_override("separation", 4)
-	sort_row.alignment = BoxContainer.ALIGNMENT_END
-	controls.add_child(sort_row)
-	var sort_btn := Button.new()
-	sort_btn.text = "Sort"
-	sort_btn.tooltip_text = "Group your hand into combos: straights first, then sets, " \
-		+ "ordered by suit and starting rank (loose cards and jokers last)"
-	sort_btn.focus_mode = Control.FOCUS_NONE
-	sort_btn.pressed.connect(_on_sort_pressed)
-	sort_row.add_child(sort_btn)
-	var randomize_btn := Button.new()
-	randomize_btn.text = "Randomize"
-	randomize_btn.tooltip_text = "Keep each combo together but shuffle where the combos sit, " \
-		+ "to shake loose new ideas"
-	randomize_btn.focus_mode = Control.FOCUS_NONE
-	randomize_btn.pressed.connect(_on_randomize_pressed)
-	sort_row.add_child(randomize_btn)
 	hand_box = HFlowContainer.new()
 	hand_box.add_theme_constant_override("h_separation", 4)
 	hand_box.add_theme_constant_override("v_separation", 4)
@@ -1256,6 +1268,11 @@ func _refresh_buttons() -> void:
 	reset_btn.disabled = not human_turn or not gm.can_undo_action()
 	end_turn_btn.disabled = not human_turn
 	draw_btn.disabled = not human_turn
+	# Table tidy-ups need at least two groups to do anything, and never while the
+	# enemies' cards are still flying around.
+	var can_tidy := not ai_running and gm.board.melds.size() > 1
+	sort_board_btn.disabled = not can_tidy
+	randomize_board_btn.disabled = not can_tidy
 	if game_mode == Mode.ROGUE:
 		new_game_btn.text = "Next round" if gm.is_game_over and rogue_round_won \
 			else "New run"
@@ -1749,57 +1766,56 @@ func _on_new_game_pressed() -> void:
 			rogue_round = 1
 	_new_game()
 
-## "Sort": lay the hand out as combos so plays jump out — straights first, then
-## sets; within each, by suit then starting rank. Loose cards, then jokers, trail.
-func _on_sort_pressed() -> void:
-	var groups := Rules.partition_hand(gm.players[0].hand)
-	var combos: Array = []
-	for cards: Array in groups["combos"]:
-		combos.append({
-			"cards": cards,
-			"is_run": Rules.is_valid_run(cards),
-			"suit_order": SUIT_ORDER.get(cards[0].suit, 99),
-			"start_rank": cards[0].rank,
-		})
-	combos.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if a["is_run"] != b["is_run"]:
-			return a["is_run"]  # straights before sets
-		if a["suit_order"] != b["suit_order"]:
-			return a["suit_order"] < b["suit_order"]
-		return a["start_rank"] < b["start_rank"])
-	var leftovers: Array[Card] = groups["leftovers"]
-	leftovers.sort_custom(func(a: Card, b: Card) -> bool:
-		var order_a: int = SUIT_ORDER.get(a.suit, 99)
-		var order_b: int = SUIT_ORDER.get(b.suit, 99)
-		if order_a != order_b:
-			return order_a < order_b
-		return a.rank < b.rank)
-	var out: Array[Card] = []
-	for combo: Dictionary in combos:
-		out.append_array(combo["cards"])
-	out.append_array(leftovers)
-	out.append_array(groups["jokers"])
-	gm.players[0].hand.assign(out)
+## "Sort": reorder the groups on the table so a busy felt is easy to scan.
+## Straights come first — by colour, then by their starting rank — and sets
+## after, by rank. Any group that is momentarily invalid (mid-rearrange) keeps
+## its place at the end so nothing you are editing jumps around under you.
+func _on_sort_board_pressed() -> void:
+	if ai_running:
+		return
+	var keyed: Array = []
+	for i in gm.board.melds.size():
+		keyed.append({"meld": gm.board.melds[i], "key": _board_meld_key(gm.board.melds[i], i)})
+	keyed.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return _key_less(a["key"], b["key"]))
+	var out: Array[CardSet] = []
+	for e: Dictionary in keyed:
+		out.append(e["meld"])
+	gm.board.melds.assign(out)
 	_refresh()
 
-## "Randomize": keep each detected combo glued together but shuffle the order of
-## the blocks (loose cards and jokers ride along as singletons), so the same
-## cards land in fresh neighbourhoods and new plays suggest themselves.
-func _on_randomize_pressed() -> void:
-	var groups := Rules.partition_hand(gm.players[0].hand)
-	var blocks: Array = []
-	for cards: Array in groups["combos"]:
-		blocks.append(cards)
-	for c: Card in groups["leftovers"]:
-		blocks.append([c] as Array[Card])
-	for c: Card in groups["jokers"]:
-		blocks.append([c] as Array[Card])
-	blocks.shuffle()
-	var out: Array[Card] = []
-	for blk: Array in blocks:
-		out.append_array(blk)
-	gm.players[0].hand.assign(out)
+## "Randomize": keep every group intact but shuffle where the groups sit on the
+## table, to jog loose a rearrangement you had not spotted.
+func _on_randomize_board_pressed() -> void:
+	if ai_running:
+		return
+	gm.board.melds.shuffle()
 	_refresh()
+
+## A lexicographic sort key for one table group, compared field by field:
+##   [valid, type, primary, secondary, order]
+## Valid groups sort ahead of broken ones (which keep their current order via the
+## trailing `order`). Straights (type 0) come before sets (type 1). A straight is
+## keyed by colour then starting rank; a set by rank then suit. Jokers are read
+## as the card they currently stand for.
+func _board_meld_key(meld: CardSet, order: int) -> Array:
+	Rules.assign_jokers(meld.cards)
+	var anchor: Card = Rules.display_order(meld.cards)[0]
+	var suit := anchor.joker_suit if anchor.is_joker else anchor.suit
+	var rank := anchor.joker_rank if anchor.is_joker else anchor.rank
+	var suit_order: int = SUIT_ORDER.get(suit, 99)
+	if not meld.is_valid():
+		return [1, 0, 0, 0, order]
+	if Rules.is_valid_run(meld.cards):
+		return [0, 0, suit_order, rank, order]  # straights: colour, then start
+	return [0, 1, rank, suit_order, order]       # sets: rank, then suit
+
+## True when key `a` sorts before key `b`, comparing element by element.
+func _key_less(a: Array, b: Array) -> bool:
+	for i in a.size():
+		if a[i] != b[i]:
+			return a[i] < b[i]
+	return false
 
 func _on_return_pressed() -> void:
 	_return_to_hand(selected.duplicate())
