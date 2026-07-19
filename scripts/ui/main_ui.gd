@@ -422,7 +422,7 @@ func _build_layout() -> void:
 	var table_panel := PanelContainer.new()
 	table_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	table_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	table_panel.add_theme_stylebox_override("panel", _panel_style(UITheme.COL_FELT, 10))
+	table_panel.add_theme_stylebox_override("panel", CardRenderer.panel_style(UITheme.COL_FELT, 10))
 	mid_row.add_child(table_panel)
 	var table_col := VBoxContainer.new()
 	table_col.add_theme_constant_override("separation", 4)
@@ -632,7 +632,7 @@ func _enemy_info_text(player_index: int) -> String:
 func _build_menu() -> void:
 	menu_layer = PanelContainer.new()
 	menu_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu_layer.add_theme_stylebox_override("panel", _panel_style(UITheme.COL_FELT_DARK, 0))
+	menu_layer.add_theme_stylebox_override("panel", CardRenderer.panel_style(UITheme.COL_FELT_DARK, 0))
 	add_child(menu_layer)
 	var center := CenterContainer.new()
 	menu_layer.add_child(center)
@@ -1038,7 +1038,7 @@ func _refresh_stock_top() -> void:
 	var top := gm.deck.peek()
 	if top == null or not top.is_glass():
 		return
-	var face := _make_glass_face(top, UITheme.BACK_SIZE_TOP)
+	var face := CardRenderer.make_glass_face(top, UITheme.BACK_SIZE_TOP)
 	face.tooltip_text = "Top of the stock is glass — everyone can see " \
 		+ "the next card drawn."
 	stock_top_slot.add_child(face)
@@ -1046,7 +1046,7 @@ func _refresh_stock_top() -> void:
 func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	var is_current: bool = p == gm.current_player() and not gm.is_game_over
 	var chip := PanelContainer.new()
-	var sb := _panel_style(UITheme.COL_CHIP_BG, 8)
+	var sb := CardRenderer.panel_style(UITheme.COL_CHIP_BG, 8)
 	sb.border_color = UITheme.COL_CHIP_ACTIVE if is_current else Color(1, 1, 1, 0.15)
 	sb.set_border_width_all(2)
 	chip.add_theme_stylebox_override("panel", sb)
@@ -1093,53 +1093,14 @@ func _make_card_backs(hand: Array[Card], horizontal: bool) -> BoxContainer:
 		box.add_theme_constant_override("separation", int(step - card_len))
 	for c in hand:
 		if c.is_glass():
-			var face := _make_glass_face(c, back_size)
+			var face := CardRenderer.make_glass_face(c, back_size)
 			face.tooltip_text = "Glass — you can see this card through the back."
 			box.add_child(face)
 			# Registered so enemy-move animations start from the visible card.
 			card_nodes[c] = face
 		else:
-			box.add_child(_make_card_back(back_size))
+			box.add_child(CardRenderer.make_card_back(back_size))
 	return box
-
-func _make_card_back(back_size: Vector2) -> Panel:
-	var back := Panel.new()
-	back.custom_minimum_size = back_size
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = UITheme.COL_CARD_BACK
-	sb.border_color = UITheme.COL_CARD_BACK_EDGE
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(6)
-	back.add_theme_stylebox_override("panel", sb)
-	return back
-
-## A small face-up rendering of a glass card in a card-back footprint: the
-## card is transparent, so its face shows even from the back (in an opponent's
-## hand, or on top of the stock). Non-interactive.
-func _make_glass_face(c: Card, face_size: Vector2) -> Panel:
-	var face := Panel.new()
-	face.custom_minimum_size = face_size
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(UITheme.COL_CARD_BG, UITheme.GLASS_BG_ALPHA)
-	sb.border_color = UITheme.COL_GLASS_EDGE
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(6)
-	face.add_theme_stylebox_override("panel", sb)
-	var lbl := Label.new()
-	lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
-	lbl.text = c.label()
-	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	lbl.add_theme_font_size_override("font_size", 15)
-	var col := UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK
-	if c.is_joker:
-		col = UITheme.COL_JOKER
-	lbl.add_theme_color_override("font_color", col)
-	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_child(lbl)
-	if c.is_sticky():
-		_add_slime_blob(face)
-	return face
 
 func _refresh_board() -> void:
 	_clear_children(board_flow)
@@ -1162,7 +1123,7 @@ func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	var locked := _is_human_turn() and not gm.current_player_is_open() \
 		and not gm.is_own_staged_meld(meld)
 	# Valid groups sit quietly on the felt; only broken ones shout.
-	var sb := _panel_style(Color(1, 1, 1, 0.045), 10)
+	var sb := CardRenderer.panel_style(Color(1, 1, 1, 0.045), 10)
 	sb.border_color = UITheme.COL_MELD_BORDER if valid else UITheme.COL_MELD_BAD
 	sb.set_border_width_all(1 if valid else 2)
 	panel.add_theme_stylebox_override("panel", sb)
@@ -1186,18 +1147,18 @@ func _make_new_group_zone() -> Button:
 	zone.tooltip_text = "Drop or move selected cards here to start a brand-new group"
 	zone.custom_minimum_size = UITheme.NEW_GROUP_SIZE
 	zone.focus_mode = Control.FOCUS_NONE
-	var sb := _panel_style(Color(1, 1, 1, 0.04), 10)
+	var sb := CardRenderer.panel_style(Color(1, 1, 1, 0.04), 10)
 	sb.border_color = Color(1, 1, 1, 0.35)
 	sb.set_border_width_all(2)
 	zone.add_theme_stylebox_override("normal", sb)
-	zone.add_theme_stylebox_override("hover", _hover_variant(sb))
+	zone.add_theme_stylebox_override("hover", CardRenderer.hover_variant(sb))
 	zone.add_theme_stylebox_override("pressed", sb)
 	zone.pressed.connect(_on_new_meld_pressed)
 	zone.set_drag_forwarding(Callable(), _can_drop_new_group, _drop_new_group)
 	return zone
 
 func _refresh_hand() -> void:
-	var sb := _panel_style(UITheme.COL_FELT_DARK, 10)
+	var sb := CardRenderer.panel_style(UITheme.COL_FELT_DARK, 10)
 	if _is_human_turn():
 		sb.border_color = UITheme.COL_CHIP_ACTIVE
 		sb.set_border_width_all(2)
@@ -1322,14 +1283,14 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 			b.tooltip_text = "Glass — see-through from the back: opponents " \
 				+ "can see this card in your hand." \
 				+ ("" if b.tooltip_text == "" else "\n" + b.tooltip_text)
-	var style := _card_style(bg, border, border_w)
+	var style := CardRenderer.card_style(bg, border, border_w)
 	for state in ["normal", "pressed", "disabled"]:
 		b.add_theme_stylebox_override(state, style)
-	b.add_theme_stylebox_override("hover", _card_style(bg, UITheme.COL_SELECT, maxi(border_w, 2)))
-	b.add_theme_stylebox_override("hover_pressed", _card_style(bg, border, border_w))
+	b.add_theme_stylebox_override("hover", CardRenderer.card_style(bg, UITheme.COL_SELECT, maxi(border_w, 2)))
+	b.add_theme_stylebox_override("hover_pressed", CardRenderer.card_style(bg, border, border_w))
 
 	if c.is_sticky():
-		_add_slime_blob(b)
+		CardRenderer.add_slime_blob(b)
 	if filter_active and not filter_match:
 		b.modulate = Color(1, 1, 1, UITheme.FILTER_DIM_ALPHA)
 
@@ -1376,60 +1337,6 @@ func _on_suit_filter_exit(suit: String) -> void:
 		return
 	hover_filter_suit = ""
 	_refresh_hand()
-
-## A little green slime splotch pinned to the top-right corner of a card, the
-## visible mark of the Cute Slime's Sticky effect. Non-interactive so it never
-## steals the card's clicks or drags.
-func _add_slime_blob(parent: Control) -> void:
-	const BLOB := 15.0
-	const MARGIN := 3.0
-	var blob := Panel.new()
-	blob.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	blob.anchor_left = 1.0
-	blob.anchor_right = 1.0
-	blob.anchor_top = 0.0
-	blob.anchor_bottom = 0.0
-	blob.offset_left = -(BLOB + MARGIN)
-	blob.offset_right = -MARGIN
-	blob.offset_top = MARGIN
-	blob.offset_bottom = MARGIN + BLOB
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = UITheme.COL_SLIME
-	sb.border_color = UITheme.COL_SLIME_EDGE
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(int(BLOB / 2.0))
-	blob.add_theme_stylebox_override("panel", sb)
-	blob.tooltip_text = "Slimed — sticks to adjacent slimed cards; moving one drags the lump."
-	parent.add_child(blob)
-
-func _card_style(bg: Color, border: Color, width: int) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(width)
-	sb.set_corner_radius_all(7)
-	sb.content_margin_left = 5
-	sb.content_margin_right = 5
-	sb.content_margin_top = 5
-	sb.content_margin_bottom = 5
-	return sb
-
-func _panel_style(bg: Color, radius: int) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.set_corner_radius_all(radius)
-	sb.content_margin_left = 8
-	sb.content_margin_right = 8
-	sb.content_margin_top = 6
-	sb.content_margin_bottom = 6
-	return sb
-
-func _hover_variant(sb: StyleBoxFlat) -> StyleBoxFlat:
-	var out: StyleBoxFlat = sb.duplicate()
-	out.bg_color = Color(out.bg_color.r, out.bg_color.g, out.bg_color.b,
-		minf(out.bg_color.a + 0.06, 1.0))
-	out.border_color = Color(1, 1, 1, 0.6)
-	return out
 
 func _clear_children(node: Node) -> void:
 	for child in node.get_children():
@@ -1485,7 +1392,7 @@ func _get_card_drag_data(_at_position: Vector2, c: Card, source: Button) -> Vari
 	# A slimed card on the table drags its whole cluster; expand the drag so the
 	# preview shows what will actually move (the engine expands again to be sure).
 	cards = _expand_sticky(cards)
-	source.set_drag_preview(_make_drag_preview(cards))
+	source.set_drag_preview(CardRenderer.make_drag_preview(cards))
 	return {"type": DRAG_TYPE, "cards": cards}
 
 ## Grow a drag set so a slimed table card brings its whole slime cluster along,
@@ -1505,22 +1412,6 @@ func _expand_sticky(cards: Array[Card]) -> Array[Card]:
 			if not out.has(m):
 				out.append(m)
 	return out
-
-func _make_drag_preview(cards: Array[Card]) -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 4)
-	for c in Rules.display_order(cards):
-		var chip := PanelContainer.new()
-		chip.add_theme_stylebox_override("panel", _card_style(UITheme.COL_SELECT_BG, UITheme.COL_SELECT, 2))
-		var lbl := Label.new()
-		lbl.text = c.label()
-		lbl.add_theme_font_size_override("font_size", UITheme.CARD_FONT_SIZE)
-		lbl.add_theme_color_override("font_color",
-			UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK)
-		chip.add_child(lbl)
-		row.add_child(chip)
-	row.modulate = Color(1, 1, 1, 0.9)
-	return row
 
 func _drag_cards(data: Variant) -> Array[Card]:
 	var out: Array[Card] = []
@@ -1937,7 +1828,7 @@ func _animate_cards(cards: Array[Card], sources: Dictionary) -> void:
 		var dest: Control = card_nodes.get(c)
 		if dest == null or not is_instance_valid(dest) or not sources.has(c):
 			continue
-		var proxy := _make_card_face(c)
+		var proxy := CardRenderer.make_card_face(c)
 		anim_layer.add_child(proxy)
 		proxy.global_position = sources[c]
 		dest.modulate.a = 0.0
@@ -1951,25 +1842,6 @@ func _animate_cards(cards: Array[Card], sources: Dictionary) -> void:
 		last_tween = tw
 	if last_tween != null:
 		await last_tween.finished
-
-## A non-interactive card face used as an animation proxy; sized like the
-## board card it lands on and styled like the gold highlight it will carry.
-func _make_card_face(c: Card) -> Control:
-	var face := PanelContainer.new()
-	face.custom_minimum_size = UITheme.BOARD_CARD_SIZE
-	face.size = UITheme.BOARD_CARD_SIZE
-	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_theme_stylebox_override("panel", _card_style(UITheme.COL_HILITE_BG, UITheme.COL_HILITE, 3))
-	var lbl := Label.new()
-	lbl.text = c.label()
-	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	lbl.add_theme_font_size_override("font_size", UITheme.BOARD_CARD_FONT_SIZE)
-	lbl.add_theme_color_override("font_color",
-		UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK)
-	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_child(lbl)
-	return face
 
 # --- Misc ----------------------------------------------------------------------
 
