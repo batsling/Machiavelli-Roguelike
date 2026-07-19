@@ -52,6 +52,8 @@ func _init() -> void:
 		failures += 1
 	if not _test_starting_melds():
 		failures += 1
+	if not _test_deep_planner():
+		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
 			failures += 1
@@ -366,6 +368,59 @@ func _test_slime_setup() -> bool:
 	return ok
 
 ## The slime legally combines slimed cards to guard her most valuable ones,
+## The deep-rearrangement planner (the planning dial): an expert planner chains
+## board relocations to lay down a hand play no borrow reaches, while the
+## short-sighted and middle tiers, whose budgets are too small, don't. Rebuilds
+## the winning line the Sadistic Billionaire missed before the planner existed:
+## shift A♠ onto the high spades, slide 5♣ onto the low clubs, then pull the
+## freed 2♠ and 2♣ in with the hand's 2♥ to make a set of twos and go out — four
+## board movements, so only the expert budget can afford it.
+func _test_deep_planner() -> bool:
+	var ok := true
+	for tier: Array in [[0.0, false], [0.5, false], [1.0, true]]:
+		var gm := GameManager.new()
+		gm.setup(["AI"], 13, 7, false)
+		var p := gm.current_player()
+		p.has_opened = true
+		gm.board.melds.clear()
+		_append_meld(gm, [_card(1, "spades"), _card(2, "spades"), _card(3, "spades"),
+			_card(4, "spades"), _card(5, "spades")])
+		_append_meld(gm, [_card(11, "spades"), _card(12, "spades"), _card(13, "spades")])
+		_append_meld(gm, [_card(2, "clubs"), _card(3, "clubs"), _card(4, "clubs")])
+		_append_meld(gm, [_card(5, "clubs"), _card(5, "diamonds"), _card(5, "hearts"),
+			_card(5, "spades")])
+		p.hand.assign([_card(2, "hearts")])
+		gm._hand_snapshot = p.hand.duplicate()
+		var prof := AIProfile.new(1.0, 0.0, 1.0, 1, tier[0])
+		var move := GreedyAI.plan_move(gm, prof, null)
+		var found: bool = move.has("rearrange")
+		if found != tier[1]:
+			printerr("deep planner: budget %d expected rearrange=%s, got %s"
+				% [prof.plan_budget(), tier[1], found])
+			ok = false
+			continue
+		if not found:
+			continue
+		GreedyAI.apply_move(gm, move, prof)
+		if not p.hand.is_empty():
+			printerr("deep planner: the expert plan should empty the hand, %d left"
+				% p.hand.size())
+			ok = false
+		for m in gm.board.melds:
+			if not m.is_valid():
+				printerr("deep planner: left an invalid group: %s" % _labels(m.cards))
+				ok = false
+		if gm.commit_turn() != "":
+			printerr("deep planner: the winning turn should commit cleanly")
+			ok = false
+	return ok
+
+func _append_meld(gm: GameManager, cards: Array) -> void:
+	var cs := CardSet.new()
+	for c: Card in cards:
+		cs.add_card(c)
+	gm.board.melds.append(cs)
+
 ## keeping every group valid with no leftover cards, and does nothing when no
 ## legal combine helps.
 func _test_slime_strategy() -> bool:

@@ -24,25 +24,41 @@ extends RefCounted
 ## attentive one never forgets. It is independent of strength: a strong but
 ## oblivious AI sees the clever plays yet keeps fumbling the obvious ones.
 ##
-## GreedyAI with no profile behaves like strength 1 / style 0 / attention 1 and
-## uses no randomness, so seeded headless games stay reproducible. Pass a seed
-## here to make a profiled game reproducible too.
+## planning 0..1 (short-sighted → expert planner): how many board-card
+## relocations the AI is willing to chain to open up a hand play. A
+## short-sighted AI shifts a single card to make room; the middle tier reworks
+## up to PLAN_BUDGET_MID cards; an expert planner reshuffles as much of the
+## table as it needs to lay down what it holds. See GreedyAI's deep-
+## rearrangement planner. Independent of the other axes.
+##
+## GreedyAI with no profile behaves like strength 1 / style 0 / attention 1 /
+## planning off (only the built-in borrow families) and uses no randomness, so
+## seeded headless games stay reproducible. Pass a seed here to make a profiled
+## game reproducible too.
 
 const MISS_CHANCE_AT_MOST_OBLIVIOUS := 0.3
 ## At or above this skill the AI drops the greedy first-legal-move search for
 ## the deck-counting, opponent-aware brain (GreedyAI._plan_smart_move).
 const SMART_BRAIN_SKILL := 0.85
+## The middle planning tier's relocation allowance; the low tier gets 1 and the
+## expert tier is effectively unlimited (PLAN_BUDGET_UNLIMITED).
+const PLAN_BUDGET_MID := 3
+## Expert planning: far more relocations than any real board needs, so the deep
+## planner is bounded only by its own node/depth safety caps in GreedyAI.
+const PLAN_BUDGET_UNLIMITED := 99
 
 var strength := 1.0
 var style := 0.0
 var attention := 1.0
+var planning := 1.0
 var rng := RandomNumberGenerator.new()
 
 func _init(strength_value := 1.0, style_value := 0.0,
-		attention_value := 1.0, seed_value := -1) -> void:
+		attention_value := 1.0, seed_value := -1, planning_value := 1.0) -> void:
 	strength = clampf(strength_value, 0.0, 1.0)
 	style = clampf(style_value, 0.0, 1.0)
 	attention = clampf(attention_value, 0.0, 1.0)
+	planning = clampf(planning_value, 0.0, 1.0)
 	if seed_value >= 0:
 		rng.seed = seed_value
 	else:
@@ -87,3 +103,14 @@ func opening_threshold() -> int:
 ## endgame forces its hand. See GreedyAI._plan_smart_move.
 func uses_smart_brain() -> bool:
 	return strength >= SMART_BRAIN_SKILL
+
+## How many board-card relocations the AI may chain to set up a hand play — the
+## short-sighted → expert planner dial. Short-sighted rearranges a single card,
+## the middle tier up to PLAN_BUDGET_MID, an expert planner effectively as many
+## as the table needs (bounded only by the deep planner's safety caps).
+func plan_budget() -> int:
+	if planning < 0.34:
+		return 1
+	if planning < 0.67:
+		return PLAN_BUDGET_MID
+	return PLAN_BUDGET_UNLIMITED

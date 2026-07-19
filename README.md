@@ -59,6 +59,12 @@ their cards — the first enemy directly opposite you, the second on the left,
 and a fourth player (when one exists) on the right (max 4 seats). Backs overlap
 more as a hand grows, so every seat always fits on screen.
 
+The top-left corner shows the **round** counter: one round is a full lap of the
+table (every player takes one turn), and it ticks up each time play returns to
+you. Each opponent's name chip carries an **Info** button — click it for a
+pop-up with that opponent's mechanic (in a roguelike round) and the AI brain it
+is running.
+
 On your turn:
 
 1. **Drag** cards — from your hand and from any group on the table. Drop them on a
@@ -124,6 +130,15 @@ The **Vanilla sandbox** tab holds:
     into fresh groups reliably but keeps overlooking the table plays (cutting
     its streak short). It is independent of skill — a strong but oblivious AI
     sees the clever plays yet keeps fumbling the obvious ones.
+  - **Planning** (short-sighted → expert planner) — how many board-card
+    relocations the AI will chain to open up a hand play. Beyond the built-in
+    one- and two-card borrows, a planner pulls the table cards a new group needs
+    into it alongside its hand cards and then repairs every group left broken —
+    relocating the offending cards to a valid home, recursively. A short-sighted
+    AI shifts a single card; the middle tier reworks up to three; an expert
+    planner reshuffles as much of the table as it needs to lay down what it
+    holds (bounded only by internal safety caps). Independent of the other
+    dials.
 
   Applies from the next enemy turn.
 - **Enemies** (1-3) — takes effect on the next new game.
@@ -141,9 +156,18 @@ The **Vanilla sandbox** tab holds:
 The **Roguelike run** tab holds the run's own copies of the same rules —
 cards drawn per turn (default 2), starting hand size (default 13), max hand
 size (default none), max cards played per turn (default 13), jokers (default
-in) and starting combos (default off). Every change applies from the next
-round; a round in progress keeps the rules it started under, and each enemy
-still brings its own designed AI profile and mechanics.
+in) and starting combos (default off). It also holds an **Enemy AI** section
+with the same four sliders (Skill / Style / Attention / Planning) *for each
+individual enemy in the roster*, so any single opponent's brain can be retuned
+for the run; an enemy left untouched keeps its designed personality (every
+designed enemy is an expert planner by default). Every change
+applies from the next round; a round in progress keeps the rules it started
+under, and each enemy still brings its own designed mechanics.
+
+A **Save settings** button (beside **Done**) writes every setting — both tabs,
+including the per-enemy AI overrides — to disk (`user://settings.cfg`), so the
+tuning is remembered the next time the game is launched. Changes still apply
+live as you make them; Save is only what makes them stick between sessions.
 
 ## Layout
 
@@ -171,17 +195,23 @@ still brings its own designed AI profile and mechanics.
   for a score-all-candidates "smart brain" that counts the deck, borrows up to
   two table cards at once to reach melds a single borrow can't, steals jokers,
   avoids feeding opponents, holds only cards the deck can still complete (never
-  hoarding toward a dead end), and races the endgame. On a glass table the
+  hoarding toward a dead end), and races the endgame. With a planning budget it
+  also runs a deep-rearrangement planner: it pulls the table cards a new group
+  needs into it alongside its hand cards, then repairs every group left broken
+  (relocating the offending cards to a valid home, recursively) up to the
+  budget — one board movement when short-sighted, three at the middle tier,
+  effectively unlimited for an expert planner. On a glass table the
   counting is glass-aware: it reads only the public information (glass cards
   in hands, a glass stock top) — completions visibly locked in opponents'
   hands are dead ends, visibly held lay-offs are certain feeds, joker
   stand-ins an opponent holds the swap card for are avoided, and a glass next
   draw is worth holding a partner for
-- `scripts/ai_profile.gd` — `AIProfile`: the three personality dials GreedyAI
+- `scripts/ai_profile.gd` — `AIProfile`: the four personality dials GreedyAI
   consults — skill (search depth + the smart brain), style (opening threshold,
   key-card holding), attention (miss chance, capped at 30% and only on
-  table-reading plays); unset = strong + quick + attentive and fully
-  deterministic
+  table-reading plays), planning (how many board relocations the deep planner
+  may chain: 1 / 3 / unlimited); unset = strong + quick + attentive + no deep
+  planning, and fully deterministic
 - `scripts/enemy.gd` — `Enemy`: a designed roguelike opponent — a name, an AI
   profile, an `on_combat_start` hook to plant mechanics, a `mechanic_intro`
   blurb for the game log, and a `plan_strategy_move` hook GreedyAI consults
