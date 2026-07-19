@@ -91,7 +91,6 @@ enum Mode { SANDBOX, ROGUE }
 const AI_THINK_DELAY := 0.6
 const AI_MOVE_DELAY := 0.5
 const AI_ANIM_TIME := 0.45
-const RED_SUITS := ["hearts", "diamonds"]
 const DRAG_TYPE := "machiavelli_cards"
 
 ## The UI seats at most this many players: you + up to 3 opponents.
@@ -104,43 +103,6 @@ const HAND_SIZE_MAX := 21
 ## Where the Save button persists every setting so a run keeps its rules
 ## between sessions.
 const SETTINGS_PATH := "user://settings.cfg"
-
-const CARD_SIZE := Vector2(78, 108)  # hand cards
-const CARD_FONT_SIZE := 28
-const BOARD_CARD_SIZE := Vector2(62, 86)  # table cards are smaller, so more groups fit
-const BOARD_CARD_FONT_SIZE := 22
-const NEW_GROUP_SIZE := Vector2(136, 102)
-const UI_FONT_SIZE := 17
-const BACK_SIZE_TOP := Vector2(46, 64)  # portrait backs for the seat opposite you
-const BACK_SIZE_SIDE := Vector2(64, 46)  # landscape backs for the left/right seats
-const BACKS_MAX_LEN_TOP := 560.0
-const BACKS_MAX_LEN_SIDE := 330.0
-const SIDE_SEAT_WIDTH := 130.0
-
-const COL_FELT := Color(0.09, 0.30, 0.19)
-const COL_FELT_DARK := Color(0.07, 0.22, 0.14)
-const COL_CARD_BG := Color(0.97, 0.96, 0.91)
-const COL_CARD_BORDER := Color(0.60, 0.56, 0.46)
-const COL_CARD_RED := Color(0.78, 0.13, 0.16)
-const COL_CARD_BLACK := Color(0.10, 0.10, 0.13)
-const COL_CARD_BACK := Color(0.17, 0.24, 0.50)
-const COL_CARD_BACK_EDGE := Color(0.93, 0.93, 0.97)
-const COL_SELECT := Color(0.20, 0.55, 0.95)
-const COL_SELECT_BG := Color(0.84, 0.91, 1.0)
-const COL_HILITE := Color(0.93, 0.72, 0.13)
-const COL_HILITE_BG := Color(1.0, 0.94, 0.75)
-const COL_MELD_BORDER := Color(1, 1, 1, 0.16)
-const COL_MELD_BAD := Color(0.92, 0.35, 0.30)
-const COL_CHIP_BG := Color(0.13, 0.14, 0.17)
-const COL_CHIP_ACTIVE := Color(0.93, 0.72, 0.13)
-const COL_JOKER := Color(0.48, 0.20, 0.62)
-const COL_JOKER_BG := Color(0.96, 0.92, 0.98)
-const COL_SLIME := Color(0.44, 0.82, 0.30)      # the slime splotch on a slimed card
-const COL_SLIME_EDGE := Color(0.20, 0.52, 0.16)
-const COL_GLASS_EDGE := Color(0.62, 0.84, 0.92)  # icy border of a glass card
-const GLASS_BG_ALPHA := 0.3   # glass cards let the felt show through
-const COL_FILTER_EDGE := Color(0.15, 0.78, 0.80)  # outline on the suit being hovered
-const FILTER_DIM_ALPHA := 0.28   # the other suits fade this low while a suit is hovered
 
 ## Suit order for the "Sort: suit" button: reds together, then blacks, so runs
 ## of the same colour sit side by side. Jokers are handled separately (last).
@@ -400,10 +362,10 @@ func _new_game() -> void:
 func _build_layout() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	var ui_theme := Theme.new()
-	ui_theme.default_font_size = UI_FONT_SIZE
+	ui_theme.default_font_size = UITheme.UI_FONT_SIZE
 	theme = ui_theme
 	# Paint the whole window in dark felt instead of the engine's gray.
-	RenderingServer.set_default_clear_color(COL_FELT_DARK)
+	RenderingServer.set_default_clear_color(UITheme.COL_FELT_DARK)
 
 	game_root = VBoxContainer.new()
 	game_root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -424,7 +386,7 @@ func _build_layout() -> void:
 	round_label = Label.new()
 	round_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	round_label.add_theme_font_size_override("font_size", 18)
-	round_label.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
+	round_label.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	top_bar.add_child(round_label)
 	var top_pad_left := Control.new()
 	top_pad_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -452,7 +414,7 @@ func _build_layout() -> void:
 	mid_row.add_theme_constant_override("separation", 8)
 	game_root.add_child(mid_row)
 	seat_left = _make_seat()
-	seat_left.custom_minimum_size = Vector2(SIDE_SEAT_WIDTH, 0)
+	seat_left.custom_minimum_size = Vector2(UITheme.SIDE_SEAT_WIDTH, 0)
 	mid_row.add_child(seat_left)
 
 	# Table: green felt panel holding a flow of meld panels. The felt itself
@@ -460,7 +422,7 @@ func _build_layout() -> void:
 	var table_panel := PanelContainer.new()
 	table_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	table_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	table_panel.add_theme_stylebox_override("panel", _panel_style(COL_FELT, 10))
+	table_panel.add_theme_stylebox_override("panel", _panel_style(UITheme.COL_FELT, 10))
 	mid_row.add_child(table_panel)
 	var table_col := VBoxContainer.new()
 	table_col.add_theme_constant_override("separation", 4)
@@ -510,7 +472,7 @@ func _build_layout() -> void:
 		zone.gui_input.connect(_on_background_gui_input)
 
 	seat_right = _make_seat()
-	seat_right.custom_minimum_size = Vector2(SIDE_SEAT_WIDTH, 0)
+	seat_right.custom_minimum_size = Vector2(UITheme.SIDE_SEAT_WIDTH, 0)
 	mid_row.add_child(seat_right)
 
 	# Hand: darker felt panel at the bottom. The whole panel accepts drops so
@@ -670,7 +632,7 @@ func _enemy_info_text(player_index: int) -> String:
 func _build_menu() -> void:
 	menu_layer = PanelContainer.new()
 	menu_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu_layer.add_theme_stylebox_override("panel", _panel_style(COL_FELT_DARK, 0))
+	menu_layer.add_theme_stylebox_override("panel", _panel_style(UITheme.COL_FELT_DARK, 0))
 	add_child(menu_layer)
 	var center := CenterContainer.new()
 	menu_layer.add_child(center)
@@ -683,7 +645,7 @@ func _build_menu() -> void:
 	title.text = "Machiavelli"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 54)
-	title.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
+	title.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	col.add_child(title)
 	var subtitle := Label.new()
 	subtitle.text = "the Italian rummy of rearranging the whole table"
@@ -752,7 +714,7 @@ func _build_settings_dialog() -> void:
 	tabs.add_child(_build_vanilla_settings())
 	tabs.add_child(_build_rogue_settings())
 	settings_save_note = Label.new()
-	settings_save_note.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
+	settings_save_note.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	content.add_child(settings_save_note)
 
 	# A Save button beside "Done" that persists every setting to disk; changes
@@ -894,7 +856,7 @@ func _build_enemy_ai_rows(enemy_name: String) -> VBoxContainer:
 	box.add_theme_constant_override("separation", 2)
 	var title := Label.new()
 	title.text = enemy_name
-	title.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
+	title.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	box.add_child(title)
 	var ov: Dictionary = rogue_ai_overrides[enemy_name]
 	box.add_child(_make_ai_slider_row("Skill", "Weak", "Strong", ov["strength"],
@@ -1076,7 +1038,7 @@ func _refresh_stock_top() -> void:
 	var top := gm.deck.peek()
 	if top == null or not top.is_glass():
 		return
-	var face := _make_glass_face(top, BACK_SIZE_TOP)
+	var face := _make_glass_face(top, UITheme.BACK_SIZE_TOP)
 	face.tooltip_text = "Top of the stock is glass — everyone can see " \
 		+ "the next card drawn."
 	stock_top_slot.add_child(face)
@@ -1084,8 +1046,8 @@ func _refresh_stock_top() -> void:
 func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	var is_current: bool = p == gm.current_player() and not gm.is_game_over
 	var chip := PanelContainer.new()
-	var sb := _panel_style(COL_CHIP_BG, 8)
-	sb.border_color = COL_CHIP_ACTIVE if is_current else Color(1, 1, 1, 0.15)
+	var sb := _panel_style(UITheme.COL_CHIP_BG, 8)
+	sb.border_color = UITheme.COL_CHIP_ACTIVE if is_current else Color(1, 1, 1, 0.15)
 	sb.set_border_width_all(2)
 	chip.add_theme_stylebox_override("panel", sb)
 	var row := HBoxContainer.new()
@@ -1097,7 +1059,7 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	var opened := "" if p.has_opened else " · not open"
 	lbl.text = "%s%s — %d cards%s" % [marker, p.display_name, p.hand.size(), opened]
 	if is_current:
-		lbl.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
+		lbl.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	row.add_child(lbl)
 	# "Info" button beside the name tag: the opponent's mechanic and AI brain.
 	var info_btn := Button.new()
@@ -1119,12 +1081,12 @@ func _make_card_backs(hand: Array[Card], horizontal: bool) -> BoxContainer:
 	var max_len: float
 	if horizontal:
 		box = HBoxContainer.new()
-		back_size = BACK_SIZE_TOP
-		max_len = BACKS_MAX_LEN_TOP
+		back_size = UITheme.BACK_SIZE_TOP
+		max_len = UITheme.BACKS_MAX_LEN_TOP
 	else:
 		box = VBoxContainer.new()
-		back_size = BACK_SIZE_SIDE
-		max_len = BACKS_MAX_LEN_SIDE
+		back_size = UITheme.BACK_SIZE_SIDE
+		max_len = UITheme.BACKS_MAX_LEN_SIDE
 	var card_len := back_size.x if horizontal else back_size.y
 	if hand.size() > 1:
 		var step := minf(card_len * 0.55, (max_len - card_len) / (hand.size() - 1))
@@ -1144,8 +1106,8 @@ func _make_card_back(back_size: Vector2) -> Panel:
 	var back := Panel.new()
 	back.custom_minimum_size = back_size
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = COL_CARD_BACK
-	sb.border_color = COL_CARD_BACK_EDGE
+	sb.bg_color = UITheme.COL_CARD_BACK
+	sb.border_color = UITheme.COL_CARD_BACK_EDGE
 	sb.set_border_width_all(2)
 	sb.set_corner_radius_all(6)
 	back.add_theme_stylebox_override("panel", sb)
@@ -1158,8 +1120,8 @@ func _make_glass_face(c: Card, face_size: Vector2) -> Panel:
 	var face := Panel.new()
 	face.custom_minimum_size = face_size
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(COL_CARD_BG, GLASS_BG_ALPHA)
-	sb.border_color = COL_GLASS_EDGE
+	sb.bg_color = Color(UITheme.COL_CARD_BG, UITheme.GLASS_BG_ALPHA)
+	sb.border_color = UITheme.COL_GLASS_EDGE
 	sb.set_border_width_all(2)
 	sb.set_corner_radius_all(6)
 	face.add_theme_stylebox_override("panel", sb)
@@ -1169,9 +1131,9 @@ func _make_glass_face(c: Card, face_size: Vector2) -> Panel:
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	lbl.add_theme_font_size_override("font_size", 15)
-	var col := COL_CARD_RED if RED_SUITS.has(c.suit) else COL_CARD_BLACK
+	var col := UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK
 	if c.is_joker:
-		col = COL_JOKER
+		col = UITheme.COL_JOKER
 	lbl.add_theme_color_override("font_color", col)
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	face.add_child(lbl)
@@ -1201,7 +1163,7 @@ func _make_meld_panel(meld: CardSet) -> PanelContainer:
 		and not gm.is_own_staged_meld(meld)
 	# Valid groups sit quietly on the felt; only broken ones shout.
 	var sb := _panel_style(Color(1, 1, 1, 0.045), 10)
-	sb.border_color = COL_MELD_BORDER if valid else COL_MELD_BAD
+	sb.border_color = UITheme.COL_MELD_BORDER if valid else UITheme.COL_MELD_BAD
 	sb.set_border_width_all(1 if valid else 2)
 	panel.add_theme_stylebox_override("panel", sb)
 	if not valid:
@@ -1222,7 +1184,7 @@ func _make_new_group_zone() -> Button:
 	var zone := Button.new()
 	zone.text = "+ New group"
 	zone.tooltip_text = "Drop or move selected cards here to start a brand-new group"
-	zone.custom_minimum_size = NEW_GROUP_SIZE
+	zone.custom_minimum_size = UITheme.NEW_GROUP_SIZE
 	zone.focus_mode = Control.FOCUS_NONE
 	var sb := _panel_style(Color(1, 1, 1, 0.04), 10)
 	sb.border_color = Color(1, 1, 1, 0.35)
@@ -1235,9 +1197,9 @@ func _make_new_group_zone() -> Button:
 	return zone
 
 func _refresh_hand() -> void:
-	var sb := _panel_style(COL_FELT_DARK, 10)
+	var sb := _panel_style(UITheme.COL_FELT_DARK, 10)
 	if _is_human_turn():
-		sb.border_color = COL_CHIP_ACTIVE
+		sb.border_color = UITheme.COL_CHIP_ACTIVE
 		sb.set_border_width_all(2)
 	hand_panel.add_theme_stylebox_override("panel", sb)
 	_clear_children(hand_box)
@@ -1302,18 +1264,18 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	b.toggle_mode = true
 	b.text = c.label()
 	b.button_pressed = selected.has(c)
-	b.custom_minimum_size = BOARD_CARD_SIZE if on_board else CARD_SIZE
+	b.custom_minimum_size = UITheme.BOARD_CARD_SIZE if on_board else UITheme.CARD_SIZE
 	b.disabled = not _card_is_interactive(meld)
 	if on_board and b.disabled and _is_human_turn():
 		b.tooltip_text = "Locked until you open — lay down a valid group " \
 			+ "from your own hand first."
 	b.add_theme_font_size_override("font_size",
-		BOARD_CARD_FONT_SIZE if on_board else CARD_FONT_SIZE)
+		UITheme.BOARD_CARD_FONT_SIZE if on_board else UITheme.CARD_FONT_SIZE)
 	b.focus_mode = Control.FOCUS_NONE
 
-	var font_col := COL_CARD_RED if RED_SUITS.has(c.suit) else COL_CARD_BLACK
+	var font_col := UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK
 	if c.is_joker:
-		font_col = COL_JOKER
+		font_col = UITheme.COL_JOKER
 		if not b.disabled:
 			if c.joker_rank > 0:
 				b.tooltip_text = ("Joker placed as %s — it stays that card until " \
@@ -1329,16 +1291,16 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 		b.add_theme_color_override(state, font_col)
 	b.add_theme_color_override("font_disabled_color", Color(font_col, 0.75))
 
-	var bg := COL_JOKER_BG if c.is_joker else COL_CARD_BG
-	var border := COL_JOKER if c.is_joker else COL_CARD_BORDER
+	var bg := UITheme.COL_JOKER_BG if c.is_joker else UITheme.COL_CARD_BG
+	var border := UITheme.COL_JOKER if c.is_joker else UITheme.COL_CARD_BORDER
 	var border_w := 1
 	if highlighted.has(c):
-		bg = COL_HILITE_BG
-		border = COL_HILITE
+		bg = UITheme.COL_HILITE_BG
+		border = UITheme.COL_HILITE
 		border_w = 3
 	if selected.has(c):
-		bg = COL_SELECT_BG
-		border = COL_SELECT
+		bg = UITheme.COL_SELECT_BG
+		border = UITheme.COL_SELECT
 		border_w = 3
 	# Suit filter (hand cards only): while a suit is hovered, cards of that suit
 	# get a bright outline and everything else is faded out below. Jokers match
@@ -1347,14 +1309,14 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	var filter_active := not on_board and hover_filter_suit != ""
 	var filter_match := filter_active and (c.is_joker or c.suit == hover_filter_suit)
 	if filter_match and not selected.has(c) and not highlighted.has(c):
-		border = COL_FILTER_EDGE
+		border = UITheme.COL_FILTER_EDGE
 		border_w = 3
 	# Glass cards render transparent — the felt shows through whatever state
 	# the card is in. The selection/highlight border stays so they still read.
 	if c.is_glass():
-		bg = Color(bg, GLASS_BG_ALPHA)
+		bg = Color(bg, UITheme.GLASS_BG_ALPHA)
 		if not selected.has(c) and not highlighted.has(c):
-			border = COL_GLASS_EDGE
+			border = UITheme.COL_GLASS_EDGE
 			border_w = 2
 		if not on_board:
 			b.tooltip_text = "Glass — see-through from the back: opponents " \
@@ -1363,13 +1325,13 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	var style := _card_style(bg, border, border_w)
 	for state in ["normal", "pressed", "disabled"]:
 		b.add_theme_stylebox_override(state, style)
-	b.add_theme_stylebox_override("hover", _card_style(bg, COL_SELECT, maxi(border_w, 2)))
+	b.add_theme_stylebox_override("hover", _card_style(bg, UITheme.COL_SELECT, maxi(border_w, 2)))
 	b.add_theme_stylebox_override("hover_pressed", _card_style(bg, border, border_w))
 
 	if c.is_sticky():
 		_add_slime_blob(b)
 	if filter_active and not filter_match:
-		b.modulate = Color(1, 1, 1, FILTER_DIM_ALPHA)
+		b.modulate = Color(1, 1, 1, UITheme.FILTER_DIM_ALPHA)
 
 	b.toggled.connect(_on_card_toggled.bind(c))
 	b.gui_input.connect(_on_card_gui_input.bind(c, meld))
@@ -1394,7 +1356,7 @@ func _make_suit_filter_button(suit: String) -> Button:
 	b.custom_minimum_size = Vector2(30, 26)
 	b.add_theme_font_size_override("font_size", 18)
 	b.tooltip_text = "Hover to highlight the %s in your hand and fade the other suits." % suit
-	var col := COL_CARD_RED if RED_SUITS.has(suit) else COL_CARD_BLACK
+	var col := UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(suit) else UITheme.COL_CARD_BLACK
 	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		b.add_theme_color_override(state, col)
 	b.mouse_entered.connect(_on_suit_filter_enter.bind(suit))
@@ -1432,8 +1394,8 @@ func _add_slime_blob(parent: Control) -> void:
 	blob.offset_top = MARGIN
 	blob.offset_bottom = MARGIN + BLOB
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = COL_SLIME
-	sb.border_color = COL_SLIME_EDGE
+	sb.bg_color = UITheme.COL_SLIME
+	sb.border_color = UITheme.COL_SLIME_EDGE
 	sb.set_border_width_all(1)
 	sb.set_corner_radius_all(int(BLOB / 2.0))
 	blob.add_theme_stylebox_override("panel", sb)
@@ -1549,12 +1511,12 @@ func _make_drag_preview(cards: Array[Card]) -> Control:
 	row.add_theme_constant_override("separation", 4)
 	for c in Rules.display_order(cards):
 		var chip := PanelContainer.new()
-		chip.add_theme_stylebox_override("panel", _card_style(COL_SELECT_BG, COL_SELECT, 2))
+		chip.add_theme_stylebox_override("panel", _card_style(UITheme.COL_SELECT_BG, UITheme.COL_SELECT, 2))
 		var lbl := Label.new()
 		lbl.text = c.label()
-		lbl.add_theme_font_size_override("font_size", CARD_FONT_SIZE)
+		lbl.add_theme_font_size_override("font_size", UITheme.CARD_FONT_SIZE)
 		lbl.add_theme_color_override("font_color",
-			COL_CARD_RED if RED_SUITS.has(c.suit) else COL_CARD_BLACK)
+			UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK)
 		chip.add_child(lbl)
 		row.add_child(chip)
 	row.modulate = Color(1, 1, 1, 0.9)
@@ -1608,7 +1570,7 @@ func _drop_on_hand_card(at_position: Vector2, data: Variant, target: Card) -> vo
 	var idx := gm.players[0].hand.find(target)
 	if idx == -1:
 		return
-	if at_position.x > CARD_SIZE.x / 2.0:
+	if at_position.x > UITheme.CARD_SIZE.x / 2.0:
 		idx += 1
 	_reorder_hand(cards, idx)
 
@@ -1959,8 +1921,8 @@ func _capture_card_positions(enemy: PlayerState, cards: Array[Card]) -> Dictiona
 func _enemy_hand_origin(enemy: PlayerState) -> Vector2:
 	var backs: Control = opponent_backs.get(enemy.player_id)
 	if backs != null and is_instance_valid(backs):
-		return backs.get_global_rect().get_center() - BOARD_CARD_SIZE / 2.0
-	return get_global_rect().get_center() - BOARD_CARD_SIZE / 2.0
+		return backs.get_global_rect().get_center() - UITheme.BOARD_CARD_SIZE / 2.0
+	return get_global_rect().get_center() - UITheme.BOARD_CARD_SIZE / 2.0
 
 ## Fly card faces from `sources` (Card -> screen position) to wherever the
 ## cards sit after the last refresh. Each destination button is hidden while
@@ -1994,17 +1956,17 @@ func _animate_cards(cards: Array[Card], sources: Dictionary) -> void:
 ## board card it lands on and styled like the gold highlight it will carry.
 func _make_card_face(c: Card) -> Control:
 	var face := PanelContainer.new()
-	face.custom_minimum_size = BOARD_CARD_SIZE
-	face.size = BOARD_CARD_SIZE
+	face.custom_minimum_size = UITheme.BOARD_CARD_SIZE
+	face.size = UITheme.BOARD_CARD_SIZE
 	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_theme_stylebox_override("panel", _card_style(COL_HILITE_BG, COL_HILITE, 3))
+	face.add_theme_stylebox_override("panel", _card_style(UITheme.COL_HILITE_BG, UITheme.COL_HILITE, 3))
 	var lbl := Label.new()
 	lbl.text = c.label()
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	lbl.add_theme_font_size_override("font_size", BOARD_CARD_FONT_SIZE)
+	lbl.add_theme_font_size_override("font_size", UITheme.BOARD_CARD_FONT_SIZE)
 	lbl.add_theme_color_override("font_color",
-		COL_CARD_RED if RED_SUITS.has(c.suit) else COL_CARD_BLACK)
+		UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK)
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	face.add_child(lbl)
 	return face

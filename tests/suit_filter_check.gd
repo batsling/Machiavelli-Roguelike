@@ -76,7 +76,7 @@ func _init() -> void:
 			ok = false
 		if matches:
 			var sb: StyleBoxFlat = node.get_theme_stylebox("normal")
-			if sb.border_color != ui.COL_FILTER_EDGE:
+			if sb.border_color != UITheme.COL_FILTER_EDGE:
 				printerr("matching card %s missing filter outline" % c.label())
 				ok = false
 
