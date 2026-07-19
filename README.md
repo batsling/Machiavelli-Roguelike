@@ -181,22 +181,31 @@ live as you make them; Save is only what makes them stick between sessions.
 
 ## Layout
 
-- `scripts/card.gd` — `Card` resource: suit, rank + roguelike effect flags (unused by
+The scripts are grouped by architectural layer: `scripts/engine/` (rules and
+game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
+(everything on screen). The engine and AI layers know nothing about the UI.
+
+### Engine — `scripts/engine/`
+
+- `scripts/engine/card.gd` — `Card` resource: suit, rank + roguelike effect flags (unused by
   the vanilla engine)
-- `scripts/rules.gd` — `Rules`: static set/run/meld validation (joker-aware),
+- `scripts/engine/rules.gd` — `Rules`: static set/run/meld validation (joker-aware),
   joker value assignment (honoring per-joker stand-in preferences), the list of
   alternative stand-ins a joker could take, display ordering
-- `scripts/deck.gd` — `Deck`: double deck (optional jokers), seeded Fisher-Yates
+- `scripts/engine/deck.gd` — `Deck`: double deck (optional jokers), seeded Fisher-Yates
   shuffle, stock
-- `scripts/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
+- `scripts/engine/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
   future Trigger/Sticky effects)
-- `scripts/board.gd` — `Board`: the melds on the table, with snapshot/restore so a
+- `scripts/engine/board.gd` — `Board`: the melds on the table, with snapshot/restore so a
   whole turn's rearrangement can be rolled back
-- `scripts/player_state.gd` — `PlayerState`: hand (+ roguelike health/gold, unused)
-- `scripts/game_manager.gd` — `GameManager`: deal, staged turns, per-move undo,
+- `scripts/engine/player_state.gd` — `PlayerState`: hand (+ roguelike health/gold, unused)
+- `scripts/engine/game_manager.gd` — `GameManager`: deal, staged turns, per-move undo,
   the opening rule, commit validation, draw/pass, win detection; emits signals
   the UI listens to
-- `scripts/greedy_ai.gd` — `GreedyAI`: baseline opponent — plays complete melds from
+
+### AI — `scripts/ai/`
+
+- `scripts/ai/greedy_ai.gd` — `GreedyAI`: baseline opponent — plays complete melds from
   hand (with joker fallbacks), single- and two-card lay-offs, and simple table
   rearrangements (borrows one card from a group, when the leftover group stays
   valid, to complete a new meld with hand cards); picks safe joker stand-ins at
@@ -216,38 +225,53 @@ live as you make them; Save is only what makes them stick between sessions.
   hands are dead ends, visibly held lay-offs are certain feeds, joker
   stand-ins an opponent holds the swap card for are avoided, and a glass next
   draw is worth holding a partner for
-- `scripts/ai_profile.gd` — `AIProfile`: the four personality dials GreedyAI
+- `scripts/ai/ai_profile.gd` — `AIProfile`: the four personality dials GreedyAI
   consults — skill (search depth + the smart brain), style (opening threshold,
   key-card holding), attention (miss chance, capped at 30% and only on
   table-reading plays), planning (how many board relocations the deep planner
   may chain: 1 / 3 / unlimited); unset = strong + quick + attentive + no deep
   planning, and fully deterministic
-- `scripts/enemy.gd` — `Enemy`: a designed roguelike opponent — a name, an AI
+- `scripts/ai/enemy.gd` — `Enemy`: a designed roguelike opponent — a name, an AI
   profile, an `on_combat_start` hook to plant mechanics, a `mechanic_intro`
   blurb for the game log, and a `plan_strategy_move` hook GreedyAI consults
   once ordinary play is spent; plus the roster the rogue ladder picks from at
   random (the Cute Slime and the Sadistic Billionaire)
-- `scripts/cute_slime.gd` — `CuteSlime`: the first designed enemy (strong,
+- `scripts/ai/cute_slime.gd` — `CuteSlime`: the first designed enemy (strong,
   oblivious, quick). At combat start she slimes a random 13 hearts, 13 diamonds
   and all jokers (the Sticky effect); on her turns she legally combines slimed
   cards — oozing them next to the most valuable slimed card the player could
   still lift (weighting by versatility: jokers, then the flexible 4-8s), as much
   as helps while keeping every group valid with no leftover cards; she alone
   moves slimed cards freely
-- `scripts/sadistic_billionaire.gd` — `SadisticBillionaire`: the second designed
+- `scripts/ai/sadistic_billionaire.gd` — `SadisticBillionaire`: the second designed
   enemy (strong, conservative, attentive). At combat start he turns every
   joker and a random three quarters of the other cards — stock and hands —
   to glass (the Clear effect): see-through from the back, visible in any
   player's hand and on top of the stock, rendered transparent. The information cuts both
   ways — the player reads his hand off his card backs, and the smart brain
   counts every glass card in its planning
-- `scripts/main_ui.gd` + `scenes/main.tscn` — main menu plus the drag-and-drop
-  (or click-to-play) UI, built in code: styled cards, felt table, per-group
-  validity outlines, opponent seats with face-down card backs (glass cards
-  show their face right in the row, and a glass stock top is shown beside the
-  stock count), flying-card enemy-turn animations with round-long gold
-  highlights, the right-click joker menu, Balatro-style hand ordering,
-  return-to-hand for cards staged this turn, the settings dialog
+
+### UI — `scripts/ui/` + `scenes/`
+
+- `scripts/ui/main_ui.gd` + `scenes/main.tscn` — the table controller: owns the
+  `GameManager`, builds the felt/hand/seat layout, drives selection, drag-and-drop
+  and click-to-play, the opening-rule locking, enemy-turn animation, and the
+  right-click joker menu. Delegates look and self-contained regions to the
+  helpers below.
+- `scripts/ui/ui_theme.gd` — `UITheme`: shared visual constants (the felt/cards
+  palette, card and seat sizes, the suit→colour map). One source of truth for
+  how the game looks.
+- `scripts/ui/card_renderer.gd` — `CardRenderer`: stateless builders for the
+  visual atoms — card/panel styleboxes, card backs, glass faces, the slime
+  splotch, the drag preview and the flying-card animation proxy.
+- `scripts/ui/game_settings.gd` — `GameSettings`: every tunable rule for both
+  modes plus its save/load and the per-enemy AI overrides; the model the
+  settings dialog edits and `main_ui` reads at new-game.
+- `scripts/ui/menu_screen.gd` + `scenes/ui/menu_screen.tscn` — `MenuScreen`: the
+  title menu, emitting an intent signal per button.
+- `scripts/ui/settings_dialog.gd` + `scenes/ui/settings_dialog.tscn` —
+  `SettingsDialog`: the two-tab (Vanilla / Roguelike) settings pop-up bound to
+  the `GameSettings` model.
 - `tests/smoke_test.gd` — headless AI-vs-AI smoke test plus unit tests for the
   joker rules, the joker swap, joker stand-in choice, joker locking, the AI's
   safe stand-in picking, the hand cap, the slime's sticky clusters (cluster
@@ -295,7 +319,7 @@ a starting combo and measure how much it shortens games.
 ## Roguelike layer
 
 Two designed enemies are in; the rogue ladder picks one at random each round
-(enemies live in `scripts/enemy.gd` + `cute_slime.gd` +
+(enemies live in `scripts/ai/enemy.gd` + `cute_slime.gd` +
 `sadistic_billionaire.gd`).
 
 **The Cute Slime** brings the **Sticky** effect — slimed cards (a green
