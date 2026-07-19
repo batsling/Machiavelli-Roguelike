@@ -139,6 +139,12 @@ const COL_SLIME := Color(0.44, 0.82, 0.30)      # the slime splotch on a slimed 
 const COL_SLIME_EDGE := Color(0.20, 0.52, 0.16)
 const COL_GLASS_EDGE := Color(0.62, 0.84, 0.92)  # icy border of a glass card
 const GLASS_BG_ALPHA := 0.3   # glass cards let the felt show through
+const COL_FILTER_EDGE := Color(0.15, 0.78, 0.80)  # outline on the suit being hovered
+const FILTER_DIM_ALPHA := 0.28   # the other suits fade this low while a suit is hovered
+
+## Suit order for the "Sort: suit" button: reds together, then blacks, so runs
+## of the same colour sit side by side. Jokers are handled separately (last).
+const SUIT_ORDER := {"hearts": 0, "diamonds": 1, "clubs": 2, "spades": 3}
 
 var gm: GameManager
 var game_mode := Mode.SANDBOX
@@ -150,6 +156,9 @@ var current_enemy: Enemy = null
 var rogue_round_won := false
 var selected: Array[Card] = []
 var highlighted := {}  # Card -> true; every card the enemies touched last round
+# While a suit-filter button is hovered this holds that suit; the hand redraws
+# with those cards outlined and every other suit faded. "" = no filter active.
+var hover_filter_suit := ""
 var ai_running := false
 # Bumped on every new game so a suspended AI coroutine from the previous game
 # notices on resume and bails out instead of acting on the fresh state.
@@ -481,21 +490,47 @@ func _build_layout() -> void:
 	hand_col.add_child(hand_top)
 	hand_title = Label.new()
 	hand_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hand_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hand_title.add_theme_font_size_override("font_size", 15)
 	hand_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 	hand_top.add_child(hand_title)
-	var sort_rank_btn := Button.new()
-	sort_rank_btn.text = "Sort: rank"
-	sort_rank_btn.tooltip_text = "Sort your hand by rank (jokers last)"
-	sort_rank_btn.focus_mode = Control.FOCUS_NONE
-	sort_rank_btn.pressed.connect(_on_sort_rank_pressed)
-	hand_top.add_child(sort_rank_btn)
+
+	# Right-hand controls, stacked: a row of suit filters sits directly above the
+	# sort buttons. Hovering a suit outlines those cards in your hand and fades
+	# the rest, so you can pick a colour out of a crowded hand at a glance.
+	var controls := VBoxContainer.new()
+	controls.add_theme_constant_override("separation", 4)
+	hand_top.add_child(controls)
+
+	var filter_row := HBoxContainer.new()
+	filter_row.add_theme_constant_override("separation", 4)
+	filter_row.alignment = BoxContainer.ALIGNMENT_END
+	controls.add_child(filter_row)
+	var filter_hint := Label.new()
+	filter_hint.text = "Highlight suit:"
+	filter_hint.add_theme_font_size_override("font_size", 12)
+	filter_hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+	filter_hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	filter_row.add_child(filter_hint)
+	for suit in ["hearts", "diamonds", "clubs", "spades"]:
+		filter_row.add_child(_make_suit_filter_button(suit))
+
+	var sort_row := HBoxContainer.new()
+	sort_row.add_theme_constant_override("separation", 4)
+	sort_row.alignment = BoxContainer.ALIGNMENT_END
+	controls.add_child(sort_row)
 	var sort_suit_btn := Button.new()
-	sort_suit_btn.text = "Sort: suit"
-	sort_suit_btn.tooltip_text = "Sort your hand by suit, then rank (jokers last)"
+	sort_suit_btn.text = "Sort: straights"
+	sort_suit_btn.tooltip_text = "Group your hand into runs by suit, reds then blacks (jokers last)"
 	sort_suit_btn.focus_mode = Control.FOCUS_NONE
 	sort_suit_btn.pressed.connect(_on_sort_suit_pressed)
-	hand_top.add_child(sort_suit_btn)
+	sort_row.add_child(sort_suit_btn)
+	var sort_rank_btn := Button.new()
+	sort_rank_btn.text = "Sort: sets"
+	sort_rank_btn.tooltip_text = "Group your hand by rank so matching sets sit together (jokers last)"
+	sort_rank_btn.focus_mode = Control.FOCUS_NONE
+	sort_rank_btn.pressed.connect(_on_sort_rank_pressed)
+	sort_row.add_child(sort_rank_btn)
 	hand_box = HFlowContainer.new()
 	hand_box.add_theme_constant_override("h_separation", 4)
 	hand_box.add_theme_constant_override("v_separation", 4)
@@ -1286,6 +1321,15 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 		bg = COL_SELECT_BG
 		border = COL_SELECT
 		border_w = 3
+	# Suit filter (hand cards only): while a suit is hovered, cards of that suit
+	# get a bright outline and everything else is faded out below. Jokers match
+	# every suit since they can stand in for any of them. Selection/enemy-touch
+	# borders keep priority so those states still read.
+	var filter_active := not on_board and hover_filter_suit != ""
+	var filter_match := filter_active and (c.is_joker or c.suit == hover_filter_suit)
+	if filter_match and not selected.has(c) and not highlighted.has(c):
+		border = COL_FILTER_EDGE
+		border_w = 3
 	# Glass cards render transparent — the felt shows through whatever state
 	# the card is in. The selection/highlight border stays so they still read.
 	if c.is_glass():
@@ -1305,6 +1349,8 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 
 	if c.is_sticky():
 		_add_slime_blob(b)
+	if filter_active and not filter_match:
+		b.modulate = Color(1, 1, 1, FILTER_DIM_ALPHA)
 
 	b.toggled.connect(_on_card_toggled.bind(c))
 	b.gui_input.connect(_on_card_gui_input.bind(c, meld))
@@ -1318,6 +1364,37 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 			_can_drop_on_hand_card.bind(c), _drop_on_hand_card.bind(c))
 	card_nodes[c] = b
 	return b
+
+## One suit symbol in the filter row. It does nothing on click — hovering is the
+## whole interaction: entering sets hover_filter_suit and redraws the hand so
+## this suit is outlined and the others fade; leaving clears it again.
+func _make_suit_filter_button(suit: String) -> Button:
+	var b := Button.new()
+	b.text = Card.SUIT_SYMBOLS.get(suit, suit)
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(30, 26)
+	b.add_theme_font_size_override("font_size", 18)
+	b.tooltip_text = "Hover to highlight the %s in your hand and fade the other suits." % suit
+	var col := COL_CARD_RED if RED_SUITS.has(suit) else COL_CARD_BLACK
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		b.add_theme_color_override(state, col)
+	b.mouse_entered.connect(_on_suit_filter_enter.bind(suit))
+	b.mouse_exited.connect(_on_suit_filter_exit.bind(suit))
+	return b
+
+func _on_suit_filter_enter(suit: String) -> void:
+	if hover_filter_suit == suit:
+		return
+	hover_filter_suit = suit
+	_refresh_hand()
+
+func _on_suit_filter_exit(suit: String) -> void:
+	# Guarded so sliding straight from one suit onto the next (exit fires after
+	# the new enter) doesn't wipe the filter the new button just set.
+	if hover_filter_suit != suit:
+		return
+	hover_filter_suit = ""
+	_refresh_hand()
 
 ## A little green slime splotch pinned to the top-right corner of a card, the
 ## visible mark of the Cute Slime's Sticky effect. Non-interactive so it never
@@ -1683,8 +1760,10 @@ func _on_sort_suit_pressed() -> void:
 	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
 		if a.is_joker != b.is_joker:
 			return b.is_joker
-		if a.suit != b.suit:
-			return a.suit < b.suit
+		var order_a: int = SUIT_ORDER.get(a.suit, 99)
+		var order_b: int = SUIT_ORDER.get(b.suit, 99)
+		if order_a != order_b:
+			return order_a < order_b
 		return a.rank < b.rank)
 	_refresh()
 

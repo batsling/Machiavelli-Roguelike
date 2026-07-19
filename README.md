@@ -92,8 +92,14 @@ card, the felt, your hand — clears the current selection.
 
 Your hand works like Balatro's: it keeps whatever order you give it. Drag a card
 onto another hand card to slot it there (left half = before, right half = after),
-drag onto empty hand space to send it to the end, or use the **Sort: rank** /
-**Sort: suit** buttons.
+drag onto empty hand space to send it to the end, or use the **Sort: straights** /
+**Sort: sets** buttons — *straights* groups your cards into suit runs with reds
+before blacks, *sets* groups them by rank so matching cards sit together.
+
+Above those buttons sits a row of suit symbols (♥ ♦ ♣ ♠). Hover any one to
+outline the cards of that suit in your hand and fade the rest, so you can pick a
+colour out of a crowded hand at a glance (jokers count as every suit). Move the
+mouse off and the hand returns to normal.
 
 Enemy turns play out move by move on screen: each card an enemy plays flies from
 where it was (their hidden hand or its previous spot on the table) to where it
