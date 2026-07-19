@@ -90,7 +90,6 @@ enum Mode { SANDBOX, ROGUE }
 
 const AI_THINK_DELAY := 0.6
 const AI_MOVE_DELAY := 0.5
-const AI_ANIM_TIME := 0.45
 const DRAG_TYPE := "machiavelli_cards"
 
 ## The UI seats at most this many players: you + up to 3 opponents.
@@ -157,6 +156,7 @@ var settings_dialog: SettingsDialog
 var enemy_info_dialog: AcceptDialog
 var enemy_info_body: RichTextLabel
 var anim_layer: Control
+var animator: EnemyMoveAnimator
 
 func _ready() -> void:
 	gm = GameManager.new()
@@ -461,6 +461,9 @@ func _build_layout() -> void:
 	anim_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	anim_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(anim_layer)
+	animator = EnemyMoveAnimator.new()
+	add_child(animator)
+	animator.setup(anim_layer, self)
 
 	# The menu sits above everything (including in-flight card animations).
 	_build_menu()
@@ -1338,13 +1341,13 @@ func _run_ai_turns() -> void:
 			if move.is_empty():
 				break
 			var moved: Array[Card] = move["cards"]
-			var sources := _capture_card_positions(enemy, moved)
+			var sources := animator.capture_positions(enemy, moved, card_nodes, opponent_backs)
 			GreedyAI.apply_move(gm, move, profile)
 			for c in moved:
 				highlighted[c] = true
 			_log("%s %s." % [enemy.display_name, move["text"]])
 			_refresh()
-			await _animate_cards(moved, sources)
+			await animator.animate(moved, sources, card_nodes)
 			if gen != game_generation:
 				return
 			await get_tree().create_timer(AI_MOVE_DELAY).timeout
@@ -1366,55 +1369,6 @@ func _run_ai_turns() -> void:
 		_set_status("Your turn. Drag cards onto a group or empty felt — "
 			+ "or click to select, then use \"+ New group\".")
 	_refresh()
-
-# --- Enemy move animation --------------------------------------------------------
-
-## Where each card is on screen right now: face-up cards report their button's
-## position, cards still hidden in an enemy hand report the middle of that
-## enemy's card backs. Must be called before the move is applied/refreshed.
-func _capture_card_positions(enemy: PlayerState, cards: Array[Card]) -> Dictionary:
-	var out := {}
-	for c in cards:
-		var node: Control = card_nodes.get(c)
-		if node != null and is_instance_valid(node):
-			out[c] = node.global_position
-		else:
-			out[c] = _enemy_hand_origin(enemy)
-	return out
-
-func _enemy_hand_origin(enemy: PlayerState) -> Vector2:
-	var backs: Control = opponent_backs.get(enemy.player_id)
-	if backs != null and is_instance_valid(backs):
-		return backs.get_global_rect().get_center() - UITheme.BOARD_CARD_SIZE / 2.0
-	return get_global_rect().get_center() - UITheme.BOARD_CARD_SIZE / 2.0
-
-## Fly card faces from `sources` (Card -> screen position) to wherever the
-## cards sit after the last refresh. Each destination button is hidden while
-## its card is in flight, then revealed when the flight lands.
-func _animate_cards(cards: Array[Card], sources: Dictionary) -> void:
-	# The freshly rebuilt containers need a frame or two to lay out before
-	# destination positions are meaningful.
-	await get_tree().process_frame
-	await get_tree().process_frame
-	var last_tween: Tween = null
-	for c in cards:
-		var dest: Control = card_nodes.get(c)
-		if dest == null or not is_instance_valid(dest) or not sources.has(c):
-			continue
-		var proxy := CardRenderer.make_card_face(c)
-		anim_layer.add_child(proxy)
-		proxy.global_position = sources[c]
-		dest.modulate.a = 0.0
-		var tw := proxy.create_tween()
-		tw.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
-		tw.tween_property(proxy, "global_position", dest.global_position, AI_ANIM_TIME)
-		tw.tween_callback(func() -> void:
-			if is_instance_valid(dest):
-				dest.modulate.a = 1.0
-			proxy.queue_free())
-		last_tween = tw
-	if last_tween != null:
-		await last_tween.finished
 
 # --- Misc ----------------------------------------------------------------------
 
