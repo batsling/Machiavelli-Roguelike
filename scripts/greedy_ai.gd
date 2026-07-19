@@ -58,6 +58,14 @@ const JOKER_STEAL_BONUS := 30.0  # pulling a joker off another meld into ours
 const W_FEED := 2.0          # per unseen copy an open end hands to opponents
 const W_BLOCK := 6.0         # holding a card still useful in hand beats dumping it
 
+# Deep-rearrangement planner (the planning dial) safety caps. The search is
+# bounded by the profile's plan_budget (board movements it may chain), and on
+# top of that by these so even an "unlimited" expert planner stays fast: it
+# never recurses deeper than MAX_PLAN_DEPTH relocations or explores more than
+# MAX_PLAN_NODES repair states per candidate target.
+const MAX_PLAN_DEPTH := 12
+const MAX_PLAN_NODES := 600
+
 static func take_turn(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> void:
 	while true:
@@ -176,6 +184,14 @@ static func _plan_normal_move(gm: GameManager, profile: AIProfile = null) -> Dic
 				# therefore plays at least two hand cards.
 				return {"cards": combo, "dest": null,
 					"text": "takes %s from the table to build %s" % [t.label(), _cards_text(combo)]}
+	# 5. Deep rearrangement (the planning dial): chain board relocations to open
+	# up a hand play the borrow families above can't reach. Only a profiled AI
+	# with a planning budget attempts it; the no-profile default keeps its old,
+	# fully reproducible behavior.
+	if profile != null and profile.can_rearrange() and gm.current_player_is_open():
+		var deep := _plan_rearrange_move(gm, profile)
+		if not deep.is_empty():
+			return deep
 	return {}
 
 # --- Smart brain (top skill tier) ------------------------------------------
@@ -287,6 +303,12 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 					candidates.append({"cards": combo, "dest": null, "borrowed": [t1, t2],
 						"text": "reworks the table, taking %s and %s to build %s"
 							% [t1.label(), t2.label(), _cards_text(combo)]})
+		# 6. Deep rearrangement (the planning dial): chain board relocations to
+		# lay down a hand play no single/double borrow can reach, up to the
+		# profile's planning budget.
+		var deep := _plan_rearrange_move(gm, profile)
+		if not deep.is_empty():
+			candidates.append(deep)
 	var best: Dictionary = {}
 	var best_score := 0.0  # hold and draw rather than play a net-negative move
 	for cand in candidates:
@@ -303,6 +325,15 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 ## of that and simply maximizes cards played toward the finish.
 static func _score_move(gm: GameManager, move: Dictionary, hand: Array[Card],
 		race: bool) -> float:
+	# A deep-rearrangement composite is valued purely on the hand progress it
+	# lets through (and going out): it already pays its way in board movements,
+	# so it isn't taxed for open ends the way a plain lay-off is.
+	if move.has("rearrange"):
+		var played: Array = move["hand_played"]
+		var deep_score := played.size() * W_PROGRESS
+		if hand.size() - played.size() == 0:
+			deep_score += GO_OUT_BONUS
+		return deep_score
 	var cards: Array[Card] = move["cards"]
 	var dest: CardSet = move["dest"]
 	var borrowed: Array = move.get("borrowed", [])
@@ -332,6 +363,293 @@ static func _score_move(gm: GameManager, move: Dictionary, hand: Array[Card],
 			if _worth_holding(gm, c, rest):
 				score -= W_BLOCK
 	return score
+
+# --- Deep rearrangement planner (the planning dial) ------------------------
+# Beyond the borrow-1/borrow-2 families, an AI with a planning budget can chain
+# board-card relocations to open up a hand play: pull the table cards a new meld
+# needs into it alongside its hand cards, then repair every meld left broken by
+# relocating the offending cards to a valid home — recursively, spending at most
+# `budget` board movements in total. The result is one composite move (a
+# "rearrange" entry) that apply_move realizes as a single staged turn. The
+# short-sighted tier gets budget 1, the middle tier PLAN_BUDGET_MID, the expert
+# planner effectively unlimited (bounded only by MAX_PLAN_DEPTH/MAX_PLAN_NODES).
+
+## The best deep-rearrangement play within the profile's planning budget, or {}
+## for none. Enumerates target melds (a set or run built from >=1 hand card plus
+## table cards it must pull free), and for each searches for a way to keep every
+## donor meld valid within the leftover budget. Returns the candidate that plays
+## the most hand cards (fewest board movements breaking ties). Every candidate
+## pulls at least one table card, so it is a genuine rearrangement, never a plain
+## hand meld the ordinary search already covers.
+static func _plan_rearrange_move(gm: GameManager, profile: AIProfile) -> Dictionary:
+	if profile == null:
+		return {}
+	var budget := mini(profile.plan_budget(), MAX_PLAN_DEPTH)
+	if budget < 1:
+		return {}
+	var play_cap := -1
+	if gm.max_plays_per_turn > 0:
+		play_cap = gm.max_plays_per_turn - gm.cards_played_this_turn()
+		if play_cap <= 0:
+			return {}
+	var hand := gm.current_player().hand
+	var immovable := _immovable_cards(gm)
+	var best: Dictionary = {}
+	for target: Array in _rearrange_targets(gm, hand, immovable):
+		var t_cards: Array[Card] = target
+		var played := _hand_subset(hand, t_cards)
+		var pulls: Array[Card] = []
+		for c in t_cards:
+			if not hand.has(c):
+				pulls.append(c)
+		if played.is_empty() or pulls.is_empty():
+			continue  # need a hand card and a genuine table pull
+		if play_cap >= 0 and played.size() > play_cap:
+			continue
+		if pulls.size() > budget:
+			continue
+		# Board model minus the pulled cards; the target itself is valid, so only
+		# the donor melds it thinned might need repairing.
+		var melds: Array = []
+		for m in gm.board.melds:
+			var arr: Array[Card] = m.cards.duplicate()
+			for p in pulls:
+				arr.erase(p)
+			if not arr.is_empty():
+				melds.append(arr)
+		var nodes := [0]
+		var repairs: Variant = _repair_board(melds, budget - pulls.size(), immovable, nodes)
+		if repairs == null:
+			continue
+		var final_melds: Array = []
+		for arr: Array in melds:
+			if not arr.is_empty():
+				final_melds.append(arr)
+		final_melds.append(t_cards.duplicate())
+		var moved: Array[Card] = []
+		for c in t_cards:
+			if not hand.has(c):
+				moved.append(c)  # pulled table card
+		for op: Dictionary in repairs:
+			if not moved.has(op["card"]):
+				moved.append(op["card"])
+		for c in played:
+			moved.append(c)  # hand cards fly in too
+		var cost: int = pulls.size() + (repairs as Array).size()
+		if best.is_empty() or played.size() > best["hand_played"].size() \
+				or (played.size() == best["hand_played"].size() and cost < best["cost"]):
+			best = {
+				"cards": moved,
+				"dest": null,
+				"rearrange": final_melds,
+				"hand_played": played,
+				"cost": cost,
+				"text": "reworks the table to lay down %s" % _cards_text(t_cards),
+			}
+	return best
+
+## Table cards the current player must not lift on their own: those slimed into
+## a cluster with a neighbour (lifting one drags the whole cluster). A player
+## that ignores_sticky (the Cute Slime) has none. The deep planner simply leaves
+## these where they are, planning only moves it can actually make.
+static func _immovable_cards(gm: GameManager) -> Dictionary:
+	var out := {}
+	if gm.current_player().ignores_sticky:
+		return out
+	for m in gm.board.melds:
+		for c in m.cards:
+			if m.sticky_cluster(c).size() > 1:
+				out[c] = true
+	return out
+
+## Every target meld the deep planner might build: a set (one rank) or a run
+## (one suit) made of at least one hand card plus table cards it pulls free.
+## Jokers are left out — they are better kept, and the ordinary search already
+## handles joker melds.
+static func _rearrange_targets(gm: GameManager, hand: Array[Card],
+		immovable: Dictionary) -> Array:
+	var table: Array[Card] = []
+	for m in gm.board.melds:
+		for c in m.cards:
+			if not c.is_joker and not immovable.has(c):
+				table.append(c)
+	var out: Array = []
+	# Set targets, one per rank the hand holds: all the hand's cards of that rank
+	# (distinct suits) plus table cards of the missing suits, up to a valid set.
+	var hand_ranks := {}
+	for h in hand:
+		if not h.is_joker:
+			hand_ranks[h.rank] = true
+	for rank: int in hand_ranks:
+		var chosen: Array[Card] = []
+		var suits := {}
+		for h in hand:
+			if not h.is_joker and h.rank == rank and not suits.has(h.suit):
+				chosen.append(h)
+				suits[h.suit] = true
+		for t in table:
+			if chosen.size() >= Rules.MIN_MELD_SIZE:
+				break
+			if t.rank == rank and not suits.has(t.suit):
+				chosen.append(t)
+				suits[t.suit] = true
+		if chosen.size() >= Rules.MIN_MELD_SIZE and Rules.is_valid_meld(chosen):
+			out.append(chosen)
+	# Run targets: every maximal consecutive chain in a suit that includes a hand
+	# card, ace low and ace high considered separately.
+	for suit in Deck.SUITS:
+		out.append_array(_run_targets(hand, table, suit))
+	return out
+
+## Maximal run targets in one suit: for the ace-low and ace-high readings, chain
+## consecutive ranks (hand cards preferred as the source for a rank) and emit
+## every maximal chain of 3+ that contains at least one hand card.
+static func _run_targets(hand: Array[Card], table: Array[Card], suit: String) -> Array:
+	var out: Array = []
+	for ace_high: bool in [false, true]:
+		var src := {}
+		for c in hand:
+			if not c.is_joker and c.suit == suit:
+				_add_run_src(src, 14 if ace_high and c.rank == 1 else c.rank, c, true)
+		for c in table:
+			if c.suit == suit:
+				_add_run_src(src, 14 if ace_high and c.rank == 1 else c.rank, c, false)
+		var ranks := src.keys()
+		ranks.sort()
+		var chain: Array = []
+		var prev := -99
+		for r: int in ranks:
+			if r != prev + 1:
+				_emit_run(out, src, chain)
+				chain = []
+			chain.append(r)
+			prev = r
+		_emit_run(out, src, chain)
+	return out
+
+static func _add_run_src(src: Dictionary, rank: int, card: Card, from_hand: bool) -> void:
+	# Prefer a hand card as a rank's source, so the target plays as many hand
+	# cards as it can.
+	if not src.has(rank) or (from_hand and not src[rank]["from_hand"]):
+		src[rank] = {"card": card, "from_hand": from_hand}
+
+static func _emit_run(out: Array, src: Dictionary, chain: Array) -> void:
+	if chain.size() < Rules.MIN_MELD_SIZE:
+		return
+	var cards: Array[Card] = []
+	var has_hand := false
+	for r: int in chain:
+		cards.append(src[r]["card"])
+		if src[r]["from_hand"]:
+			has_hand = true
+	if has_hand and Rules.is_valid_meld(cards):
+		out.append(cards)
+
+## Depth-first repair of a board model (an Array of Array[Card] melds, jokers
+## and pulled cards already removed): relocate one card at a time — out of a
+## broken meld to a group it fits, or into a broken meld from a donor that stays
+## valid — until every meld is valid, spending at most `budget` moves. Returns
+## the list of relocation ops ([{card}], most-recent last) with the model left in
+## the solved state, or null if no repair fits the budget. `nodes` caps total
+## work so an expert planner never stalls the turn.
+static func _repair_board(melds: Array, budget: int, immovable: Dictionary,
+		nodes: Array) -> Variant:
+	nodes[0] += 1
+	if nodes[0] > MAX_PLAN_NODES:
+		return null
+	var bad := -1
+	for i in melds.size():
+		if not melds[i].is_empty() and not Rules.is_valid_meld(melds[i]):
+			bad = i
+			break
+	if bad == -1:
+		return []  # every meld valid
+	if budget <= 0:
+		return null
+	var m: Array = melds[bad]
+	# Option A: relocate a card out of the broken meld to a group it completes.
+	for c: Card in m.duplicate():
+		if immovable.has(c):
+			continue
+		for j in melds.size():
+			if j == bad or melds[j].is_empty():
+				continue
+			var grown: Array[Card] = melds[j].duplicate()
+			grown.append(c)
+			if not Rules.is_valid_meld(grown):
+				continue
+			m.erase(c)
+			melds[j].append(c)
+			var sub: Variant = _repair_board(melds, budget - 1, immovable, nodes)
+			if sub != null:
+				(sub as Array).insert(0, {"card": c})
+				return sub
+			melds[j].erase(c)
+			m.append(c)
+	# Option B: pull a card into the broken meld from a donor that stays valid.
+	for j in melds.size():
+		if j == bad or melds[j].is_empty():
+			continue
+		for c: Card in melds[j].duplicate():
+			if immovable.has(c):
+				continue
+			var leftover: Array[Card] = melds[j].duplicate()
+			leftover.erase(c)
+			if not (leftover.is_empty() or Rules.is_valid_meld(leftover)):
+				continue
+			var grown: Array[Card] = m.duplicate()
+			grown.append(c)
+			if not Rules.is_valid_meld(grown):
+				continue
+			melds[j].erase(c)
+			m.append(c)
+			var sub: Variant = _repair_board(melds, budget - 1, immovable, nodes)
+			if sub != null:
+				(sub as Array).insert(0, {"card": c})
+				return sub
+			m.erase(c)
+			melds[j].append(c)
+	return null
+
+static func _hand_subset(hand: Array[Card], cards: Array[Card]) -> Array[Card]:
+	var out: Array[Card] = []
+	for c in cards:
+		if hand.has(c):
+			out.append(c)
+	return out
+
+## Realize a deep-rearrangement composite on the (staged) game. Each final meld
+## either keeps a stationary card (one that never moves) and so maps onto that
+## card's live group — into which its other cards are gathered — or is entirely
+## new (the target meld) and is built last, once every donor has taken its share.
+## Only cards that actually change group are moved, so untouched melds (and any
+## slimed clusters within them) are left exactly where they sit.
+static func _apply_rearrange(gm: GameManager, move: Dictionary) -> void:
+	var final_melds: Array = move["rearrange"]
+	var moved: Array = move["cards"]
+	var new_melds: Array = []
+	for meld: Array in final_melds:
+		var anchor: Card = null
+		for c: Card in meld:
+			if not moved.has(c):
+				anchor = c  # a stationary card pins this meld to its live group
+				break
+		if anchor == null:
+			new_melds.append(meld)
+			continue
+		var dest := gm.board.meld_of(anchor)
+		if dest == null:
+			new_melds.append(meld)
+			continue
+		for c: Card in meld:
+			if gm.board.meld_of(c) != dest:
+				var one: Array[Card] = [c]
+				gm.add_cards_to_meld(one, dest)
+	for meld: Array in new_melds:
+		var cards: Array[Card] = []
+		for c: Card in meld:
+			cards.append(c)
+		gm.move_cards_to_new_meld(cards)
 
 ## Threat of the cards that would extend this meld's open ends landing in an
 ## opponent's play — what an opponent could hold to lay off onto it next turn.
@@ -503,6 +821,13 @@ static func _under_pressure_smart(gm: GameManager) -> bool:
 ## Apply a move produced by plan_move() to the (staged) game state. A capable
 ## profile also points any jokers in the touched meld at safe stand-ins.
 static func apply_move(gm: GameManager, move: Dictionary, profile: AIProfile = null) -> void:
+	# A deep-rearrangement composite reshuffles several groups at once; realize it
+	# through the same staging calls, then point any jokers in the new meld safely.
+	if move.has("rearrange"):
+		_apply_rearrange(gm, move)
+		if profile != null and profile.picks_safe_joker_reps() and not gm.board.melds.is_empty():
+			_choose_joker_reps(gm, gm.board.melds[-1])
+		return
 	var cards: Array[Card] = move["cards"]
 	var dest: CardSet = move["dest"]
 	var err := ""

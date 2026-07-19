@@ -167,6 +167,7 @@ var opponent_backs := {}
 var ai_strength := 1.0    # 0 = weak, 1 = strong
 var ai_style := 0.0       # 0 = quick, 1 = conservative
 var ai_attention := 1.0   # 0 = oblivious, 1 = attentive
+var ai_planning := 1.0    # 0 = short-sighted, 1 = expert planner
 var enemy_count := 2      # 1-3
 var draw_per_turn := 1    # 1-3
 var start_hand_size := GameManager.DEFAULT_HAND_SIZE  # cards dealt at the start
@@ -245,6 +246,7 @@ func _init_rogue_ai_overrides() -> void:
 				"strength": enemy.strength,
 				"style": enemy.style,
 				"attention": enemy.attention,
+				"planning": enemy.planning,
 			}
 
 ## Stamp the settings' AI override for this enemy onto its dials, so the run
@@ -257,6 +259,7 @@ func _apply_ai_override(enemy: Enemy) -> void:
 	enemy.strength = ov["strength"]
 	enemy.style = ov["style"]
 	enemy.attention = ov["attention"]
+	enemy.planning = ov.get("planning", enemy.planning)
 
 # --- Settings persistence -----------------------------------------------------
 
@@ -268,6 +271,7 @@ func _save_settings() -> void:
 	cfg.set_value("sandbox", "ai_strength", ai_strength)
 	cfg.set_value("sandbox", "ai_style", ai_style)
 	cfg.set_value("sandbox", "ai_attention", ai_attention)
+	cfg.set_value("sandbox", "ai_planning", ai_planning)
 	cfg.set_value("sandbox", "enemy_count", enemy_count)
 	cfg.set_value("sandbox", "draw_per_turn", draw_per_turn)
 	cfg.set_value("sandbox", "start_hand_size", start_hand_size)
@@ -283,7 +287,8 @@ func _save_settings() -> void:
 	cfg.set_value("rogue", "start_combo", rogue_start_combo)
 	for name: String in rogue_ai_overrides:
 		var ov: Dictionary = rogue_ai_overrides[name]
-		cfg.set_value("rogue_ai", name, [ov["strength"], ov["style"], ov["attention"]])
+		cfg.set_value("rogue_ai", name,
+			[ov["strength"], ov["style"], ov["attention"], ov.get("planning", 1.0)])
 	cfg.save(SETTINGS_PATH)
 
 ## Load any settings saved by an earlier session, leaving the built-in defaults
@@ -296,6 +301,7 @@ func _load_settings() -> void:
 	ai_strength = cfg.get_value("sandbox", "ai_strength", ai_strength)
 	ai_style = cfg.get_value("sandbox", "ai_style", ai_style)
 	ai_attention = cfg.get_value("sandbox", "ai_attention", ai_attention)
+	ai_planning = cfg.get_value("sandbox", "ai_planning", ai_planning)
 	enemy_count = cfg.get_value("sandbox", "enemy_count", enemy_count)
 	draw_per_turn = cfg.get_value("sandbox", "draw_per_turn", draw_per_turn)
 	start_hand_size = cfg.get_value("sandbox", "start_hand_size", start_hand_size)
@@ -311,9 +317,10 @@ func _load_settings() -> void:
 	rogue_start_combo = cfg.get_value("rogue", "start_combo", rogue_start_combo)
 	for name: String in rogue_ai_overrides:
 		var saved: Array = cfg.get_value("rogue_ai", name, [])
-		if saved.size() == 3:
+		if saved.size() >= 3:
 			rogue_ai_overrides[name] = {
-				"strength": saved[0], "style": saved[1], "attention": saved[2]}
+				"strength": saved[0], "style": saved[1], "attention": saved[2],
+				"planning": saved[3] if saved.size() >= 4 else 1.0}
 
 func _new_game() -> void:
 	game_generation += 1
@@ -603,11 +610,12 @@ func _enemy_info_text(player_index: int) -> String:
 		var intro := current_enemy.mechanic_intro()
 		if intro != "":
 			lines.append(intro)
-		lines.append("AI: plays %s." % _personality_desc(
-			current_enemy.strength, current_enemy.style, current_enemy.attention))
+		lines.append("AI: plays %s." % _personality_desc(current_enemy.strength,
+			current_enemy.style, current_enemy.attention, current_enemy.planning))
 	else:
 		lines.append("A vanilla opponent with no special mechanic.")
-		lines.append("AI: plays %s." % _personality_desc(ai_strength, ai_style, ai_attention))
+		lines.append("AI: plays %s." % _personality_desc(
+			ai_strength, ai_style, ai_attention, ai_planning))
 	return "\n\n".join(lines)
 
 func _build_menu() -> void:
@@ -732,6 +740,10 @@ func _build_vanilla_settings() -> VBoxContainer:
 		func(v: float) -> void:
 			ai_attention = v
 			_refresh_ai_desc()))
+	col.add_child(_make_ai_slider_row("Planning", "Short-sighted", "Expert planner", ai_planning,
+		func(v: float) -> void:
+			ai_planning = v
+			_refresh_ai_desc()))
 
 	ai_desc_label = Label.new()
 	ai_desc_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.7))
@@ -842,6 +854,9 @@ func _build_enemy_ai_rows(enemy_name: String) -> VBoxContainer:
 		func(v: float) -> void: ov["style"] = v))
 	box.add_child(_make_ai_slider_row("Attention", "Oblivious", "Attentive", ov["attention"],
 		func(v: float) -> void: ov["attention"] = v))
+	box.add_child(_make_ai_slider_row("Planning", "Short-sighted", "Expert planner",
+		ov.get("planning", 1.0),
+		func(v: float) -> void: ov["planning"] = v))
 	return box
 
 func _make_spin_row(text: String, minimum: int, maximum: int, value: int,
@@ -932,12 +947,13 @@ func _refresh_ai_desc() -> void:
 
 func _ai_description() -> String:
 	return "Enemies play %s. Applies from their next turn." \
-		% _personality_desc(ai_strength, ai_style, ai_attention)
+		% _personality_desc(ai_strength, ai_style, ai_attention, ai_planning)
 
-## A plain-English reading of the three AI dials ("cutthroat, conservative and
-## attentive"), shared by the sandbox slider description and the enemy info
-## panel so both name a brain the same way.
-func _personality_desc(strength: float, style: float, attention: float) -> String:
+## A plain-English reading of the four AI dials ("cutthroat, quick, attentive
+## and an expert planner"), shared by the sandbox slider description and the
+## enemy info panel so both name a brain the same way.
+func _personality_desc(strength: float, style: float, attention: float,
+		planning: float) -> String:
 	var skill := "capable"
 	if strength < 0.35:
 		skill = "weak"
@@ -955,7 +971,12 @@ func _personality_desc(strength: float, style: float, attention: float) -> Strin
 		focus = "oblivious"
 	elif attention < 0.75:
 		focus = "distractible"
-	return "%s, %s and %s" % [skill, pace, focus]
+	var plan := "an expert planner"
+	if planning < 0.34:
+		plan = "short-sighted"
+	elif planning < 0.67:
+		plan = "a measured planner"
+	return "%s, %s, %s and %s" % [skill, pace, focus, plan]
 
 func _make_seat() -> VBoxContainer:
 	var seat := VBoxContainer.new()
@@ -1745,7 +1766,7 @@ func _run_ai_turns() -> void:
 	var gen := game_generation
 	var in_rogue := game_mode == Mode.ROGUE and current_enemy != null
 	var profile := current_enemy.make_profile() if in_rogue \
-		else AIProfile.new(ai_strength, ai_style, ai_attention)
+		else AIProfile.new(ai_strength, ai_style, ai_attention, -1, ai_planning)
 	# The designed enemy drives its strategy (e.g. the slime guarding jokers).
 	var enemy_def: Enemy = current_enemy if in_rogue else null
 	highlighted.clear()

@@ -15,11 +15,15 @@ var display_name := "Enemy"
 var strength := 1.0
 var style := 0.0
 var attention := 1.0
+## Planning depth (short-sighted → expert planner). Every designed enemy is an
+## expert planner for now: it reworks as much of the table as it needs to lay
+## down what it holds. See AIProfile.plan_budget and GreedyAI's deep planner.
+var planning := 1.0
 
 ## Build the AIProfile GreedyAI drives this enemy with. Pass a seed for a
 ## reproducible (headless/test) game; omit it for a randomized live game.
 func make_profile(seed_value: int = -1) -> AIProfile:
-	return AIProfile.new(strength, style, attention, seed_value)
+	return AIProfile.new(strength, style, attention, seed_value, planning)
 
 ## Called once after the game is dealt, before the first turn, to plant this
 ## enemy's mechanics on the freshly shuffled game. The base enemy does nothing.
