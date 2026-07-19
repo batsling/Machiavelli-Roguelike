@@ -42,6 +42,35 @@ var rogue_start_combo := false
 # retuned. The override is stamped onto the enemy the run draws each round.
 var rogue_ai_overrides := {}
 
+## A plain-English reading of the four AI dials ("cutthroat, quick, attentive
+## and an expert planner"), shared by the settings-tab slider description and
+## the enemy info panel so both name a brain the same way.
+static func personality_desc(strength: float, style: float, attention: float,
+		planning: float) -> String:
+	var skill := "capable"
+	if strength < 0.35:
+		skill = "weak"
+	elif strength >= AIProfile.SMART_BRAIN_SKILL:
+		skill = "cutthroat"
+	elif strength >= 0.7:
+		skill = "strong"
+	var pace := "quick"
+	if style >= 0.75:
+		pace = "conservative"
+	elif style >= 0.4:
+		pace = "balanced"
+	var focus := "attentive"
+	if attention < 0.4:
+		focus = "oblivious"
+	elif attention < 0.75:
+		focus = "distractible"
+	var plan := "an expert planner"
+	if planning < 0.34:
+		plan = "short-sighted"
+	elif planning < 0.67:
+		plan = "a measured planner"
+	return "%s, %s, %s and %s" % [skill, pace, focus, plan]
+
 ## Seed a default AI override for every enemy in the roster from its own
 ## designed dials, so an untouched enemy plays exactly as designed. Existing
 ## entries (e.g. just loaded from disk) are left as they are.

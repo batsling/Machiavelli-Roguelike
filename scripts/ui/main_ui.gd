@@ -97,10 +97,6 @@ const DRAG_TYPE := "machiavelli_cards"
 const MAX_PLAYERS := 4
 const ENEMY_NAMES := ["Rosso", "Nero", "Bianco"]
 
-## Sensible bounds for the starting hand size setting (both modes).
-const HAND_SIZE_MIN := 5
-const HAND_SIZE_MAX := 21
-
 ## Suit order for the "Sort: suit" button: reds together, then blacks, so runs
 ## of the same colour sit side by side. Jokers are handled separately (last).
 const SUIT_ORDER := {"hearts": 0, "diamonds": 1, "clubs": 2, "spades": 3}
@@ -157,9 +153,7 @@ var settings_btn: Button
 var new_game_btn: Button
 var sort_board_btn: Button
 var randomize_board_btn: Button
-var settings_dialog: AcceptDialog
-var ai_desc_label: Label
-var settings_save_note: Label
+var settings_dialog: SettingsDialog
 var enemy_info_dialog: AcceptDialog
 var enemy_info_body: RichTextLabel
 var anim_layer: Control
@@ -504,11 +498,11 @@ func _enemy_info_text(player_index: int) -> String:
 		var intro := current_enemy.mechanic_intro()
 		if intro != "":
 			lines.append(intro)
-		lines.append("AI: plays %s." % _personality_desc(current_enemy.strength,
+		lines.append("AI: plays %s." % GameSettings.personality_desc(current_enemy.strength,
 			current_enemy.style, current_enemy.attention, current_enemy.planning))
 	else:
 		lines.append("A vanilla opponent with no special mechanic.")
-		lines.append("AI: plays %s." % _personality_desc(
+		lines.append("AI: plays %s." % GameSettings.personality_desc(
 			settings.ai_strength, settings.ai_style, settings.ai_attention, settings.ai_planning))
 	return "\n\n".join(lines)
 
@@ -549,295 +543,24 @@ func _on_resume_pressed() -> void:
 func _on_quit_pressed() -> void:
 	get_tree().quit()
 
+## Instantiate the settings scene against the shared settings model. Sandbox
+## rules that take effect mid-game are pushed onto the running game by
+## _apply_live_settings whenever the dialog reports a change.
 func _build_settings_dialog() -> void:
-	settings_dialog = AcceptDialog.new()
-	settings_dialog.title = "Settings"
-	settings_dialog.ok_button_text = "Done"
+	settings_dialog = preload("res://scenes/ui/settings_dialog.tscn").instantiate()
 	add_child(settings_dialog)
-
-	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 6)
-	settings_dialog.add_child(content)
-	var tabs := TabContainer.new()
-	tabs.custom_minimum_size = Vector2(420, 0)
-	content.add_child(tabs)
-	tabs.add_child(_build_vanilla_settings())
-	tabs.add_child(_build_rogue_settings())
-	settings_save_note = Label.new()
-	settings_save_note.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
-	content.add_child(settings_save_note)
-
-	# A Save button beside "Done" that persists every setting to disk; changes
-	# still apply live, but Save is what makes them survive to the next session.
-	settings_dialog.add_button("Save settings", true, "save_settings")
-	settings_dialog.custom_action.connect(_on_settings_custom_action)
-	settings_dialog.about_to_popup.connect(func() -> void: settings_save_note.text = "")
-
-func _on_settings_custom_action(action: StringName) -> void:
-	if action == "save_settings":
-		settings.save()
-		settings_save_note.text = "Settings saved."
-
-## The "Vanilla sandbox" tab: everything here touches sandbox games only.
-func _build_vanilla_settings() -> VBoxContainer:
-	var col := VBoxContainer.new()
-	col.name = "Vanilla sandbox"
-	col.add_theme_constant_override("separation", 10)
-
-	var ai_label := Label.new()
-	ai_label.text = "Enemy AI — three independent dials for the opponents' brains."
-	ai_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	col.add_child(ai_label)
-
-	col.add_child(_make_ai_slider_row("Skill", "Weak", "Strong", settings.ai_strength,
-		func(v: float) -> void:
-			settings.ai_strength = v
-			_refresh_ai_desc()))
-	col.add_child(_make_ai_slider_row("Style", "Quick", "Conservative", settings.ai_style,
-		func(v: float) -> void:
-			settings.ai_style = v
-			_refresh_ai_desc()))
-	col.add_child(_make_ai_slider_row("Attention", "Oblivious", "Attentive", settings.ai_attention,
-		func(v: float) -> void:
-			settings.ai_attention = v
-			_refresh_ai_desc()))
-	col.add_child(_make_ai_slider_row("Planning", "Short-sighted", "Expert planner", settings.ai_planning,
-		func(v: float) -> void:
-			settings.ai_planning = v
-			_refresh_ai_desc()))
-
-	ai_desc_label = Label.new()
-	ai_desc_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.7))
-	ai_desc_label.text = _ai_description()
-	col.add_child(ai_desc_label)
-
-	col.add_child(HSeparator.new())
-
-	col.add_child(_make_spin_row("Enemies (next game):", 1, 3, settings.enemy_count,
-		_on_enemy_count_changed))
-	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, settings.draw_per_turn,
-		_on_draw_count_changed))
-	col.add_child(_make_spin_row("Starting hand size (next game):",
-		HAND_SIZE_MIN, HAND_SIZE_MAX, settings.start_hand_size,
-		func(v: float) -> void: settings.start_hand_size = int(v)))
-	# Max hand size: with a cap, drawing stops at the cap and a draw attempted
-	# on a full hand becomes a pass. Applies immediately — but never to a
-	# roguelike run, whose rules are fixed.
-	col.add_child(_make_cap_row("Max hand size:", settings.max_hand_size,
-		func(v: int) -> void:
-			settings.max_hand_size = v
-			if game_mode == Mode.SANDBOX:
-				gm.max_hand_size = v))
-	# Max cards played per turn: only cards leaving the hand count, and the
-	# same cap binds the AI. Applies immediately (sandbox only).
-	col.add_child(_make_cap_row("Max cards played per turn:", settings.max_plays_per_turn,
-		func(v: int) -> void:
-			settings.max_plays_per_turn = v
-			if game_mode == Mode.SANDBOX:
-				gm.max_plays_per_turn = v))
-
-	var joker_check := CheckBox.new()
-	joker_check.text = "Include 4 jokers — wildcards (next game)"
-	joker_check.button_pressed = settings.include_jokers
-	joker_check.toggled.connect(_on_jokers_toggled)
-	col.add_child(joker_check)
-
-	var combo_check := CheckBox.new()
-	combo_check.text = "Starting combos — deal every player a random opening\n" \
-		+ "group from the stock onto the table (next game)"
-	combo_check.button_pressed = settings.start_combo
-	combo_check.toggled.connect(func(on: bool) -> void: settings.start_combo = on)
-	col.add_child(combo_check)
-	return col
-
-## The "Roguelike run" tab: the run's own rules. Everything applies from the
-## next round, so a round in progress keeps the rules it started under.
-func _build_rogue_settings() -> VBoxContainer:
-	var col := VBoxContainer.new()
-	col.name = "Roguelike run"
-	col.add_theme_constant_override("separation", 10)
-
-	var intro := Label.new()
-	intro.text = "Run rules for balancing the roguelike. Every change applies " \
-		+ "from the next round; enemies keep their own designed AI."
-	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	col.add_child(intro)
-	col.add_child(HSeparator.new())
-
-	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, settings.rogue_draw_per_turn,
-		func(v: float) -> void: settings.rogue_draw_per_turn = int(v)))
-	col.add_child(_make_spin_row("Starting hand size:",
-		HAND_SIZE_MIN, HAND_SIZE_MAX, settings.rogue_start_hand_size,
-		func(v: float) -> void: settings.rogue_start_hand_size = int(v)))
-	col.add_child(_make_cap_row("Max hand size:", settings.rogue_max_hand_size,
-		func(v: int) -> void: settings.rogue_max_hand_size = v))
-	col.add_child(_make_cap_row("Max cards played per turn:", settings.rogue_max_plays_per_turn,
-		func(v: int) -> void: settings.rogue_max_plays_per_turn = v))
-
-	var joker_check := CheckBox.new()
-	joker_check.text = "Include 4 jokers — wildcards"
-	joker_check.button_pressed = settings.rogue_jokers
-	joker_check.toggled.connect(func(on: bool) -> void: settings.rogue_jokers = on)
-	col.add_child(joker_check)
-
-	var combo_check := CheckBox.new()
-	combo_check.text = "Starting combos — deal every player a random opening\n" \
-		+ "group from the stock onto the table"
-	combo_check.button_pressed = settings.rogue_start_combo
-	combo_check.toggled.connect(func(on: bool) -> void: settings.rogue_start_combo = on)
-	col.add_child(combo_check)
-
-	col.add_child(HSeparator.new())
-	var ai_header := Label.new()
-	ai_header.text = "Enemy AI — retune each opponent's brain individually. " \
-		+ "Applies from the next round; leave an enemy untouched to keep its " \
-		+ "designed personality."
-	ai_header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	col.add_child(ai_header)
-	for enemy in Enemy.roster():
-		col.add_child(_build_enemy_ai_rows(enemy.display_name))
-	return col
-
-## A per-enemy AI block for the roguelike tab: the enemy's name over three
-## sliders bound to its entry in settings.rogue_ai_overrides (which is passed by
-## reference, so editing the sliders retunes the run's copy of that enemy).
-func _build_enemy_ai_rows(enemy_name: String) -> VBoxContainer:
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 2)
-	var title := Label.new()
-	title.text = enemy_name
-	title.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
-	box.add_child(title)
-	var ov: Dictionary = settings.rogue_ai_overrides[enemy_name]
-	box.add_child(_make_ai_slider_row("Skill", "Weak", "Strong", ov["strength"],
-		func(v: float) -> void: ov["strength"] = v))
-	box.add_child(_make_ai_slider_row("Style", "Quick", "Conservative", ov["style"],
-		func(v: float) -> void: ov["style"] = v))
-	box.add_child(_make_ai_slider_row("Attention", "Oblivious", "Attentive", ov["attention"],
-		func(v: float) -> void: ov["attention"] = v))
-	box.add_child(_make_ai_slider_row("Planning", "Short-sighted", "Expert planner",
-		ov.get("planning", 1.0),
-		func(v: float) -> void: ov["planning"] = v))
-	return box
-
-func _make_spin_row(text: String, minimum: int, maximum: int, value: int,
-		on_changed: Callable) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	var lbl := Label.new()
-	lbl.text = text
-	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(lbl)
-	var spin := SpinBox.new()
-	spin.min_value = minimum
-	spin.max_value = maximum
-	spin.step = 1
-	spin.value = value
-	spin.value_changed.connect(on_changed)
-	row.add_child(spin)
-	return row
-
-## A "None or 10-20" dropdown row; `on_changed` gets the chosen value (0 for
-## "None"). Used for the hand cap and the play cap.
-func _make_cap_row(text: String, value: int, on_changed: Callable) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	var lbl := Label.new()
-	lbl.text = text
-	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(lbl)
-	var opt := OptionButton.new()
-	opt.add_item("None", 0)
-	for v in range(10, 21):
-		opt.add_item(str(v), v)
-	opt.select(0 if value == 0 else value - 9)
-	opt.item_selected.connect(func(idx: int) -> void:
-		on_changed.call(opt.get_item_id(idx)))
-	row.add_child(opt)
-	return row
+	settings_dialog.setup(settings, _apply_live_settings)
 
 func _on_settings_pressed() -> void:
 	settings_dialog.popup_centered()
 
-func _on_enemy_count_changed(value: float) -> void:
-	settings.enemy_count = int(value)
-
-func _on_draw_count_changed(value: float) -> void:
-	settings.draw_per_turn = int(value)
+## Push the settings whose changes apply immediately onto the running game, but
+## only in sandbox — a roguelike run keeps the rules it started under.
+func _apply_live_settings() -> void:
 	if game_mode == Mode.SANDBOX:
 		gm.draw_per_turn = settings.draw_per_turn
-
-func _on_jokers_toggled(on: bool) -> void:
-	settings.include_jokers = on
-
-## A titled 0..1 slider with its two end labels underneath. `on_changed` gets
-## the new value. Used for the three enemy-AI dials.
-func _make_ai_slider_row(title: String, left: String, right: String,
-		value: float, on_changed: Callable) -> VBoxContainer:
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 2)
-	var head := Label.new()
-	head.text = title
-	box.add_child(head)
-	var slider := HSlider.new()
-	slider.min_value = 0.0
-	slider.max_value = 1.0
-	slider.step = 0.01
-	slider.value = value
-	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	slider.value_changed.connect(on_changed)
-	box.add_child(slider)
-	var ends := HBoxContainer.new()
-	var l := Label.new()
-	l.text = left
-	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	l.add_theme_color_override("font_color", Color(1, 1, 1, 0.5))
-	l.add_theme_font_size_override("font_size", 12)
-	var r := Label.new()
-	r.text = right
-	r.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	r.add_theme_color_override("font_color", Color(1, 1, 1, 0.5))
-	r.add_theme_font_size_override("font_size", 12)
-	ends.add_child(l)
-	ends.add_child(r)
-	box.add_child(ends)
-	return box
-
-func _refresh_ai_desc() -> void:
-	ai_desc_label.text = _ai_description()
-
-func _ai_description() -> String:
-	return "Enemies play %s. Applies from their next turn." \
-		% _personality_desc(settings.ai_strength, settings.ai_style, settings.ai_attention, settings.ai_planning)
-
-## A plain-English reading of the four AI dials ("cutthroat, quick, attentive
-## and an expert planner"), shared by the sandbox slider description and the
-## enemy info panel so both name a brain the same way.
-func _personality_desc(strength: float, style: float, attention: float,
-		planning: float) -> String:
-	var skill := "capable"
-	if strength < 0.35:
-		skill = "weak"
-	elif strength >= AIProfile.SMART_BRAIN_SKILL:
-		skill = "cutthroat"
-	elif strength >= 0.7:
-		skill = "strong"
-	var pace := "quick"
-	if style >= 0.75:
-		pace = "conservative"
-	elif style >= 0.4:
-		pace = "balanced"
-	var focus := "attentive"
-	if attention < 0.4:
-		focus = "oblivious"
-	elif attention < 0.75:
-		focus = "distractible"
-	var plan := "an expert planner"
-	if planning < 0.34:
-		plan = "short-sighted"
-	elif planning < 0.67:
-		plan = "a measured planner"
-	return "%s, %s, %s and %s" % [skill, pace, focus, plan]
+		gm.max_hand_size = settings.max_hand_size
+		gm.max_plays_per_turn = settings.max_plays_per_turn
 
 func _make_seat() -> VBoxContainer:
 	var seat := VBoxContainer.new()
