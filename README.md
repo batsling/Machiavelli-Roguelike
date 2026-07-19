@@ -59,6 +59,12 @@ their cards — the first enemy directly opposite you, the second on the left,
 and a fourth player (when one exists) on the right (max 4 seats). Backs overlap
 more as a hand grows, so every seat always fits on screen.
 
+The top-left corner shows the **round** counter: one round is a full lap of the
+table (every player takes one turn), and it ticks up each time play returns to
+you. Each opponent's name chip carries an **Info** button — click it for a
+pop-up with that opponent's mechanic (in a roguelike round) and the AI brain it
+is running.
+
 On your turn:
 
 1. **Drag** cards — from your hand and from any group on the table. Drop them on a
@@ -141,9 +147,17 @@ The **Vanilla sandbox** tab holds:
 The **Roguelike run** tab holds the run's own copies of the same rules —
 cards drawn per turn (default 2), starting hand size (default 13), max hand
 size (default none), max cards played per turn (default 13), jokers (default
-in) and starting combos (default off). Every change applies from the next
-round; a round in progress keeps the rules it started under, and each enemy
-still brings its own designed AI profile and mechanics.
+in) and starting combos (default off). It also holds an **Enemy AI** section
+with the same three sliders (Skill / Style / Attention) *for each individual
+enemy in the roster*, so any single opponent's brain can be retuned for the
+run; an enemy left untouched keeps its designed personality. Every change
+applies from the next round; a round in progress keeps the rules it started
+under, and each enemy still brings its own designed mechanics.
+
+A **Save settings** button (beside **Done**) writes every setting — both tabs,
+including the per-enemy AI overrides — to disk (`user://settings.cfg`), so the
+tuning is remembered the next time the game is launched. Changes still apply
+live as you make them; Save is only what makes them stick between sessions.
 
 ## Layout
 

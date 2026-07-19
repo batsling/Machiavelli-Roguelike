@@ -42,6 +42,11 @@ var players: Array[PlayerState] = []
 var board := Board.new()
 var deck: Deck = null
 var turn_index := 0
+## The current round of play: every player takes one turn per round, and the
+## count ticks up each time play wraps back to the first player (turn_index 0).
+## Starts at 1 the moment the game is dealt. This is the table's own round
+## counter, distinct from the roguelike ladder round (which enemy you face).
+var round_number := 1
 var is_game_over := false
 ## How many cards a player draws when they draw instead of playing (1-3 from
 ## the settings menu). Drawing stops early when the stock runs dry; a turn
@@ -73,6 +78,7 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 	deck.build_double_deck(include_jokers)
 	deck.shuffle()
 	turn_index = 0
+	round_number = 1
 	is_game_over = false
 	_consecutive_passes = 0
 	for i in player_names.size():
@@ -542,6 +548,9 @@ func _advance() -> void:
 	if is_game_over:
 		return
 	turn_index = (turn_index + 1) % players.size()
+	# Wrapping back to the first player opens a fresh round of play.
+	if turn_index == 0:
+		round_number += 1
 	_begin_turn()
 
 func _end_game(winners: Array) -> void:

@@ -101,6 +101,9 @@ const ENEMY_NAMES := ["Rosso", "Nero", "Bianco"]
 ## Sensible bounds for the starting hand size setting (both modes).
 const HAND_SIZE_MIN := 5
 const HAND_SIZE_MAX := 21
+## Where the Save button persists every setting so a run keeps its rules
+## between sessions.
+const SETTINGS_PATH := "user://settings.cfg"
 
 const CARD_SIZE := Vector2(78, 108)  # hand cards
 const CARD_FONT_SIZE := 28
@@ -181,6 +184,12 @@ var rogue_max_hand_size := 0
 var rogue_max_plays_per_turn := 13
 var rogue_jokers := true
 var rogue_start_combo := false
+# Per-enemy AI overrides for roguelike runs, keyed by enemy display_name ->
+# {"strength", "style", "attention"}. Seeded from each designed enemy's own
+# dials (see _init_rogue_ai_overrides) and editable from the Settings dialog's
+# "Roguelike run" tab, so any individual opponent's brain can be retuned. The
+# override is stamped onto the enemy the run draws each round (see _new_game).
+var rogue_ai_overrides := {}
 
 var game_root: VBoxContainer
 var menu_layer: PanelContainer
@@ -188,6 +197,7 @@ var resume_btn: Button
 var seat_top: VBoxContainer
 var seat_left: VBoxContainer
 var seat_right: VBoxContainer
+var round_label: Label
 var stock_label: Label
 var stock_top_slot: HBoxContainer
 var status_label: Label
@@ -206,6 +216,9 @@ var settings_btn: Button
 var new_game_btn: Button
 var settings_dialog: AcceptDialog
 var ai_desc_label: Label
+var settings_save_note: Label
+var enemy_info_dialog: AcceptDialog
+var enemy_info_body: RichTextLabel
 var anim_layer: Control
 
 func _ready() -> void:
@@ -215,8 +228,92 @@ func _ready() -> void:
 	gm.card_drawn.connect(_on_card_drawn)
 	gm.player_passed.connect(_on_player_passed)
 	gm.game_over.connect(_on_game_over)
+	# Seed the per-enemy AI overrides from the roster, then let any saved
+	# settings override the defaults, before the settings dialog reads them.
+	_init_rogue_ai_overrides()
+	_load_settings()
 	_build_layout()
 	_show_menu()
+
+## Seed a default AI override for every enemy in the roster from its own
+## designed dials, so an untouched enemy plays exactly as designed. Existing
+## entries (e.g. just loaded from disk) are left as they are.
+func _init_rogue_ai_overrides() -> void:
+	for enemy in Enemy.roster():
+		if not rogue_ai_overrides.has(enemy.display_name):
+			rogue_ai_overrides[enemy.display_name] = {
+				"strength": enemy.strength,
+				"style": enemy.style,
+				"attention": enemy.attention,
+			}
+
+## Stamp the settings' AI override for this enemy onto its dials, so the run
+## drives it with the brain chosen in the "Roguelike run" tab (its designed
+## dials when untouched).
+func _apply_ai_override(enemy: Enemy) -> void:
+	var ov: Dictionary = rogue_ai_overrides.get(enemy.display_name, {})
+	if ov.is_empty():
+		return
+	enemy.strength = ov["strength"]
+	enemy.style = ov["style"]
+	enemy.attention = ov["attention"]
+
+# --- Settings persistence -----------------------------------------------------
+
+## Write every sandbox and roguelike setting (including the per-enemy AI
+## overrides) to disk, so the Save button makes the current tuning stick between
+## sessions.
+func _save_settings() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("sandbox", "ai_strength", ai_strength)
+	cfg.set_value("sandbox", "ai_style", ai_style)
+	cfg.set_value("sandbox", "ai_attention", ai_attention)
+	cfg.set_value("sandbox", "enemy_count", enemy_count)
+	cfg.set_value("sandbox", "draw_per_turn", draw_per_turn)
+	cfg.set_value("sandbox", "start_hand_size", start_hand_size)
+	cfg.set_value("sandbox", "max_hand_size", max_hand_size)
+	cfg.set_value("sandbox", "max_plays_per_turn", max_plays_per_turn)
+	cfg.set_value("sandbox", "include_jokers", include_jokers)
+	cfg.set_value("sandbox", "start_combo", start_combo)
+	cfg.set_value("rogue", "draw_per_turn", rogue_draw_per_turn)
+	cfg.set_value("rogue", "start_hand_size", rogue_start_hand_size)
+	cfg.set_value("rogue", "max_hand_size", rogue_max_hand_size)
+	cfg.set_value("rogue", "max_plays_per_turn", rogue_max_plays_per_turn)
+	cfg.set_value("rogue", "jokers", rogue_jokers)
+	cfg.set_value("rogue", "start_combo", rogue_start_combo)
+	for name: String in rogue_ai_overrides:
+		var ov: Dictionary = rogue_ai_overrides[name]
+		cfg.set_value("rogue_ai", name, [ov["strength"], ov["style"], ov["attention"]])
+	cfg.save(SETTINGS_PATH)
+
+## Load any settings saved by an earlier session, leaving the built-in defaults
+## in place when a value (or the file) is missing. Runs before the settings
+## dialog is built, so the controls open showing the saved values.
+func _load_settings() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(SETTINGS_PATH) != OK:
+		return
+	ai_strength = cfg.get_value("sandbox", "ai_strength", ai_strength)
+	ai_style = cfg.get_value("sandbox", "ai_style", ai_style)
+	ai_attention = cfg.get_value("sandbox", "ai_attention", ai_attention)
+	enemy_count = cfg.get_value("sandbox", "enemy_count", enemy_count)
+	draw_per_turn = cfg.get_value("sandbox", "draw_per_turn", draw_per_turn)
+	start_hand_size = cfg.get_value("sandbox", "start_hand_size", start_hand_size)
+	max_hand_size = cfg.get_value("sandbox", "max_hand_size", max_hand_size)
+	max_plays_per_turn = cfg.get_value("sandbox", "max_plays_per_turn", max_plays_per_turn)
+	include_jokers = cfg.get_value("sandbox", "include_jokers", include_jokers)
+	start_combo = cfg.get_value("sandbox", "start_combo", start_combo)
+	rogue_draw_per_turn = cfg.get_value("rogue", "draw_per_turn", rogue_draw_per_turn)
+	rogue_start_hand_size = cfg.get_value("rogue", "start_hand_size", rogue_start_hand_size)
+	rogue_max_hand_size = cfg.get_value("rogue", "max_hand_size", rogue_max_hand_size)
+	rogue_max_plays_per_turn = cfg.get_value("rogue", "max_plays_per_turn", rogue_max_plays_per_turn)
+	rogue_jokers = cfg.get_value("rogue", "jokers", rogue_jokers)
+	rogue_start_combo = cfg.get_value("rogue", "start_combo", rogue_start_combo)
+	for name: String in rogue_ai_overrides:
+		var saved: Array = cfg.get_value("rogue_ai", name, [])
+		if saved.size() == 3:
+			rogue_ai_overrides[name] = {
+				"strength": saved[0], "style": saved[1], "attention": saved[2]}
 
 func _new_game() -> void:
 	game_generation += 1
@@ -232,6 +329,7 @@ func _new_game() -> void:
 		combo_start = rogue_start_combo
 		jokers_in = rogue_jokers
 		current_enemy = Enemy.random_enemy()
+		_apply_ai_override(current_enemy)
 		gm.setup(["You", current_enemy.display_name], rogue_start_hand_size, -1, rogue_jokers)
 		gm.draw_per_turn = rogue_draw_per_turn
 		gm.max_hand_size = rogue_max_hand_size
@@ -303,6 +401,13 @@ func _build_layout() -> void:
 	var top_bar := HBoxContainer.new()
 	top_bar.add_theme_constant_override("separation", 8)
 	game_root.add_child(top_bar)
+	# Round counter tucked into the top-left corner: one round is a full lap of
+	# the table (every player takes a turn), ticking up when play returns to you.
+	round_label = Label.new()
+	round_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	round_label.add_theme_font_size_override("font_size", 18)
+	round_label.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
+	top_bar.add_child(round_label)
 	var top_pad_left := Control.new()
 	top_pad_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(top_pad_left)
@@ -465,6 +570,45 @@ func _build_layout() -> void:
 	# The menu sits above everything (including in-flight card animations).
 	_build_menu()
 	_build_settings_dialog()
+	_build_enemy_info_dialog()
+
+## A small pop-up describing an opponent: its mechanic (in a roguelike round)
+## and the AI brain it is running. Opened by the "Info" button on its name chip.
+func _build_enemy_info_dialog() -> void:
+	enemy_info_dialog = AcceptDialog.new()
+	enemy_info_dialog.title = "Enemy info"
+	enemy_info_dialog.ok_button_text = "Close"
+	add_child(enemy_info_dialog)
+	enemy_info_body = RichTextLabel.new()
+	enemy_info_body.bbcode_enabled = true
+	enemy_info_body.fit_content = true
+	enemy_info_body.custom_minimum_size = Vector2(440, 120)
+	enemy_info_dialog.add_child(enemy_info_body)
+
+func _on_enemy_info_pressed(player_index: int) -> void:
+	enemy_info_body.text = _enemy_info_text(player_index)
+	enemy_info_dialog.popup_centered()
+
+## The info-panel text for the opponent in the given seat: name, mechanic and
+## AI. In a roguelike round the sole opponent (seat 1) is the designed enemy, so
+## its mechanic and tuned dials are shown; a sandbox opponent has no mechanic
+## and reports the shared sandbox AI dials.
+func _enemy_info_text(player_index: int) -> String:
+	if player_index < 0 or player_index >= gm.players.size():
+		return ""
+	var p := gm.players[player_index]
+	var lines := PackedStringArray()
+	lines.append("[b]%s[/b]" % p.display_name)
+	if current_enemy != null and player_index == 1:
+		var intro := current_enemy.mechanic_intro()
+		if intro != "":
+			lines.append(intro)
+		lines.append("AI: plays %s." % _personality_desc(
+			current_enemy.strength, current_enemy.style, current_enemy.attention))
+	else:
+		lines.append("A vanilla opponent with no special mechanic.")
+		lines.append("AI: plays %s." % _personality_desc(ai_strength, ai_style, ai_attention))
+	return "\n\n".join(lines)
 
 func _build_menu() -> void:
 	menu_layer = PanelContainer.new()
@@ -542,11 +686,28 @@ func _build_settings_dialog() -> void:
 	settings_dialog.ok_button_text = "Done"
 	add_child(settings_dialog)
 
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 6)
+	settings_dialog.add_child(content)
 	var tabs := TabContainer.new()
 	tabs.custom_minimum_size = Vector2(420, 0)
-	settings_dialog.add_child(tabs)
+	content.add_child(tabs)
 	tabs.add_child(_build_vanilla_settings())
 	tabs.add_child(_build_rogue_settings())
+	settings_save_note = Label.new()
+	settings_save_note.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
+	content.add_child(settings_save_note)
+
+	# A Save button beside "Done" that persists every setting to disk; changes
+	# still apply live, but Save is what makes them survive to the next session.
+	settings_dialog.add_button("Save settings", true, "save_settings")
+	settings_dialog.custom_action.connect(_on_settings_custom_action)
+	settings_dialog.about_to_popup.connect(func() -> void: settings_save_note.text = "")
+
+func _on_settings_custom_action(action: StringName) -> void:
+	if action == "save_settings":
+		_save_settings()
+		settings_save_note.text = "Settings saved."
 
 ## The "Vanilla sandbox" tab: everything here touches sandbox games only.
 func _build_vanilla_settings() -> VBoxContainer:
@@ -652,7 +813,36 @@ func _build_rogue_settings() -> VBoxContainer:
 	combo_check.button_pressed = rogue_start_combo
 	combo_check.toggled.connect(func(on: bool) -> void: rogue_start_combo = on)
 	col.add_child(combo_check)
+
+	col.add_child(HSeparator.new())
+	var ai_header := Label.new()
+	ai_header.text = "Enemy AI — retune each opponent's brain individually. " \
+		+ "Applies from the next round; leave an enemy untouched to keep its " \
+		+ "designed personality."
+	ai_header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(ai_header)
+	for enemy in Enemy.roster():
+		col.add_child(_build_enemy_ai_rows(enemy.display_name))
 	return col
+
+## A per-enemy AI block for the roguelike tab: the enemy's name over three
+## sliders bound to its entry in rogue_ai_overrides (which is passed by
+## reference, so editing the sliders retunes the run's copy of that enemy).
+func _build_enemy_ai_rows(enemy_name: String) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 2)
+	var title := Label.new()
+	title.text = enemy_name
+	title.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
+	box.add_child(title)
+	var ov: Dictionary = rogue_ai_overrides[enemy_name]
+	box.add_child(_make_ai_slider_row("Skill", "Weak", "Strong", ov["strength"],
+		func(v: float) -> void: ov["strength"] = v))
+	box.add_child(_make_ai_slider_row("Style", "Quick", "Conservative", ov["style"],
+		func(v: float) -> void: ov["style"] = v))
+	box.add_child(_make_ai_slider_row("Attention", "Oblivious", "Attentive", ov["attention"],
+		func(v: float) -> void: ov["attention"] = v))
+	return box
 
 func _make_spin_row(text: String, minimum: int, maximum: int, value: int,
 		on_changed: Callable) -> HBoxContainer:
@@ -741,24 +931,31 @@ func _refresh_ai_desc() -> void:
 	ai_desc_label.text = _ai_description()
 
 func _ai_description() -> String:
+	return "Enemies play %s. Applies from their next turn." \
+		% _personality_desc(ai_strength, ai_style, ai_attention)
+
+## A plain-English reading of the three AI dials ("cutthroat, conservative and
+## attentive"), shared by the sandbox slider description and the enemy info
+## panel so both name a brain the same way.
+func _personality_desc(strength: float, style: float, attention: float) -> String:
 	var skill := "capable"
-	if ai_strength < 0.35:
+	if strength < 0.35:
 		skill = "weak"
-	elif ai_strength >= AIProfile.SMART_BRAIN_SKILL:
+	elif strength >= AIProfile.SMART_BRAIN_SKILL:
 		skill = "cutthroat"
-	elif ai_strength >= 0.7:
+	elif strength >= 0.7:
 		skill = "strong"
 	var pace := "quick"
-	if ai_style >= 0.75:
+	if style >= 0.75:
 		pace = "conservative"
-	elif ai_style >= 0.4:
+	elif style >= 0.4:
 		pace = "balanced"
 	var focus := "attentive"
-	if ai_attention < 0.4:
+	if attention < 0.4:
 		focus = "oblivious"
-	elif ai_attention < 0.75:
+	elif attention < 0.75:
 		focus = "distractible"
-	return "Enemies play %s, %s and %s. Applies from their next turn." % [skill, pace, focus]
+	return "%s, %s and %s" % [skill, pace, focus]
 
 func _make_seat() -> VBoxContainer:
 	var seat := VBoxContainer.new()
@@ -791,7 +988,7 @@ func _refresh_seats() -> void:
 			continue
 		seat.visible = true
 		var p := gm.players[player_index]
-		var chip := _make_player_chip(p)
+		var chip := _make_player_chip(p, player_index)
 		chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seat.add_child(chip)
 		var backs := _make_card_backs(p.hand, i == 0)
@@ -799,6 +996,7 @@ func _refresh_seats() -> void:
 		seat.add_child(backs)
 		opponent_backs[p.player_id] = backs
 	stock_label.text = "Stock: %d" % gm.deck.size()
+	round_label.text = "Round %d" % gm.round_number
 	_refresh_stock_top()
 
 ## Show the top card of the stock beside the count when it is glass: the next
@@ -813,20 +1011,32 @@ func _refresh_stock_top() -> void:
 		+ "the next card drawn."
 	stock_top_slot.add_child(face)
 
-func _make_player_chip(p: PlayerState) -> PanelContainer:
+func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	var is_current: bool = p == gm.current_player() and not gm.is_game_over
 	var chip := PanelContainer.new()
 	var sb := _panel_style(COL_CHIP_BG, 8)
 	sb.border_color = COL_CHIP_ACTIVE if is_current else Color(1, 1, 1, 0.15)
 	sb.set_border_width_all(2)
 	chip.add_theme_stylebox_override("panel", sb)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	chip.add_child(row)
 	var lbl := Label.new()
+	lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var marker := "▶ " if is_current else ""
 	var opened := "" if p.has_opened else " · not open"
 	lbl.text = "%s%s — %d cards%s" % [marker, p.display_name, p.hand.size(), opened]
 	if is_current:
 		lbl.add_theme_color_override("font_color", COL_CHIP_ACTIVE)
-	chip.add_child(lbl)
+	row.add_child(lbl)
+	# "Info" button beside the name tag: the opponent's mechanic and AI brain.
+	var info_btn := Button.new()
+	info_btn.text = "Info"
+	info_btn.tooltip_text = "Show this opponent's mechanic and AI"
+	info_btn.focus_mode = Control.FOCUS_NONE
+	info_btn.add_theme_font_size_override("font_size", 12)
+	info_btn.pressed.connect(_on_enemy_info_pressed.bind(player_index))
+	row.add_child(info_btn)
 	return chip
 
 ## A row (top seat) or column (side seats) of an opponent's cards, seen from
