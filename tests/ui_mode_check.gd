@@ -32,8 +32,8 @@ func _init() -> void:
 	if jokers != 4:
 		printerr("rogue deck should hold 4 jokers, found %d" % jokers)
 		ok = false
-	if ui.settings_btn.disabled != true:
-		printerr("settings button should be disabled during a run")
+	if ui.settings_btn.disabled:
+		printerr("settings button should stay enabled during a run (roguelike tab)")
 		ok = false
 	# The round-1 enemy is drawn at random from the roster; whichever it is,
 	# its mechanic must be planted across the freshly dealt game.
@@ -67,7 +67,11 @@ func _init() -> void:
 	else:
 		printerr("round 1 should face a designed enemy, got %s" % ui.current_enemy)
 		ok = false
-	# Simulate a won round: Next round advances, rules stay fixed.
+	# Simulate a won round: Next round advances and picks up any roguelike
+	# settings changed in the meantime — they apply from the next round.
+	ui.rogue_draw_per_turn = 3
+	ui.rogue_start_hand_size = 10
+	ui.rogue_start_combo = true
 	ui.gm._end_game([ui.gm.players[0]])
 	ui._refresh()
 	if ui.new_game_btn.text != "Next round":
@@ -75,9 +79,24 @@ func _init() -> void:
 			% ui.new_game_btn.text)
 		ok = false
 	ui._on_new_game_pressed()
-	if ui.rogue_round != 2 or ui.gm.draw_per_turn != 2:
-		printerr("Next round should advance to round 2 with rules intact")
+	if ui.rogue_round != 2 or ui.gm.draw_per_turn != 3:
+		printerr("Next round should advance to round 2 with the new rules")
 		ok = false
+	if ui.gm.players[0].hand.size() != 10:
+		printerr("round 2 should deal the new 10-card hands, got %d"
+			% ui.gm.players[0].hand.size())
+		ok = false
+	if ui.gm.board.melds.size() != 2 or not ui.gm.players[0].has_opened \
+			or not ui.gm.players[1].has_opened:
+		printerr("starting combos should open every player with a meld on the table")
+		ok = false
+	for m in ui.gm.board.melds:
+		if not m.is_valid():
+			printerr("a starting combo left an invalid meld on the table")
+			ok = false
+	ui.rogue_draw_per_turn = 2
+	ui.rogue_start_hand_size = 13
+	ui.rogue_start_combo = false
 	# Simulate a lost round: the button offers a fresh run from round 1.
 	ui.gm._end_game([ui.gm.players[1]])
 	ui._refresh()

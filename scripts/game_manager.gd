@@ -88,6 +88,59 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 func current_player() -> PlayerState:
 	return players[turn_index]
 
+## Deal every player a starting combo: a random valid three-card meld (a set
+## or a run of naturals) pulled straight from the stock onto the table, which
+## counts as that player's opening meld (has_opened). No one starts stuck on a
+## hand that can't lay a group — the whole table is playable from turn one.
+## Call after enemy mechanics are planted (on_combat_start), which coat the
+## stock and hands, so combo cards keep any slime/glass they picked up there.
+func deal_starting_melds() -> void:
+	for p in players:
+		var pulled := _random_stock_meld()
+		if pulled.is_empty():
+			return  # stock too thin to build one; leave the rest as a normal deal
+		var meld := CardSet.new()
+		for c in pulled:
+			meld.add_card(c)
+		board.melds.append(meld)
+		p.has_opened = true
+	board_changed.emit()
+
+## A random valid three-card meld pulled from the stock: an even coin flip
+## between a set (one rank, three suits) and a run (one suit, three consecutive
+## ranks, ace playing low). Uses the deck's RNG so a seeded game stays
+## reproducible. Returns [] when the stock can't supply any shape tried.
+func _random_stock_meld() -> Array[Card]:
+	for _attempt in 40:
+		var want: Array = []  # [rank, suit] pairs
+		if deck.rng.randi_range(0, 1) == 0:
+			var rank := deck.rng.randi_range(1, 13)
+			var suits := Deck.SUITS.duplicate()
+			for i in range(suits.size() - 1, 0, -1):
+				var j := deck.rng.randi_range(0, i)
+				var tmp: String = suits[i]
+				suits[i] = suits[j]
+				suits[j] = tmp
+			for i in 3:
+				want.append([rank, suits[i]])
+		else:
+			var suit: String = Deck.SUITS[deck.rng.randi_range(0, Deck.SUITS.size() - 1)]
+			var start := deck.rng.randi_range(1, 11)
+			for i in 3:
+				want.append([start + i, suit])
+		var got: Array[Card] = []
+		for w: Array in want:
+			var c := deck.take_card(w[0], w[1])
+			if c == null:
+				break
+			got.append(c)
+		if got.size() == want.size():
+			return got
+		# A copy was missing: put the pulls back and try another shape.
+		for c in got:
+			deck.cards.append(c)
+	return []
+
 # --- Staging moves (current player's turn) ---------------------------------
 
 ## Move cards (from the current player's hand and/or anywhere on the table)
