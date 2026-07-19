@@ -1,3 +1,4 @@
+class_name MainUI
 extends Control
 
 ## Playable UI for vanilla Machiavelli, built entirely in code so the scene
@@ -157,6 +158,8 @@ var enemy_info_dialog: AcceptDialog
 var enemy_info_body: RichTextLabel
 var anim_layer: Control
 var animator: EnemyMoveAnimator
+# Renders the seats, board and hand into the containers above.
+var _table := TableView.new()
 
 func _ready() -> void:
 	gm = GameManager.new()
@@ -169,6 +172,7 @@ func _ready() -> void:
 	# settings override the defaults, before the settings dialog reads them.
 	settings.seed_ai_overrides()
 	settings.load_saved()
+	_table.setup(self)
 	_build_layout()
 	_show_menu()
 
@@ -576,189 +580,10 @@ func _make_seat() -> VBoxContainer:
 func _refresh() -> void:
 	card_nodes.clear()
 	_prune_selection()
-	_refresh_seats()
-	_refresh_board()
-	_refresh_hand()
+	_table.refresh_seats()
+	_table.refresh_board()
+	_table.refresh_hand()
 	_refresh_buttons()
-
-## Seat opponents around the table: players[1] opposite you, players[2] on the
-## left, players[3] on the right. Unused seats collapse.
-func _refresh_seats() -> void:
-	opponent_backs.clear()
-	var seats: Array = [seat_top, seat_left, seat_right]
-	var seated_players := mini(gm.players.size(), MAX_PLAYERS)
-	for i in seats.size():
-		var seat: VBoxContainer = seats[i]
-		_clear_children(seat)
-		var player_index := i + 1
-		if player_index >= seated_players:
-			seat.visible = false
-			continue
-		seat.visible = true
-		var p := gm.players[player_index]
-		var chip := _make_player_chip(p, player_index)
-		chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		seat.add_child(chip)
-		var backs := _make_card_backs(p.hand, i == 0)
-		backs.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		seat.add_child(backs)
-		opponent_backs[p.player_id] = backs
-	stock_label.text = "Stock: %d" % gm.deck.size()
-	round_label.text = "Round %d" % gm.round_number
-	_refresh_stock_top()
-
-## Show the top card of the stock beside the count when it is glass: the next
-## draw is public knowledge, for the player exactly as for the AI.
-func _refresh_stock_top() -> void:
-	_clear_children(stock_top_slot)
-	var top := gm.deck.peek()
-	if top == null or not top.is_glass():
-		return
-	var face := CardRenderer.make_glass_face(top, UITheme.BACK_SIZE_TOP)
-	face.tooltip_text = "Top of the stock is glass — everyone can see " \
-		+ "the next card drawn."
-	stock_top_slot.add_child(face)
-
-func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
-	var is_current: bool = p == gm.current_player() and not gm.is_game_over
-	var chip := PanelContainer.new()
-	var sb := CardRenderer.panel_style(UITheme.COL_CHIP_BG, 8)
-	sb.border_color = UITheme.COL_CHIP_ACTIVE if is_current else Color(1, 1, 1, 0.15)
-	sb.set_border_width_all(2)
-	chip.add_theme_stylebox_override("panel", sb)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	chip.add_child(row)
-	var lbl := Label.new()
-	lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var marker := "▶ " if is_current else ""
-	var opened := "" if p.has_opened else " · not open"
-	lbl.text = "%s%s — %d cards%s" % [marker, p.display_name, p.hand.size(), opened]
-	if is_current:
-		lbl.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
-	row.add_child(lbl)
-	# "Info" button beside the name tag: the opponent's mechanic and AI brain.
-	var info_btn := Button.new()
-	info_btn.text = "Info"
-	info_btn.tooltip_text = "Show this opponent's mechanic and AI"
-	info_btn.focus_mode = Control.FOCUS_NONE
-	info_btn.add_theme_font_size_override("font_size", 12)
-	info_btn.pressed.connect(_on_enemy_info_pressed.bind(player_index))
-	row.add_child(info_btn)
-	return chip
-
-## A row (top seat) or column (side seats) of an opponent's cards, seen from
-## the back. Glass cards are see-through, so they show their face right in the
-## row; everything else is a plain card back. The overlap tightens as the hand
-## grows so the seat never exceeds a fixed footprint.
-func _make_card_backs(hand: Array[Card], horizontal: bool) -> BoxContainer:
-	var box: BoxContainer
-	var back_size: Vector2
-	var max_len: float
-	if horizontal:
-		box = HBoxContainer.new()
-		back_size = UITheme.BACK_SIZE_TOP
-		max_len = UITheme.BACKS_MAX_LEN_TOP
-	else:
-		box = VBoxContainer.new()
-		back_size = UITheme.BACK_SIZE_SIDE
-		max_len = UITheme.BACKS_MAX_LEN_SIDE
-	var card_len := back_size.x if horizontal else back_size.y
-	if hand.size() > 1:
-		var step := minf(card_len * 0.55, (max_len - card_len) / (hand.size() - 1))
-		box.add_theme_constant_override("separation", int(step - card_len))
-	for c in hand:
-		if c.is_glass():
-			var face := CardRenderer.make_glass_face(c, back_size)
-			face.tooltip_text = "Glass — you can see this card through the back."
-			box.add_child(face)
-			# Registered so enemy-move animations start from the visible card.
-			card_nodes[c] = face
-		else:
-			box.add_child(CardRenderer.make_card_back(back_size))
-	return box
-
-func _refresh_board() -> void:
-	_clear_children(board_flow)
-	if gm.board.melds.is_empty():
-		var empty := Label.new()
-		empty.text = "The table is empty — drag cards here to lay down the first group."
-		empty.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-		board_flow.add_child(empty)
-	for meld in gm.board.melds:
-		board_flow.add_child(_make_meld_panel(meld))
-	# The "+ New group" click target only appears while cards are selected;
-	# drags can always land on empty felt instead.
-	if not selected.is_empty() and _is_human_turn():
-		board_flow.add_child(_make_new_group_zone())
-
-func _make_meld_panel(meld: CardSet) -> PanelContainer:
-	Rules.assign_jokers(meld.cards)
-	var panel := PanelContainer.new()
-	var valid := meld.is_valid()
-	var locked := _is_human_turn() and not gm.current_player_is_open() \
-		and not gm.is_own_staged_meld(meld)
-	# Valid groups sit quietly on the felt; only broken ones shout.
-	var sb := CardRenderer.panel_style(Color(1, 1, 1, 0.045), 10)
-	sb.border_color = UITheme.COL_MELD_BORDER if valid else UITheme.COL_MELD_BAD
-	sb.set_border_width_all(1 if valid else 2)
-	panel.add_theme_stylebox_override("panel", sb)
-	if not valid:
-		panel.tooltip_text = "Not a valid group yet — fix it before ending your turn."
-	elif locked:
-		panel.tooltip_text = "Locked until you open — lay down a valid group " \
-			+ "from your own hand first."
-	panel.set_drag_forwarding(Callable(),
-		_can_drop_on_meld.bind(meld), _drop_on_meld.bind(meld))
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 4)
-	panel.add_child(row)
-	for c in Rules.display_order(meld.cards):
-		row.add_child(_make_card_button(c, meld))
-	return panel
-
-func _make_new_group_zone() -> Button:
-	var zone := Button.new()
-	zone.text = "+ New group"
-	zone.tooltip_text = "Drop or move selected cards here to start a brand-new group"
-	zone.custom_minimum_size = UITheme.NEW_GROUP_SIZE
-	zone.focus_mode = Control.FOCUS_NONE
-	var sb := CardRenderer.panel_style(Color(1, 1, 1, 0.04), 10)
-	sb.border_color = Color(1, 1, 1, 0.35)
-	sb.set_border_width_all(2)
-	zone.add_theme_stylebox_override("normal", sb)
-	zone.add_theme_stylebox_override("hover", CardRenderer.hover_variant(sb))
-	zone.add_theme_stylebox_override("pressed", sb)
-	zone.pressed.connect(_on_new_meld_pressed)
-	zone.set_drag_forwarding(Callable(), _can_drop_new_group, _drop_new_group)
-	return zone
-
-func _refresh_hand() -> void:
-	var sb := CardRenderer.panel_style(UITheme.COL_FELT_DARK, 10)
-	if _is_human_turn():
-		sb.border_color = UITheme.COL_CHIP_ACTIVE
-		sb.set_border_width_all(2)
-	hand_panel.add_theme_stylebox_override("panel", sb)
-	_clear_children(hand_box)
-	var hand := gm.players[0].hand
-	if gm.players[0].has_opened:
-		hand_title.text = "Your hand (%d)" % hand.size()
-	else:
-		hand_title.text = "Your hand (%d) — not open yet: lay down a valid group " % hand.size() \
-			+ "from these cards before touching the table"
-	# The hand keeps whatever order the player gave it (drag to rearrange,
-	# sort buttons to sort). A joker back in the hand is a free wildcard, so
-	# shed any representation (and choice) left over from its time on the table.
-	for c in hand:
-		if c.is_joker:
-			c.joker_rank = 0
-			c.joker_suit = ""
-			c.joker_pref_rank = 0
-			c.joker_pref_suit = ""
-			c.joker_lock_rank = 0
-			c.joker_lock_suit = ""
-	for c in hand:
-		hand_box.add_child(_make_card_button(c))
 
 func _refresh_buttons() -> void:
 	var human_turn := _is_human_turn()
@@ -789,99 +614,7 @@ func _refresh_buttons() -> void:
 			parts.append(c.label())
 		selection_label.text = "Selected: %s" % " ".join(parts)
 
-# --- Card rendering -------------------------------------------------------------
-
-## Card buttons are both click-to-select toggles and drag sources. Cards on the
-## table (meld != null) are also drop targets for their own group, and are
-## greyed out until the player has opened; hand cards are drop targets for
-## returning played cards.
-func _make_card_button(c: Card, meld: CardSet = null) -> Button:
-	var on_board := meld != null
-	var b := Button.new()
-	b.toggle_mode = true
-	b.text = c.label()
-	b.button_pressed = selected.has(c)
-	b.custom_minimum_size = UITheme.BOARD_CARD_SIZE if on_board else UITheme.CARD_SIZE
-	b.disabled = not _card_is_interactive(meld)
-	if on_board and b.disabled and _is_human_turn():
-		b.tooltip_text = "Locked until you open — lay down a valid group " \
-			+ "from your own hand first."
-	b.add_theme_font_size_override("font_size",
-		UITheme.BOARD_CARD_FONT_SIZE if on_board else UITheme.CARD_FONT_SIZE)
-	b.focus_mode = Control.FOCUS_NONE
-
-	var font_col := UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK
-	if c.is_joker:
-		font_col = UITheme.COL_JOKER
-		if not b.disabled:
-			if c.joker_rank > 0:
-				b.tooltip_text = ("Joker placed as %s — it stays that card until " \
-					+ "it leaves the table. Hold the real %s? Drop it on this " \
-					+ "joker to swap it into your hand.") % [c.rep_label(), c.rep_label()]
-				if on_board and _joker_is_rechoosable(c, meld):
-					b.tooltip_text += "\nRight-click to change what it stands for " \
-						+ "(only until your turn ends)."
-			else:
-				b.tooltip_text = "Joker — counts as any card."
-	for state in ["font_color", "font_pressed_color", "font_hover_color",
-			"font_hover_pressed_color", "font_focus_color"]:
-		b.add_theme_color_override(state, font_col)
-	b.add_theme_color_override("font_disabled_color", Color(font_col, 0.75))
-
-	var bg := UITheme.COL_JOKER_BG if c.is_joker else UITheme.COL_CARD_BG
-	var border := UITheme.COL_JOKER if c.is_joker else UITheme.COL_CARD_BORDER
-	var border_w := 1
-	if highlighted.has(c):
-		bg = UITheme.COL_HILITE_BG
-		border = UITheme.COL_HILITE
-		border_w = 3
-	if selected.has(c):
-		bg = UITheme.COL_SELECT_BG
-		border = UITheme.COL_SELECT
-		border_w = 3
-	# Suit filter (hand cards only): while a suit is hovered, cards of that suit
-	# get a bright outline and everything else is faded out below. Jokers match
-	# every suit since they can stand in for any of them. Selection/enemy-touch
-	# borders keep priority so those states still read.
-	var filter_active := not on_board and hover_filter_suit != ""
-	var filter_match := filter_active and (c.is_joker or c.suit == hover_filter_suit)
-	if filter_match and not selected.has(c) and not highlighted.has(c):
-		border = UITheme.COL_FILTER_EDGE
-		border_w = 3
-	# Glass cards render transparent — the felt shows through whatever state
-	# the card is in. The selection/highlight border stays so they still read.
-	if c.is_glass():
-		bg = Color(bg, UITheme.GLASS_BG_ALPHA)
-		if not selected.has(c) and not highlighted.has(c):
-			border = UITheme.COL_GLASS_EDGE
-			border_w = 2
-		if not on_board:
-			b.tooltip_text = "Glass — see-through from the back: opponents " \
-				+ "can see this card in your hand." \
-				+ ("" if b.tooltip_text == "" else "\n" + b.tooltip_text)
-	var style := CardRenderer.card_style(bg, border, border_w)
-	for state in ["normal", "pressed", "disabled"]:
-		b.add_theme_stylebox_override(state, style)
-	b.add_theme_stylebox_override("hover", CardRenderer.card_style(bg, UITheme.COL_SELECT, maxi(border_w, 2)))
-	b.add_theme_stylebox_override("hover_pressed", CardRenderer.card_style(bg, border, border_w))
-
-	if c.is_sticky():
-		CardRenderer.add_slime_blob(b)
-	if filter_active and not filter_match:
-		b.modulate = Color(1, 1, 1, UITheme.FILTER_DIM_ALPHA)
-
-	b.toggled.connect(_on_card_toggled.bind(c))
-	b.gui_input.connect(_on_card_gui_input.bind(c, meld))
-	if on_board:
-		b.set_drag_forwarding(_get_card_drag_data.bind(c, b),
-			_can_drop_on_meld.bind(meld), _drop_on_meld.bind(meld))
-	else:
-		# Hand cards are also reorder targets: dropping other hand cards on
-		# them moves those cards next to this one.
-		b.set_drag_forwarding(_get_card_drag_data.bind(c, b),
-			_can_drop_on_hand_card.bind(c), _drop_on_hand_card.bind(c))
-	card_nodes[c] = b
-	return b
+# --- Suit filter --------------------------------------------------------------
 
 ## One suit symbol in the filter row. It does nothing on click — hovering is the
 ## whole interaction: entering sets hover_filter_suit and redraws the hand so
@@ -904,7 +637,7 @@ func _on_suit_filter_enter(suit: String) -> void:
 	if hover_filter_suit == suit:
 		return
 	hover_filter_suit = suit
-	_refresh_hand()
+	_table.refresh_hand()
 
 func _on_suit_filter_exit(suit: String) -> void:
 	# Guarded so sliding straight from one suit onto the next (exit fires after
@@ -912,7 +645,7 @@ func _on_suit_filter_exit(suit: String) -> void:
 	if hover_filter_suit != suit:
 		return
 	hover_filter_suit = ""
-	_refresh_hand()
+	_table.refresh_hand()
 
 func _clear_children(node: Node) -> void:
 	for child in node.get_children():
