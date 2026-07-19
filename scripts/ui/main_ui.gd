@@ -100,9 +100,6 @@ const ENEMY_NAMES := ["Rosso", "Nero", "Bianco"]
 ## Sensible bounds for the starting hand size setting (both modes).
 const HAND_SIZE_MIN := 5
 const HAND_SIZE_MAX := 21
-## Where the Save button persists every setting so a run keeps its rules
-## between sessions.
-const SETTINGS_PATH := "user://settings.cfg"
 
 ## Suit order for the "Sort: suit" button: reds together, then blacks, so runs
 ## of the same colour sit side by side. Jokers are handled separately (last).
@@ -132,36 +129,9 @@ var card_nodes := {}
 # refresh, used as the animation origin for cards played from a hidden hand.
 var opponent_backs := {}
 
-# Vanilla sandbox settings (the Settings dialog's first tab) — sandbox games
-# only. The AI graph and draw count apply immediately; the rest take effect
-# on the next new game.
-var ai_strength := 1.0    # 0 = weak, 1 = strong
-var ai_style := 0.0       # 0 = quick, 1 = conservative
-var ai_attention := 1.0   # 0 = oblivious, 1 = attentive
-var ai_planning := 1.0    # 0 = short-sighted, 1 = expert planner
-var enemy_count := 2      # 1-3
-var draw_per_turn := 1    # 1-3
-var start_hand_size := GameManager.DEFAULT_HAND_SIZE  # cards dealt at the start
-var max_hand_size := 0    # 0 = no cap, otherwise 10-20
-var max_plays_per_turn := 0  # 0 = no cap, otherwise 10-20
-var include_jokers := false
-var start_combo := false  # deal each player a random opening group on the table
-
-# Roguelike run settings (the second tab) — the run's own copies of the same
-# rules, all applying from the next round so a run in progress keeps the rules
-# it started under.
-var rogue_draw_per_turn := 2
-var rogue_start_hand_size := GameManager.DEFAULT_HAND_SIZE
-var rogue_max_hand_size := 0
-var rogue_max_plays_per_turn := 13
-var rogue_jokers := true
-var rogue_start_combo := false
-# Per-enemy AI overrides for roguelike runs, keyed by enemy display_name ->
-# {"strength", "style", "attention"}. Seeded from each designed enemy's own
-# dials (see _init_rogue_ai_overrides) and editable from the Settings dialog's
-# "Roguelike run" tab, so any individual opponent's brain can be retuned. The
-# override is stamped onto the enemy the run draws each round (see _new_game).
-var rogue_ai_overrides := {}
+# Every tunable rule for both modes, plus persistence, lives on this model;
+# the Settings dialog edits it and _new_game reads it.
+var settings := GameSettings.new()
 
 var game_root: VBoxContainer
 var menu_layer: MenuScreen
@@ -203,96 +173,10 @@ func _ready() -> void:
 	gm.game_over.connect(_on_game_over)
 	# Seed the per-enemy AI overrides from the roster, then let any saved
 	# settings override the defaults, before the settings dialog reads them.
-	_init_rogue_ai_overrides()
-	_load_settings()
+	settings.seed_ai_overrides()
+	settings.load_saved()
 	_build_layout()
 	_show_menu()
-
-## Seed a default AI override for every enemy in the roster from its own
-## designed dials, so an untouched enemy plays exactly as designed. Existing
-## entries (e.g. just loaded from disk) are left as they are.
-func _init_rogue_ai_overrides() -> void:
-	for enemy in Enemy.roster():
-		if not rogue_ai_overrides.has(enemy.display_name):
-			rogue_ai_overrides[enemy.display_name] = {
-				"strength": enemy.strength,
-				"style": enemy.style,
-				"attention": enemy.attention,
-				"planning": enemy.planning,
-			}
-
-## Stamp the settings' AI override for this enemy onto its dials, so the run
-## drives it with the brain chosen in the "Roguelike run" tab (its designed
-## dials when untouched).
-func _apply_ai_override(enemy: Enemy) -> void:
-	var ov: Dictionary = rogue_ai_overrides.get(enemy.display_name, {})
-	if ov.is_empty():
-		return
-	enemy.strength = ov["strength"]
-	enemy.style = ov["style"]
-	enemy.attention = ov["attention"]
-	enemy.planning = ov.get("planning", enemy.planning)
-
-# --- Settings persistence -----------------------------------------------------
-
-## Write every sandbox and roguelike setting (including the per-enemy AI
-## overrides) to disk, so the Save button makes the current tuning stick between
-## sessions.
-func _save_settings() -> void:
-	var cfg := ConfigFile.new()
-	cfg.set_value("sandbox", "ai_strength", ai_strength)
-	cfg.set_value("sandbox", "ai_style", ai_style)
-	cfg.set_value("sandbox", "ai_attention", ai_attention)
-	cfg.set_value("sandbox", "ai_planning", ai_planning)
-	cfg.set_value("sandbox", "enemy_count", enemy_count)
-	cfg.set_value("sandbox", "draw_per_turn", draw_per_turn)
-	cfg.set_value("sandbox", "start_hand_size", start_hand_size)
-	cfg.set_value("sandbox", "max_hand_size", max_hand_size)
-	cfg.set_value("sandbox", "max_plays_per_turn", max_plays_per_turn)
-	cfg.set_value("sandbox", "include_jokers", include_jokers)
-	cfg.set_value("sandbox", "start_combo", start_combo)
-	cfg.set_value("rogue", "draw_per_turn", rogue_draw_per_turn)
-	cfg.set_value("rogue", "start_hand_size", rogue_start_hand_size)
-	cfg.set_value("rogue", "max_hand_size", rogue_max_hand_size)
-	cfg.set_value("rogue", "max_plays_per_turn", rogue_max_plays_per_turn)
-	cfg.set_value("rogue", "jokers", rogue_jokers)
-	cfg.set_value("rogue", "start_combo", rogue_start_combo)
-	for name: String in rogue_ai_overrides:
-		var ov: Dictionary = rogue_ai_overrides[name]
-		cfg.set_value("rogue_ai", name,
-			[ov["strength"], ov["style"], ov["attention"], ov.get("planning", 1.0)])
-	cfg.save(SETTINGS_PATH)
-
-## Load any settings saved by an earlier session, leaving the built-in defaults
-## in place when a value (or the file) is missing. Runs before the settings
-## dialog is built, so the controls open showing the saved values.
-func _load_settings() -> void:
-	var cfg := ConfigFile.new()
-	if cfg.load(SETTINGS_PATH) != OK:
-		return
-	ai_strength = cfg.get_value("sandbox", "ai_strength", ai_strength)
-	ai_style = cfg.get_value("sandbox", "ai_style", ai_style)
-	ai_attention = cfg.get_value("sandbox", "ai_attention", ai_attention)
-	ai_planning = cfg.get_value("sandbox", "ai_planning", ai_planning)
-	enemy_count = cfg.get_value("sandbox", "enemy_count", enemy_count)
-	draw_per_turn = cfg.get_value("sandbox", "draw_per_turn", draw_per_turn)
-	start_hand_size = cfg.get_value("sandbox", "start_hand_size", start_hand_size)
-	max_hand_size = cfg.get_value("sandbox", "max_hand_size", max_hand_size)
-	max_plays_per_turn = cfg.get_value("sandbox", "max_plays_per_turn", max_plays_per_turn)
-	include_jokers = cfg.get_value("sandbox", "include_jokers", include_jokers)
-	start_combo = cfg.get_value("sandbox", "start_combo", start_combo)
-	rogue_draw_per_turn = cfg.get_value("rogue", "draw_per_turn", rogue_draw_per_turn)
-	rogue_start_hand_size = cfg.get_value("rogue", "start_hand_size", rogue_start_hand_size)
-	rogue_max_hand_size = cfg.get_value("rogue", "max_hand_size", rogue_max_hand_size)
-	rogue_max_plays_per_turn = cfg.get_value("rogue", "max_plays_per_turn", rogue_max_plays_per_turn)
-	rogue_jokers = cfg.get_value("rogue", "jokers", rogue_jokers)
-	rogue_start_combo = cfg.get_value("rogue", "start_combo", rogue_start_combo)
-	for name: String in rogue_ai_overrides:
-		var saved: Array = cfg.get_value("rogue_ai", name, [])
-		if saved.size() >= 3:
-			rogue_ai_overrides[name] = {
-				"strength": saved[0], "style": saved[1], "attention": saved[2],
-				"planning": saved[3] if saved.size() >= 4 else 1.0}
 
 func _new_game() -> void:
 	game_generation += 1
@@ -305,39 +189,39 @@ func _new_game() -> void:
 	var combo_start := false
 	var jokers_in := false
 	if game_mode == Mode.ROGUE:
-		combo_start = rogue_start_combo
-		jokers_in = rogue_jokers
+		combo_start = settings.rogue_start_combo
+		jokers_in = settings.rogue_jokers
 		current_enemy = Enemy.random_enemy()
-		_apply_ai_override(current_enemy)
-		gm.setup(["You", current_enemy.display_name], rogue_start_hand_size, -1, rogue_jokers)
-		gm.draw_per_turn = rogue_draw_per_turn
-		gm.max_hand_size = rogue_max_hand_size
-		gm.max_plays_per_turn = rogue_max_plays_per_turn
+		settings.apply_ai_override(current_enemy)
+		gm.setup(["You", current_enemy.display_name], settings.rogue_start_hand_size, -1, settings.rogue_jokers)
+		gm.draw_per_turn = settings.rogue_draw_per_turn
+		gm.max_hand_size = settings.rogue_max_hand_size
+		gm.max_plays_per_turn = settings.rogue_max_plays_per_turn
 		# Let the enemy plant its mechanics on the freshly dealt game.
 		current_enemy.on_combat_start(gm)
 		_log("[b]Round %d[/b] — you face %s. Run rules: draw %d per turn, "
-			% [rogue_round, current_enemy.display_name, rogue_draw_per_turn]
+			% [rogue_round, current_enemy.display_name, settings.rogue_draw_per_turn]
 			+ "%s cards played per turn, %d-card hands, %s."
-			% ["at most %d" % rogue_max_plays_per_turn if rogue_max_plays_per_turn > 0
-				else "unlimited", rogue_start_hand_size,
-				"4 jokers in" if rogue_jokers else "no jokers"])
+			% ["at most %d" % settings.rogue_max_plays_per_turn if settings.rogue_max_plays_per_turn > 0
+				else "unlimited", settings.rogue_start_hand_size,
+				"4 jokers in" if settings.rogue_jokers else "no jokers"])
 		var intro := current_enemy.mechanic_intro()
 		if intro != "":
 			_log(intro)
 	else:
-		combo_start = start_combo
-		jokers_in = include_jokers
+		combo_start = settings.start_combo
+		jokers_in = settings.include_jokers
 		current_enemy = null
 		var names: Array = ["You"]
-		for i in enemy_count:
+		for i in settings.enemy_count:
 			names.append(ENEMY_NAMES[i])
-		gm.setup(names, start_hand_size, -1, include_jokers)
-		gm.draw_per_turn = draw_per_turn
-		gm.max_hand_size = max_hand_size
-		gm.max_plays_per_turn = max_plays_per_turn
-		_log("New game: %d enem%s, %d cards each, double deck, %s." % [enemy_count,
-			"y" if enemy_count == 1 else "ies", start_hand_size,
-			"4 jokers in" if include_jokers else "no jokers"])
+		gm.setup(names, settings.start_hand_size, -1, settings.include_jokers)
+		gm.draw_per_turn = settings.draw_per_turn
+		gm.max_hand_size = settings.max_hand_size
+		gm.max_plays_per_turn = settings.max_plays_per_turn
+		_log("New game: %d enem%s, %d cards each, double deck, %s." % [settings.enemy_count,
+			"y" if settings.enemy_count == 1 else "ies", settings.start_hand_size,
+			"4 jokers in" if settings.include_jokers else "no jokers"])
 	if combo_start:
 		# Dealt after the enemy's mechanics so combo cards keep their slime/glass.
 		gm.deal_starting_melds()
@@ -625,7 +509,7 @@ func _enemy_info_text(player_index: int) -> String:
 	else:
 		lines.append("A vanilla opponent with no special mechanic.")
 		lines.append("AI: plays %s." % _personality_desc(
-			ai_strength, ai_style, ai_attention, ai_planning))
+			settings.ai_strength, settings.ai_style, settings.ai_attention, settings.ai_planning))
 	return "\n\n".join(lines)
 
 ## Instantiate the menu scene and wire each button's intent signal to the
@@ -691,7 +575,7 @@ func _build_settings_dialog() -> void:
 
 func _on_settings_custom_action(action: StringName) -> void:
 	if action == "save_settings":
-		_save_settings()
+		settings.save()
 		settings_save_note.text = "Settings saved."
 
 ## The "Vanilla sandbox" tab: everything here touches sandbox games only.
@@ -705,21 +589,21 @@ func _build_vanilla_settings() -> VBoxContainer:
 	ai_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(ai_label)
 
-	col.add_child(_make_ai_slider_row("Skill", "Weak", "Strong", ai_strength,
+	col.add_child(_make_ai_slider_row("Skill", "Weak", "Strong", settings.ai_strength,
 		func(v: float) -> void:
-			ai_strength = v
+			settings.ai_strength = v
 			_refresh_ai_desc()))
-	col.add_child(_make_ai_slider_row("Style", "Quick", "Conservative", ai_style,
+	col.add_child(_make_ai_slider_row("Style", "Quick", "Conservative", settings.ai_style,
 		func(v: float) -> void:
-			ai_style = v
+			settings.ai_style = v
 			_refresh_ai_desc()))
-	col.add_child(_make_ai_slider_row("Attention", "Oblivious", "Attentive", ai_attention,
+	col.add_child(_make_ai_slider_row("Attention", "Oblivious", "Attentive", settings.ai_attention,
 		func(v: float) -> void:
-			ai_attention = v
+			settings.ai_attention = v
 			_refresh_ai_desc()))
-	col.add_child(_make_ai_slider_row("Planning", "Short-sighted", "Expert planner", ai_planning,
+	col.add_child(_make_ai_slider_row("Planning", "Short-sighted", "Expert planner", settings.ai_planning,
 		func(v: float) -> void:
-			ai_planning = v
+			settings.ai_planning = v
 			_refresh_ai_desc()))
 
 	ai_desc_label = Label.new()
@@ -729,40 +613,40 @@ func _build_vanilla_settings() -> VBoxContainer:
 
 	col.add_child(HSeparator.new())
 
-	col.add_child(_make_spin_row("Enemies (next game):", 1, 3, enemy_count,
+	col.add_child(_make_spin_row("Enemies (next game):", 1, 3, settings.enemy_count,
 		_on_enemy_count_changed))
-	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, draw_per_turn,
+	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, settings.draw_per_turn,
 		_on_draw_count_changed))
 	col.add_child(_make_spin_row("Starting hand size (next game):",
-		HAND_SIZE_MIN, HAND_SIZE_MAX, start_hand_size,
-		func(v: float) -> void: start_hand_size = int(v)))
+		HAND_SIZE_MIN, HAND_SIZE_MAX, settings.start_hand_size,
+		func(v: float) -> void: settings.start_hand_size = int(v)))
 	# Max hand size: with a cap, drawing stops at the cap and a draw attempted
 	# on a full hand becomes a pass. Applies immediately — but never to a
 	# roguelike run, whose rules are fixed.
-	col.add_child(_make_cap_row("Max hand size:", max_hand_size,
+	col.add_child(_make_cap_row("Max hand size:", settings.max_hand_size,
 		func(v: int) -> void:
-			max_hand_size = v
+			settings.max_hand_size = v
 			if game_mode == Mode.SANDBOX:
 				gm.max_hand_size = v))
 	# Max cards played per turn: only cards leaving the hand count, and the
 	# same cap binds the AI. Applies immediately (sandbox only).
-	col.add_child(_make_cap_row("Max cards played per turn:", max_plays_per_turn,
+	col.add_child(_make_cap_row("Max cards played per turn:", settings.max_plays_per_turn,
 		func(v: int) -> void:
-			max_plays_per_turn = v
+			settings.max_plays_per_turn = v
 			if game_mode == Mode.SANDBOX:
 				gm.max_plays_per_turn = v))
 
 	var joker_check := CheckBox.new()
 	joker_check.text = "Include 4 jokers — wildcards (next game)"
-	joker_check.button_pressed = include_jokers
+	joker_check.button_pressed = settings.include_jokers
 	joker_check.toggled.connect(_on_jokers_toggled)
 	col.add_child(joker_check)
 
 	var combo_check := CheckBox.new()
 	combo_check.text = "Starting combos — deal every player a random opening\n" \
 		+ "group from the stock onto the table (next game)"
-	combo_check.button_pressed = start_combo
-	combo_check.toggled.connect(func(on: bool) -> void: start_combo = on)
+	combo_check.button_pressed = settings.start_combo
+	combo_check.toggled.connect(func(on: bool) -> void: settings.start_combo = on)
 	col.add_child(combo_check)
 	return col
 
@@ -780,27 +664,27 @@ func _build_rogue_settings() -> VBoxContainer:
 	col.add_child(intro)
 	col.add_child(HSeparator.new())
 
-	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, rogue_draw_per_turn,
-		func(v: float) -> void: rogue_draw_per_turn = int(v)))
+	col.add_child(_make_spin_row("Cards drawn per turn:", 1, 3, settings.rogue_draw_per_turn,
+		func(v: float) -> void: settings.rogue_draw_per_turn = int(v)))
 	col.add_child(_make_spin_row("Starting hand size:",
-		HAND_SIZE_MIN, HAND_SIZE_MAX, rogue_start_hand_size,
-		func(v: float) -> void: rogue_start_hand_size = int(v)))
-	col.add_child(_make_cap_row("Max hand size:", rogue_max_hand_size,
-		func(v: int) -> void: rogue_max_hand_size = v))
-	col.add_child(_make_cap_row("Max cards played per turn:", rogue_max_plays_per_turn,
-		func(v: int) -> void: rogue_max_plays_per_turn = v))
+		HAND_SIZE_MIN, HAND_SIZE_MAX, settings.rogue_start_hand_size,
+		func(v: float) -> void: settings.rogue_start_hand_size = int(v)))
+	col.add_child(_make_cap_row("Max hand size:", settings.rogue_max_hand_size,
+		func(v: int) -> void: settings.rogue_max_hand_size = v))
+	col.add_child(_make_cap_row("Max cards played per turn:", settings.rogue_max_plays_per_turn,
+		func(v: int) -> void: settings.rogue_max_plays_per_turn = v))
 
 	var joker_check := CheckBox.new()
 	joker_check.text = "Include 4 jokers — wildcards"
-	joker_check.button_pressed = rogue_jokers
-	joker_check.toggled.connect(func(on: bool) -> void: rogue_jokers = on)
+	joker_check.button_pressed = settings.rogue_jokers
+	joker_check.toggled.connect(func(on: bool) -> void: settings.rogue_jokers = on)
 	col.add_child(joker_check)
 
 	var combo_check := CheckBox.new()
 	combo_check.text = "Starting combos — deal every player a random opening\n" \
 		+ "group from the stock onto the table"
-	combo_check.button_pressed = rogue_start_combo
-	combo_check.toggled.connect(func(on: bool) -> void: rogue_start_combo = on)
+	combo_check.button_pressed = settings.rogue_start_combo
+	combo_check.toggled.connect(func(on: bool) -> void: settings.rogue_start_combo = on)
 	col.add_child(combo_check)
 
 	col.add_child(HSeparator.new())
@@ -815,7 +699,7 @@ func _build_rogue_settings() -> VBoxContainer:
 	return col
 
 ## A per-enemy AI block for the roguelike tab: the enemy's name over three
-## sliders bound to its entry in rogue_ai_overrides (which is passed by
+## sliders bound to its entry in settings.rogue_ai_overrides (which is passed by
 ## reference, so editing the sliders retunes the run's copy of that enemy).
 func _build_enemy_ai_rows(enemy_name: String) -> VBoxContainer:
 	var box := VBoxContainer.new()
@@ -824,7 +708,7 @@ func _build_enemy_ai_rows(enemy_name: String) -> VBoxContainer:
 	title.text = enemy_name
 	title.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	box.add_child(title)
-	var ov: Dictionary = rogue_ai_overrides[enemy_name]
+	var ov: Dictionary = settings.rogue_ai_overrides[enemy_name]
 	box.add_child(_make_ai_slider_row("Skill", "Weak", "Strong", ov["strength"],
 		func(v: float) -> void: ov["strength"] = v))
 	box.add_child(_make_ai_slider_row("Style", "Quick", "Conservative", ov["style"],
@@ -876,15 +760,15 @@ func _on_settings_pressed() -> void:
 	settings_dialog.popup_centered()
 
 func _on_enemy_count_changed(value: float) -> void:
-	enemy_count = int(value)
+	settings.enemy_count = int(value)
 
 func _on_draw_count_changed(value: float) -> void:
-	draw_per_turn = int(value)
+	settings.draw_per_turn = int(value)
 	if game_mode == Mode.SANDBOX:
-		gm.draw_per_turn = draw_per_turn
+		gm.draw_per_turn = settings.draw_per_turn
 
 func _on_jokers_toggled(on: bool) -> void:
-	include_jokers = on
+	settings.include_jokers = on
 
 ## A titled 0..1 slider with its two end labels underneath. `on_changed` gets
 ## the new value. Used for the three enemy-AI dials.
@@ -924,7 +808,7 @@ func _refresh_ai_desc() -> void:
 
 func _ai_description() -> String:
 	return "Enemies play %s. Applies from their next turn." \
-		% _personality_desc(ai_strength, ai_style, ai_attention, ai_planning)
+		% _personality_desc(settings.ai_strength, settings.ai_style, settings.ai_attention, settings.ai_planning)
 
 ## A plain-English reading of the four AI dials ("cutthroat, quick, attentive
 ## and an expert planner"), shared by the sandbox slider description and the
@@ -1714,7 +1598,7 @@ func _run_ai_turns() -> void:
 	var gen := game_generation
 	var in_rogue := game_mode == Mode.ROGUE and current_enemy != null
 	var profile := current_enemy.make_profile() if in_rogue \
-		else AIProfile.new(ai_strength, ai_style, ai_attention, -1, ai_planning)
+		else AIProfile.new(settings.ai_strength, settings.ai_style, settings.ai_attention, -1, settings.ai_planning)
 	# The designed enemy drives its strategy (e.g. the slime guarding jokers).
 	var enemy_def: Enemy = current_enemy if in_rogue else null
 	highlighted.clear()
