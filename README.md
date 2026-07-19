@@ -253,11 +253,17 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 
 ### UI — `scripts/ui/` + `scenes/`
 
-- `scripts/ui/main_ui.gd` + `scenes/main.tscn` — the table controller: owns the
-  `GameManager`, builds the felt/hand/seat layout, drives selection, drag-and-drop
-  and click-to-play, the opening-rule locking, enemy-turn animation, and the
-  right-click joker menu. Delegates look and self-contained regions to the
+- `scripts/ui/main_ui.gd` + `scenes/main.tscn` — `MainUI`, the table controller:
+  owns the `GameManager`, builds the layout, drives selection, drag-and-drop and
+  click-to-play, the opening-rule locking, the right-click joker menu, and the
+  enemy-turn loop. Delegates look, rendering and self-contained regions to the
   helpers below.
+- `scripts/ui/table_view.gd` — `TableView`: a passive view that renders the live
+  table (opponent seats, the felt of meld panels + "New group" zone, and your
+  hand's card buttons) into the controller's containers. Reads the controller's
+  state and wires each button back to its handlers; holds no state itself.
+- `scripts/ui/enemy_move_animator.gd` — `EnemyMoveAnimator`: flies enemy cards
+  from where they were to where they land, so each AI move is visible.
 - `scripts/ui/ui_theme.gd` — `UITheme`: shared visual constants (the felt/cards
   palette, card and seat sizes, the suit→colour map). One source of truth for
   how the game looks.
@@ -280,12 +286,25 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   counting (visible copies, obtainable copies, glass feed threats, glass-aware
   holding and joker stand-ins) — including full slimed, glass, and
   glass-plus-slimed AI-vs-AI games
+- `tests/ui_mode_check.gd` — headless check of the menu modes, the settings
+  model, and the roguelike ladder (rules apply from the next round, win/loss
+  buttons, starting combos)
+- `tests/suit_filter_check.gd` — headless check of the hand suit-filter and the
+  table Sort/Randomize ordering
+- `tests/view_check.gd` — headless check of the table rendering and drag/drop:
+  opponent seats, board meld panels, the "New group" zone, card-node
+  registration and a new-group drop
+- `tests/anim_check.gd` — headless check that an enemy turn drives to
+  completion through `EnemyMoveAnimator` with no leaked flying-card proxies
 
 ## Headless smoke test
 
 ```sh
 godot --headless --path . --import                              # once, builds class cache
 godot --headless --path . --script res://tests/smoke_test.gd    # unit tests + 65 seeded games
+godot --headless --path . --script res://tests/ui_mode_check.gd    # menu modes + settings
+godot --headless --path . --script res://tests/view_check.gd       # table rendering + drag/drop
+godot --headless --path . --script res://tests/anim_check.gd       # enemy-turn animation
 ```
 
 ## Headless balance stats
