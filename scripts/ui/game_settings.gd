@@ -25,6 +25,12 @@ var max_hand_size := 0    # 0 = no cap, otherwise 10-20
 var max_plays_per_turn := 0  # 0 = no cap, otherwise 10-20
 var include_jokers := false
 var start_combo := false  # deal each player a random opening group on the table
+# Ultimate meter (sandbox). Every player charges a meter by playing hands;
+# meter_max 0 turns it off. meter_gain is the charge per hand, or per card
+# played from hand when meter_per_card is on. Apply from the next game.
+var meter_max := 10
+var meter_gain := 1
+var meter_per_card := false
 
 # Roguelike run settings (the second tab) — the run's own copies of the same
 # rules, all applying from the next round so a run in progress keeps the rules
@@ -35,6 +41,10 @@ var rogue_max_hand_size := 0
 var rogue_max_plays_per_turn := 13
 var rogue_jokers := true
 var rogue_start_combo := false
+# The run's own copy of the ultimate-meter tuning (see the sandbox block).
+var rogue_meter_max := 10
+var rogue_meter_gain := 1
+var rogue_meter_per_card := false
 # Per-enemy AI overrides for roguelike runs, keyed by enemy display_name ->
 # {"strength", "style", "attention", "planning"}. Seeded from each designed
 # enemy's own dials (see seed_ai_overrides) and editable from the Settings
@@ -112,12 +122,18 @@ func save() -> void:
 	cfg.set_value("sandbox", "max_plays_per_turn", max_plays_per_turn)
 	cfg.set_value("sandbox", "include_jokers", include_jokers)
 	cfg.set_value("sandbox", "start_combo", start_combo)
+	cfg.set_value("sandbox", "meter_max", meter_max)
+	cfg.set_value("sandbox", "meter_gain", meter_gain)
+	cfg.set_value("sandbox", "meter_per_card", meter_per_card)
 	cfg.set_value("rogue", "draw_per_turn", rogue_draw_per_turn)
 	cfg.set_value("rogue", "start_hand_size", rogue_start_hand_size)
 	cfg.set_value("rogue", "max_hand_size", rogue_max_hand_size)
 	cfg.set_value("rogue", "max_plays_per_turn", rogue_max_plays_per_turn)
 	cfg.set_value("rogue", "jokers", rogue_jokers)
 	cfg.set_value("rogue", "start_combo", rogue_start_combo)
+	cfg.set_value("rogue", "meter_max", rogue_meter_max)
+	cfg.set_value("rogue", "meter_gain", rogue_meter_gain)
+	cfg.set_value("rogue", "meter_per_card", rogue_meter_per_card)
 	for name: String in rogue_ai_overrides:
 		var ov: Dictionary = rogue_ai_overrides[name]
 		cfg.set_value("rogue_ai", name,
@@ -142,12 +158,18 @@ func load_saved() -> void:
 	max_plays_per_turn = cfg.get_value("sandbox", "max_plays_per_turn", max_plays_per_turn)
 	include_jokers = cfg.get_value("sandbox", "include_jokers", include_jokers)
 	start_combo = cfg.get_value("sandbox", "start_combo", start_combo)
+	meter_max = cfg.get_value("sandbox", "meter_max", meter_max)
+	meter_gain = cfg.get_value("sandbox", "meter_gain", meter_gain)
+	meter_per_card = cfg.get_value("sandbox", "meter_per_card", meter_per_card)
 	rogue_draw_per_turn = cfg.get_value("rogue", "draw_per_turn", rogue_draw_per_turn)
 	rogue_start_hand_size = cfg.get_value("rogue", "start_hand_size", rogue_start_hand_size)
 	rogue_max_hand_size = cfg.get_value("rogue", "max_hand_size", rogue_max_hand_size)
 	rogue_max_plays_per_turn = cfg.get_value("rogue", "max_plays_per_turn", rogue_max_plays_per_turn)
 	rogue_jokers = cfg.get_value("rogue", "jokers", rogue_jokers)
 	rogue_start_combo = cfg.get_value("rogue", "start_combo", rogue_start_combo)
+	rogue_meter_max = cfg.get_value("rogue", "meter_max", rogue_meter_max)
+	rogue_meter_gain = cfg.get_value("rogue", "meter_gain", rogue_meter_gain)
+	rogue_meter_per_card = cfg.get_value("rogue", "meter_per_card", rogue_meter_per_card)
 	for name: String in rogue_ai_overrides:
 		var saved: Array = cfg.get_value("rogue_ai", name, [])
 		if saved.size() >= 3:

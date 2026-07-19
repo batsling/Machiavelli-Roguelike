@@ -106,6 +106,45 @@ static func add_slime_blob(parent: Control) -> void:
 	blob.tooltip_text = "Slimed — sticks to adjacent slimed cards; moving one drags the lump."
 	parent.add_child(blob)
 
+## An ultimate-meter bar: a dark track with an amber fill (bright gold once
+## full) proportional to value/maximum, and a small "value/max" caption. The
+## fill is anchored by ratio, so it fills correctly whatever width the bar is
+## laid out at. Non-interactive. Callers gate on maximum > 0 (a disabled meter
+## draws no bar).
+static func make_meter_bar(value: int, maximum: int) -> Control:
+	var ratio := clampf(float(value) / float(maximum), 0.0, 1.0) if maximum > 0 else 0.0
+	var track := Panel.new()
+	track.custom_minimum_size = UITheme.METER_SIZE
+	track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var track_sb := StyleBoxFlat.new()
+	track_sb.bg_color = UITheme.COL_METER_TRACK
+	track_sb.border_color = UITheme.COL_METER_EDGE
+	track_sb.set_border_width_all(1)
+	track_sb.set_corner_radius_all(4)
+	track.add_theme_stylebox_override("panel", track_sb)
+	track.tooltip_text = "Ultimate meter: %d / %d" % [value, maximum]
+	if ratio > 0.0:
+		var full := value >= maximum
+		var fill := Panel.new()
+		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		fill.anchor_right = ratio  # width follows the charge, resolution-independent
+		fill.anchor_bottom = 1.0
+		var fill_sb := StyleBoxFlat.new()
+		fill_sb.bg_color = UITheme.COL_METER_FULL if full else UITheme.COL_METER_FILL
+		fill_sb.set_corner_radius_all(4)
+		fill.add_theme_stylebox_override("panel", fill_sb)
+		track.add_child(fill)
+	var caption := Label.new()
+	caption.set_anchors_preset(Control.PRESET_FULL_RECT)
+	caption.text = "%d/%d" % [value, maximum]
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	caption.add_theme_font_size_override("font_size", UITheme.METER_FONT_SIZE)
+	caption.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
+	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	track.add_child(caption)
+	return track
+
 ## The floating preview shown under the cursor while dragging cards.
 static func make_drag_preview(cards: Array[Card]) -> Control:
 	var row := HBoxContainer.new()

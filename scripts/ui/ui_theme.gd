@@ -49,3 +49,11 @@ const COL_GLASS_EDGE := Color(0.62, 0.84, 0.92)  # icy border of a glass card
 const GLASS_BG_ALPHA := 0.3   # glass cards let the felt show through
 const COL_FILTER_EDGE := Color(0.15, 0.78, 0.80)  # outline on the suit being hovered
 const FILTER_DIM_ALPHA := 0.28   # the other suits fade this low while a suit is hovered
+
+# --- Ultimate meter -----------------------------------------------------------
+const COL_METER_TRACK := Color(0, 0, 0, 0.38)      # empty channel behind the fill
+const COL_METER_EDGE := Color(1, 1, 1, 0.22)       # thin border around the bar
+const COL_METER_FILL := Color(0.92, 0.52, 0.16)    # charging amber
+const COL_METER_FULL := Color(0.98, 0.80, 0.20)    # bright gold once fully charged
+const METER_SIZE := Vector2(118, 13)               # width × height of a seat meter bar
+const METER_FONT_SIZE := 10                        # the "value/max" caption inside the bar

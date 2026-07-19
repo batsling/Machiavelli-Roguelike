@@ -7,6 +7,11 @@ extends Resource
 @export var health: int = 100          # unused by the vanilla engine; roguelike layer
 @export var gold: int = 0              # unused by the vanilla engine; roguelike layer
 @export var hand: Array[Card] = []
+# Ultimate-meter charge: rises each time this player commits a hand (see
+# GameManager._charge_meter) toward the game's meter_max, and holds there once
+# full. Zero at the start of every game; the roguelike layer reads it to fire
+# an enemy's ultimate.
+@export var meter: int = 0
 @export var is_finished: bool = false  # true once hand is emptied — enters phantom-turn state
 # True once the player has "opened": committed a turn containing at least one
 # valid meld built entirely from their own hand. Until then they may not add

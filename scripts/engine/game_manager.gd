@@ -35,6 +35,10 @@ signal card_drawn(player: PlayerState, card: Card)
 signal turn_committed(player: PlayerState, cards_played: int)
 signal player_passed(player: PlayerState)
 signal game_over(winners: Array)
+## Fired when a committed hand charges a player's ultimate meter. `amount` is
+## how much the meter actually rose (0 is never emitted), and `now_full` is
+## true on the charge that first fills it, so the UI can announce it.
+signal meter_charged(player: PlayerState, amount: int, now_full: bool)
 
 const DEFAULT_HAND_SIZE := 13
 
@@ -60,6 +64,14 @@ var max_hand_size := 0
 ## menu). Only cards leaving the hand count — rearranging the table is always
 ## free — and returning a played card to the hand gives the play back.
 var max_plays_per_turn := 0
+## Ultimate-meter tuning (from the settings menu). Every player carries a meter
+## that charges when they commit a hand and holds at meter_max once full.
+## meter_max 0 disables the meter entirely. Each committed hand adds
+## meter_gain points — once per hand, or meter_gain per card played from hand
+## when meter_per_card is on.
+var meter_max := 10
+var meter_gain := 1
+var meter_per_card := false
 
 # Staging state for the current turn. _hand_snapshot is the current player's
 # hand at the start of the turn; swap_joker() appends to it in place (the
@@ -389,12 +401,29 @@ func commit_turn() -> String:
 	_lock_table_jokers()
 	_consecutive_passes = 0
 	p.has_opened = true
-	turn_committed.emit(p, cards_played_this_turn())
+	var played := cards_played_this_turn()
+	turn_committed.emit(p, played)
+	_charge_meter(p, played)
 	if p.hand.is_empty():
 		_end_game([p])
 	else:
 		_advance()
 	return ""
+
+## Charge a player's ultimate meter for the hand they just committed:
+## meter_gain points, times the cards played when meter_per_card is on, capped
+## at meter_max (where it holds). A max of 0 disables the meter. Emits
+## meter_charged with how much it actually rose and whether this filled it.
+func _charge_meter(p: PlayerState, cards_played: int) -> void:
+	if meter_max <= 0:
+		return
+	var gain := meter_gain * cards_played if meter_per_card else meter_gain
+	if gain <= 0:
+		return
+	var before := p.meter
+	p.meter = mini(meter_max, p.meter + gain)
+	if p.meter != before:
+		meter_charged.emit(p, p.meter - before, p.meter >= meter_max and before < meter_max)
 
 ## Why the current turn can't be committed, or "" if it is legal. Split out so
 ## commit_turn keeps a single success path (the guard clauses live here).

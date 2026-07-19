@@ -121,6 +121,15 @@ func _build_vanilla_settings() -> VBoxContainer:
 	combo_check.button_pressed = _settings.start_combo
 	combo_check.toggled.connect(func(on: bool) -> void: _settings.start_combo = on)
 	col.add_child(combo_check)
+
+	col.add_child(HSeparator.new())
+	col.add_child(_make_meter_rows(
+		func() -> int: return _settings.meter_max,
+		func(v: int) -> void: _settings.meter_max = v,
+		func() -> int: return _settings.meter_gain,
+		func(v: int) -> void: _settings.meter_gain = v,
+		func() -> bool: return _settings.meter_per_card,
+		func(on: bool) -> void: _settings.meter_per_card = on))
 	return col
 
 ## The "Roguelike run" tab: the run's own rules. Everything applies from the
@@ -161,6 +170,15 @@ func _build_rogue_settings() -> VBoxContainer:
 	col.add_child(combo_check)
 
 	col.add_child(HSeparator.new())
+	col.add_child(_make_meter_rows(
+		func() -> int: return _settings.rogue_meter_max,
+		func(v: int) -> void: _settings.rogue_meter_max = v,
+		func() -> int: return _settings.rogue_meter_gain,
+		func(v: int) -> void: _settings.rogue_meter_gain = v,
+		func() -> bool: return _settings.rogue_meter_per_card,
+		func(on: bool) -> void: _settings.rogue_meter_per_card = on))
+
+	col.add_child(HSeparator.new())
 	var ai_header := Label.new()
 	ai_header.text = "Enemy AI — retune each opponent's brain individually. " \
 		+ "Applies from the next round; leave an enemy untouched to keep its " \
@@ -191,6 +209,37 @@ func _build_enemy_ai_rows(enemy_name: String) -> VBoxContainer:
 	box.add_child(_make_ai_slider_row("Planning", "Short-sighted", "Expert planner",
 		ov.get("planning", 1.0),
 		func(v: float) -> void: ov["planning"] = v))
+	return box
+
+## The ultimate-meter block shared by both tabs: an explainer, the meter max
+## (0 = off), the charge per play, and the per-card toggle. Values are read and
+## written through the getter/setter pairs so one builder serves the sandbox
+## and rogue copies. Same-tab live-apply is left to the caller's _apply_live
+## (only sandbox pushes onto a running game); both take effect next game/round.
+func _make_meter_rows(get_max: Callable, set_max: Callable,
+		get_gain: Callable, set_gain: Callable,
+		get_per_card: Callable, set_per_card: Callable) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	var head := Label.new()
+	head.text = "Ultimate meter — every player charges a meter by playing hands."
+	head.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(head)
+	box.add_child(_make_spin_row("Meter max (0 = off):", 0, 50, get_max.call(),
+		func(v: float) -> void:
+			set_max.call(int(v))
+			_apply_live.call()))
+	box.add_child(_make_spin_row("Charge per play:", 0, 20, get_gain.call(),
+		func(v: float) -> void:
+			set_gain.call(int(v))
+			_apply_live.call()))
+	var per_card := CheckBox.new()
+	per_card.text = "Charge per card played from hand (instead of once per hand)"
+	per_card.button_pressed = get_per_card.call()
+	per_card.toggled.connect(func(on: bool) -> void:
+		set_per_card.call(on)
+		_apply_live.call())
+	box.add_child(per_card)
 	return box
 
 func _make_spin_row(text: String, minimum: int, maximum: int, value: int,

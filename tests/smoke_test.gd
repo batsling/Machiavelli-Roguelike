@@ -28,6 +28,8 @@ func _init() -> void:
 		failures += 1
 	if not _test_play_cap():
 		failures += 1
+	if not _test_meter_charge():
+		failures += 1
 	if not _test_sticky_cluster():
 		failures += 1
 	if not _test_sticky_move():
@@ -193,6 +195,78 @@ func _test_play_cap() -> bool:
 	gm.free()
 	if ok:
 		print("play cap test OK")
+	return ok
+
+## The ultimate meter charges when a hand is committed: once per hand by
+## default, meter_gain per card played when meter_per_card is on, capped at
+## meter_max (where it holds), and off entirely at meter_max 0. meter_charged
+## reports how much it rose and fires now_full only on the filling charge.
+func _test_meter_charge() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 5)
+	gm.meter_max = 5
+	gm.meter_gain = 1
+	# Emitted charges, [amount, now_full] each. An Array is a reference type, so
+	# the lambda (which captures outer locals by value) can still record into it.
+	var events: Array = []
+	gm.meter_charged.connect(func(_pl: PlayerState, amount: int, full: bool) -> void:
+		events.append([amount, full]))
+	var p := gm.players[0]
+	# Per hand: one charge, whatever the card count.
+	gm._charge_meter(p, 4)
+	if p.meter != 1 or events != [[1, false]]:
+		printerr("meter: a per-hand charge should add gain once, got %d (events %s)"
+			% [p.meter, events])
+		ok = false
+	# Per card: gain × cards played; +4 here fills the meter (1 -> 5).
+	gm.meter_per_card = true
+	gm.meter_gain = 2
+	gm._charge_meter(p, 2)
+	if p.meter != 5:
+		printerr("meter: a per-card charge should add gain×cards, got %d" % p.meter)
+		ok = false
+	elif events.size() != 2 or events[1] != [4, true]:
+		var got: Variant = events[1] if events.size() > 1 else events
+		printerr("meter: filling should emit [4, true], got %s" % [got])
+		ok = false
+	# Holds at max: a further charge adds nothing and emits nothing.
+	gm._charge_meter(p, 3)
+	if p.meter != 5:
+		printerr("meter: a full meter should hold at max, got %d" % p.meter)
+		ok = false
+	elif events.size() != 2:
+		printerr("meter: a no-op charge should not re-emit, got %d events" % events.size())
+		ok = false
+	# A disabled meter (max 0) never charges.
+	gm.meter_max = 0
+	p.meter = 0
+	gm._charge_meter(p, 3)
+	if p.meter != 0:
+		printerr("meter: a disabled meter should not charge, got %d" % p.meter)
+		ok = false
+	gm.free()
+	# End to end: committing a hand charges the committing player via commit_turn.
+	var gm2 := GameManager.new()
+	gm2.setup(["P0", "P1"], 13, 5)
+	gm2.meter_max = 10
+	var q := gm2.current_player()
+	q.has_opened = true
+	q.hand.assign([_card(7, "hearts"), _card(7, "spades"), _card(7, "clubs")])
+	gm2._hand_snapshot = q.hand.duplicate()
+	var play: Array[Card] = [q.hand[0], q.hand[1], q.hand[2]]
+	if gm2.move_cards_to_new_meld(play) != "":
+		printerr("meter: staging the commit play was rejected")
+		ok = false
+	elif gm2.commit_turn() != "":
+		printerr("meter: committing the hand failed")
+		ok = false
+	elif q.meter != 1:
+		printerr("meter: commit_turn should charge the meter, got %d" % q.meter)
+		ok = false
+	gm2.free()
+	if ok:
+		print("meter charge test OK")
 	return ok
 
 func _sticky(card: Card) -> Card:
