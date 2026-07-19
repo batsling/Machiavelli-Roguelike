@@ -519,18 +519,20 @@ func _build_layout() -> void:
 	sort_row.add_theme_constant_override("separation", 4)
 	sort_row.alignment = BoxContainer.ALIGNMENT_END
 	controls.add_child(sort_row)
-	var sort_suit_btn := Button.new()
-	sort_suit_btn.text = "Sort: straights"
-	sort_suit_btn.tooltip_text = "Group your hand into runs by suit, reds then blacks (jokers last)"
-	sort_suit_btn.focus_mode = Control.FOCUS_NONE
-	sort_suit_btn.pressed.connect(_on_sort_suit_pressed)
-	sort_row.add_child(sort_suit_btn)
-	var sort_rank_btn := Button.new()
-	sort_rank_btn.text = "Sort: sets"
-	sort_rank_btn.tooltip_text = "Group your hand by rank so matching sets sit together (jokers last)"
-	sort_rank_btn.focus_mode = Control.FOCUS_NONE
-	sort_rank_btn.pressed.connect(_on_sort_rank_pressed)
-	sort_row.add_child(sort_rank_btn)
+	var sort_btn := Button.new()
+	sort_btn.text = "Sort"
+	sort_btn.tooltip_text = "Group your hand into combos: straights first, then sets, " \
+		+ "ordered by suit and starting rank (loose cards and jokers last)"
+	sort_btn.focus_mode = Control.FOCUS_NONE
+	sort_btn.pressed.connect(_on_sort_pressed)
+	sort_row.add_child(sort_btn)
+	var randomize_btn := Button.new()
+	randomize_btn.text = "Randomize"
+	randomize_btn.tooltip_text = "Keep each combo together but shuffle where the combos sit, " \
+		+ "to shake loose new ideas"
+	randomize_btn.focus_mode = Control.FOCUS_NONE
+	randomize_btn.pressed.connect(_on_randomize_pressed)
+	sort_row.add_child(randomize_btn)
 	hand_box = HFlowContainer.new()
 	hand_box.add_theme_constant_override("h_separation", 4)
 	hand_box.add_theme_constant_override("v_separation", 4)
@@ -1747,24 +1749,56 @@ func _on_new_game_pressed() -> void:
 			rogue_round = 1
 	_new_game()
 
-func _on_sort_rank_pressed() -> void:
-	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
-		if a.is_joker != b.is_joker:
-			return b.is_joker
-		if a.rank != b.rank:
-			return a.rank < b.rank
-		return a.suit < b.suit)
-	_refresh()
-
-func _on_sort_suit_pressed() -> void:
-	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
-		if a.is_joker != b.is_joker:
-			return b.is_joker
+## "Sort": lay the hand out as combos so plays jump out — straights first, then
+## sets; within each, by suit then starting rank. Loose cards, then jokers, trail.
+func _on_sort_pressed() -> void:
+	var groups := Rules.partition_hand(gm.players[0].hand)
+	var combos: Array = []
+	for cards: Array in groups["combos"]:
+		combos.append({
+			"cards": cards,
+			"is_run": Rules.is_valid_run(cards),
+			"suit_order": SUIT_ORDER.get(cards[0].suit, 99),
+			"start_rank": cards[0].rank,
+		})
+	combos.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if a["is_run"] != b["is_run"]:
+			return a["is_run"]  # straights before sets
+		if a["suit_order"] != b["suit_order"]:
+			return a["suit_order"] < b["suit_order"]
+		return a["start_rank"] < b["start_rank"])
+	var leftovers: Array[Card] = groups["leftovers"]
+	leftovers.sort_custom(func(a: Card, b: Card) -> bool:
 		var order_a: int = SUIT_ORDER.get(a.suit, 99)
 		var order_b: int = SUIT_ORDER.get(b.suit, 99)
 		if order_a != order_b:
 			return order_a < order_b
 		return a.rank < b.rank)
+	var out: Array[Card] = []
+	for combo: Dictionary in combos:
+		out.append_array(combo["cards"])
+	out.append_array(leftovers)
+	out.append_array(groups["jokers"])
+	gm.players[0].hand.assign(out)
+	_refresh()
+
+## "Randomize": keep each detected combo glued together but shuffle the order of
+## the blocks (loose cards and jokers ride along as singletons), so the same
+## cards land in fresh neighbourhoods and new plays suggest themselves.
+func _on_randomize_pressed() -> void:
+	var groups := Rules.partition_hand(gm.players[0].hand)
+	var blocks: Array = []
+	for cards: Array in groups["combos"]:
+		blocks.append(cards)
+	for c: Card in groups["leftovers"]:
+		blocks.append([c] as Array[Card])
+	for c: Card in groups["jokers"]:
+		blocks.append([c] as Array[Card])
+	blocks.shuffle()
+	var out: Array[Card] = []
+	for blk: Array in blocks:
+		out.append_array(blk)
+	gm.players[0].hand.assign(out)
 	_refresh()
 
 func _on_return_pressed() -> void:

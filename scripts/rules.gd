@@ -132,6 +132,85 @@ static func display_order(cards: Array[Card]) -> Array[Card]:
 			return _eff_suit(a) < _eff_suit(b))
 	return out
 
+## Partition a hand into the melds hiding in it, for the UI's Sort/Randomize.
+## Greedily pulls out the largest valid combo at a time (ties favour runs, which
+## are harder to complete), so each natural card lands in at most one combo.
+## Returns {"combos": Array of Array[Card] (each in display order), "leftovers":
+## Array[Card] in no combo, "jokers": Array[Card]}. Jokers are always set aside
+## — a free wildcard reads better on its own than glued into someone's guess of
+## its meld. Duplicate cards (two decks) and the low/high ace are handled as
+## everywhere else here.
+static func partition_hand(cards: Array[Card]) -> Dictionary:
+	var remaining: Array[Card] = []
+	var jokers: Array[Card] = []
+	for c in cards:
+		if c.is_joker:
+			jokers.append(c)
+		else:
+			remaining.append(c)
+	var combos: Array = []
+	while true:
+		var meld := _best_natural_meld(remaining)
+		if meld.size() < MIN_MELD_SIZE:
+			break
+		for c in meld:
+			remaining.erase(c)
+		combos.append(display_order(meld))
+	return {"combos": combos, "leftovers": remaining, "jokers": jokers}
+
+## The single biggest valid meld sitting in `pool` (naturals only), or [] if
+## there is none: the longest run per suit and the fullest set per rank, deduping
+## copies and trying the ace both low and high. Runs win ties, so they are pulled
+## out before sets.
+static func _best_natural_meld(pool: Array[Card]) -> Array[Card]:
+	var best: Array[Card] = []
+	# Runs: per suit, one card per rank (ace counts as 1 and 14), longest chain.
+	var by_suit := {}
+	for c in pool:
+		if not by_suit.has(c.suit):
+			by_suit[c.suit] = {}
+		var ranks: Dictionary = by_suit[c.suit]
+		if not ranks.has(c.rank):
+			ranks[c.rank] = c
+		if c.rank == 1 and not ranks.has(14):
+			ranks[14] = c
+	for suit in by_suit:
+		var ranks: Dictionary = by_suit[suit]
+		var order := ranks.keys()
+		order.sort()
+		var chain: Array[Card] = []
+		var prev := -99
+		for r in order:
+			if r != prev + 1:
+				if chain.size() > best.size() and is_valid_meld(chain):
+					best = chain.duplicate()
+				chain.clear()
+			chain.append(ranks[r])
+			prev = r
+		if chain.size() > best.size() and is_valid_meld(chain):
+			best = chain.duplicate()
+	# Sets: same rank, distinct suits, up to four. Only a strictly bigger set
+	# beats a run of equal length, so runs are preferred on ties.
+	var by_rank := {}
+	for c in pool:
+		if not by_rank.has(c.rank):
+			by_rank[c.rank] = {}
+		var suits: Dictionary = by_rank[c.rank]
+		if not suits.has(c.suit):
+			suits[c.suit] = c
+	for rank in by_rank:
+		var suits: Dictionary = by_rank[rank]
+		if suits.size() < MIN_MELD_SIZE:
+			continue
+		var meld: Array[Card] = []
+		for suit in suits:
+			meld.append(suits[suit])
+			if meld.size() == MAX_SET_SIZE:
+				break
+		if meld.size() > best.size() and is_valid_meld(meld):
+			best = meld
+	return best
+
 ## Fixed cards act as themselves: naturals, plus locked jokers standing for
 ## their locked card. Only free (unlocked) jokers are wildcards.
 static func _is_fixed(c: Card) -> bool:

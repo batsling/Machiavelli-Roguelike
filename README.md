@@ -92,9 +92,12 @@ card, the felt, your hand — clears the current selection.
 
 Your hand works like Balatro's: it keeps whatever order you give it. Drag a card
 onto another hand card to slot it there (left half = before, right half = after),
-drag onto empty hand space to send it to the end, or use the **Sort: straights** /
-**Sort: sets** buttons — *straights* groups your cards into suit runs with reds
-before blacks, *sets* groups them by rank so matching cards sit together.
+drag onto empty hand space to send it to the end, or use the **Sort** / **Randomize**
+buttons. **Sort** finds the combos hiding in your hand and lays them out in play
+order: straights first, then 3/4-of-a-kind sets, ordered by suit and then by
+starting rank, with any loose cards and jokers tidied to the end. **Randomize**
+keeps each of those combos glued together but shuffles where the blocks sit, to
+shake a crowded hand into fresh groupings and suggest new plays.
 
 Above those buttons sits a row of suit symbols (♥ ♦ ♣ ♠). Hover any one to
 outline the cards of that suit in your hand and fade the rest, so you can pick a
