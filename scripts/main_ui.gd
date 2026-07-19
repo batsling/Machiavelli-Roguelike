@@ -139,6 +139,12 @@ const COL_SLIME := Color(0.44, 0.82, 0.30)      # the slime splotch on a slimed 
 const COL_SLIME_EDGE := Color(0.20, 0.52, 0.16)
 const COL_GLASS_EDGE := Color(0.62, 0.84, 0.92)  # icy border of a glass card
 const GLASS_BG_ALPHA := 0.3   # glass cards let the felt show through
+const COL_FILTER_EDGE := Color(0.15, 0.78, 0.80)  # outline on the suit being hovered
+const FILTER_DIM_ALPHA := 0.28   # the other suits fade this low while a suit is hovered
+
+## Suit order for the "Sort: suit" button: reds together, then blacks, so runs
+## of the same colour sit side by side. Jokers are handled separately (last).
+const SUIT_ORDER := {"hearts": 0, "diamonds": 1, "clubs": 2, "spades": 3}
 
 var gm: GameManager
 var game_mode := Mode.SANDBOX
@@ -150,6 +156,9 @@ var current_enemy: Enemy = null
 var rogue_round_won := false
 var selected: Array[Card] = []
 var highlighted := {}  # Card -> true; every card the enemies touched last round
+# While a suit-filter button is hovered this holds that suit; the hand redraws
+# with those cards outlined and every other suit faded. "" = no filter active.
+var hover_filter_suit := ""
 var ai_running := false
 # Bumped on every new game so a suspended AI coroutine from the previous game
 # notices on resume and bails out instead of acting on the fresh state.
@@ -215,6 +224,8 @@ var end_turn_btn: Button
 var draw_btn: Button
 var settings_btn: Button
 var new_game_btn: Button
+var sort_board_btn: Button
+var randomize_board_btn: Button
 var settings_dialog: AcceptDialog
 var ai_desc_label: Label
 var settings_save_note: Label
@@ -451,9 +462,42 @@ func _build_layout() -> void:
 	table_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	table_panel.add_theme_stylebox_override("panel", _panel_style(COL_FELT, 10))
 	mid_row.add_child(table_panel)
+	var table_col := VBoxContainer.new()
+	table_col.add_theme_constant_override("separation", 4)
+	table_panel.add_child(table_col)
+
+	# Table header: a title plus buttons that reorder the groups on the felt so a
+	# crowded table is easy to read. Sort lays straights out first (by colour,
+	# then starting rank) and sets after (by rank); Randomize keeps each group
+	# intact but shuffles where the groups sit.
+	var table_top := HBoxContainer.new()
+	table_top.add_theme_constant_override("separation", 8)
+	table_col.add_child(table_top)
+	var table_title := Label.new()
+	table_title.text = "Table"
+	table_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	table_title.add_theme_font_size_override("font_size", 15)
+	table_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	table_top.add_child(table_title)
+	sort_board_btn = Button.new()
+	sort_board_btn.text = "Sort"
+	sort_board_btn.tooltip_text = "Reorder the groups on the table: straights first " \
+		+ "(by colour, then starting rank), then sets (by rank)"
+	sort_board_btn.focus_mode = Control.FOCUS_NONE
+	sort_board_btn.pressed.connect(_on_sort_board_pressed)
+	table_top.add_child(sort_board_btn)
+	randomize_board_btn = Button.new()
+	randomize_board_btn.text = "Randomize"
+	randomize_board_btn.tooltip_text = "Shuffle where the groups sit on the table, " \
+		+ "keeping each group together"
+	randomize_board_btn.focus_mode = Control.FOCUS_NONE
+	randomize_board_btn.pressed.connect(_on_randomize_board_pressed)
+	table_top.add_child(randomize_board_btn)
+
 	var table_scroll := ScrollContainer.new()
+	table_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	table_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	table_panel.add_child(table_scroll)
+	table_col.add_child(table_scroll)
 	board_flow = HFlowContainer.new()
 	board_flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	board_flow.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -481,21 +525,26 @@ func _build_layout() -> void:
 	hand_col.add_child(hand_top)
 	hand_title = Label.new()
 	hand_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hand_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hand_title.add_theme_font_size_override("font_size", 15)
 	hand_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 	hand_top.add_child(hand_title)
-	var sort_rank_btn := Button.new()
-	sort_rank_btn.text = "Sort: rank"
-	sort_rank_btn.tooltip_text = "Sort your hand by rank (jokers last)"
-	sort_rank_btn.focus_mode = Control.FOCUS_NONE
-	sort_rank_btn.pressed.connect(_on_sort_rank_pressed)
-	hand_top.add_child(sort_rank_btn)
-	var sort_suit_btn := Button.new()
-	sort_suit_btn.text = "Sort: suit"
-	sort_suit_btn.tooltip_text = "Sort your hand by suit, then rank (jokers last)"
-	sort_suit_btn.focus_mode = Control.FOCUS_NONE
-	sort_suit_btn.pressed.connect(_on_sort_suit_pressed)
-	hand_top.add_child(sort_suit_btn)
+
+	# Suit filter: hovering a suit outlines those cards in your hand and fades
+	# the rest, so you can pick a colour out of a crowded hand at a glance.
+	var filter_row := HBoxContainer.new()
+	filter_row.add_theme_constant_override("separation", 4)
+	filter_row.alignment = BoxContainer.ALIGNMENT_END
+	hand_top.add_child(filter_row)
+	var filter_hint := Label.new()
+	filter_hint.text = "Highlight suit:"
+	filter_hint.add_theme_font_size_override("font_size", 12)
+	filter_hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+	filter_hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	filter_row.add_child(filter_hint)
+	for suit in ["hearts", "diamonds", "clubs", "spades"]:
+		filter_row.add_child(_make_suit_filter_button(suit))
+
 	hand_box = HFlowContainer.new()
 	hand_box.add_theme_constant_override("h_separation", 4)
 	hand_box.add_theme_constant_override("v_separation", 4)
@@ -1219,6 +1268,11 @@ func _refresh_buttons() -> void:
 	reset_btn.disabled = not human_turn or not gm.can_undo_action()
 	end_turn_btn.disabled = not human_turn
 	draw_btn.disabled = not human_turn
+	# Table tidy-ups need at least two groups to do anything, and never while the
+	# enemies' cards are still flying around.
+	var can_tidy := not ai_running and gm.board.melds.size() > 1
+	sort_board_btn.disabled = not can_tidy
+	randomize_board_btn.disabled = not can_tidy
 	if game_mode == Mode.ROGUE:
 		new_game_btn.text = "Next round" if gm.is_game_over and rogue_round_won \
 			else "New run"
@@ -1286,6 +1340,15 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 		bg = COL_SELECT_BG
 		border = COL_SELECT
 		border_w = 3
+	# Suit filter (hand cards only): while a suit is hovered, cards of that suit
+	# get a bright outline and everything else is faded out below. Jokers match
+	# every suit since they can stand in for any of them. Selection/enemy-touch
+	# borders keep priority so those states still read.
+	var filter_active := not on_board and hover_filter_suit != ""
+	var filter_match := filter_active and (c.is_joker or c.suit == hover_filter_suit)
+	if filter_match and not selected.has(c) and not highlighted.has(c):
+		border = COL_FILTER_EDGE
+		border_w = 3
 	# Glass cards render transparent — the felt shows through whatever state
 	# the card is in. The selection/highlight border stays so they still read.
 	if c.is_glass():
@@ -1305,6 +1368,8 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 
 	if c.is_sticky():
 		_add_slime_blob(b)
+	if filter_active and not filter_match:
+		b.modulate = Color(1, 1, 1, FILTER_DIM_ALPHA)
 
 	b.toggled.connect(_on_card_toggled.bind(c))
 	b.gui_input.connect(_on_card_gui_input.bind(c, meld))
@@ -1318,6 +1383,37 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 			_can_drop_on_hand_card.bind(c), _drop_on_hand_card.bind(c))
 	card_nodes[c] = b
 	return b
+
+## One suit symbol in the filter row. It does nothing on click — hovering is the
+## whole interaction: entering sets hover_filter_suit and redraws the hand so
+## this suit is outlined and the others fade; leaving clears it again.
+func _make_suit_filter_button(suit: String) -> Button:
+	var b := Button.new()
+	b.text = Card.SUIT_SYMBOLS.get(suit, suit)
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(30, 26)
+	b.add_theme_font_size_override("font_size", 18)
+	b.tooltip_text = "Hover to highlight the %s in your hand and fade the other suits." % suit
+	var col := COL_CARD_RED if RED_SUITS.has(suit) else COL_CARD_BLACK
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		b.add_theme_color_override(state, col)
+	b.mouse_entered.connect(_on_suit_filter_enter.bind(suit))
+	b.mouse_exited.connect(_on_suit_filter_exit.bind(suit))
+	return b
+
+func _on_suit_filter_enter(suit: String) -> void:
+	if hover_filter_suit == suit:
+		return
+	hover_filter_suit = suit
+	_refresh_hand()
+
+func _on_suit_filter_exit(suit: String) -> void:
+	# Guarded so sliding straight from one suit onto the next (exit fires after
+	# the new enter) doesn't wipe the filter the new button just set.
+	if hover_filter_suit != suit:
+		return
+	hover_filter_suit = ""
+	_refresh_hand()
 
 ## A little green slime splotch pinned to the top-right corner of a card, the
 ## visible mark of the Cute Slime's Sticky effect. Non-interactive so it never
@@ -1670,23 +1766,56 @@ func _on_new_game_pressed() -> void:
 			rogue_round = 1
 	_new_game()
 
-func _on_sort_rank_pressed() -> void:
-	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
-		if a.is_joker != b.is_joker:
-			return b.is_joker
-		if a.rank != b.rank:
-			return a.rank < b.rank
-		return a.suit < b.suit)
+## "Sort": reorder the groups on the table so a busy felt is easy to scan.
+## Straights come first — by colour, then by their starting rank — and sets
+## after, by rank. Any group that is momentarily invalid (mid-rearrange) keeps
+## its place at the end so nothing you are editing jumps around under you.
+func _on_sort_board_pressed() -> void:
+	if ai_running:
+		return
+	var keyed: Array = []
+	for i in gm.board.melds.size():
+		keyed.append({"meld": gm.board.melds[i], "key": _board_meld_key(gm.board.melds[i], i)})
+	keyed.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return _key_less(a["key"], b["key"]))
+	var out: Array[CardSet] = []
+	for e: Dictionary in keyed:
+		out.append(e["meld"])
+	gm.board.melds.assign(out)
 	_refresh()
 
-func _on_sort_suit_pressed() -> void:
-	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
-		if a.is_joker != b.is_joker:
-			return b.is_joker
-		if a.suit != b.suit:
-			return a.suit < b.suit
-		return a.rank < b.rank)
+## "Randomize": keep every group intact but shuffle where the groups sit on the
+## table, to jog loose a rearrangement you had not spotted.
+func _on_randomize_board_pressed() -> void:
+	if ai_running:
+		return
+	gm.board.melds.shuffle()
 	_refresh()
+
+## A lexicographic sort key for one table group, compared field by field:
+##   [valid, type, primary, secondary, order]
+## Valid groups sort ahead of broken ones (which keep their current order via the
+## trailing `order`). Straights (type 0) come before sets (type 1). A straight is
+## keyed by colour then starting rank; a set by rank then suit. Jokers are read
+## as the card they currently stand for.
+func _board_meld_key(meld: CardSet, order: int) -> Array:
+	Rules.assign_jokers(meld.cards)
+	var anchor: Card = Rules.display_order(meld.cards)[0]
+	var suit := anchor.joker_suit if anchor.is_joker else anchor.suit
+	var rank := anchor.joker_rank if anchor.is_joker else anchor.rank
+	var suit_order: int = SUIT_ORDER.get(suit, 99)
+	if not meld.is_valid():
+		return [1, 0, 0, 0, order]
+	if Rules.is_valid_run(meld.cards):
+		return [0, 0, suit_order, rank, order]  # straights: colour, then start
+	return [0, 1, rank, suit_order, order]       # sets: rank, then suit
+
+## True when key `a` sorts before key `b`, comparing element by element.
+func _key_less(a: Array, b: Array) -> bool:
+	for i in a.size():
+		if a[i] != b[i]:
+			return a[i] < b[i]
+	return false
 
 func _on_return_pressed() -> void:
 	_return_to_hand(selected.duplicate())

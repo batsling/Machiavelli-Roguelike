@@ -90,10 +90,20 @@ placed this turn still has a choice, right-click it to pick its stand-in (handy
 for setting up — or blocking — the swap). Right-clicking anything else — a
 card, the felt, your hand — clears the current selection.
 
+The table can get crowded, so its header carries **Sort** and **Randomize**
+buttons that reorder the groups on the felt (a purely visual reshuffle — the
+groups themselves are untouched). **Sort** lays straights out first — by colour,
+then by starting rank — and sets after, by rank; any group you have broken
+mid-rearrange stays put at the end. **Randomize** keeps each group intact but
+shuffles where the groups sit, to jog loose a rearrangement you had not spotted.
+
 Your hand works like Balatro's: it keeps whatever order you give it. Drag a card
 onto another hand card to slot it there (left half = before, right half = after),
-drag onto empty hand space to send it to the end, or use the **Sort: rank** /
-**Sort: suit** buttons.
+or drag onto empty hand space to send it to the end. Its header also carries a
+row of suit symbols (♥ ♦ ♣ ♠): hover any one to outline the cards of that suit in
+your hand and fade the rest, so you can pick a colour out of a crowded hand at a
+glance (jokers count as every suit). Move the mouse off and the hand returns to
+normal.
 
 Enemy turns play out move by move on screen: each card an enemy plays flies from
 where it was (their hidden hand or its previous spot on the table) to where it
