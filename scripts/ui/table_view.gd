@@ -61,9 +61,14 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	sb.border_color = UITheme.COL_CHIP_ACTIVE if is_current else Color(1, 1, 1, 0.15)
 	sb.set_border_width_all(2)
 	chip.add_theme_stylebox_override("panel", sb)
+	# The name row sits over the ultimate meter (when the meter is enabled), so
+	# each opponent's charge reads right under their name.
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 4)
+	chip.add_child(col)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
-	chip.add_child(row)
+	col.add_child(row)
 	var lbl := Label.new()
 	lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var marker := "▶ " if is_current else ""
@@ -80,6 +85,10 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	info_btn.add_theme_font_size_override("font_size", 12)
 	info_btn.pressed.connect(_ui._on_enemy_info_pressed.bind(player_index))
 	row.add_child(info_btn)
+	if gm.meter_max > 0:
+		var meter := CardRenderer.make_meter_bar(p.meter, gm.meter_max)
+		meter.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		col.add_child(meter)
 	return chip
 
 ## A row (top seat) or column (side seats) of an opponent's cards, seen from
@@ -177,6 +186,7 @@ func refresh_hand() -> void:
 		sb.border_color = UITheme.COL_CHIP_ACTIVE
 		sb.set_border_width_all(2)
 	_ui.hand_panel.add_theme_stylebox_override("panel", sb)
+	_refresh_hand_meter()
 	_ui._clear_children(_ui.hand_box)
 	var hand := gm.players[0].hand
 	if gm.players[0].has_opened:
@@ -197,6 +207,24 @@ func refresh_hand() -> void:
 			c.joker_lock_suit = ""
 	for c in hand:
 		_ui.hand_box.add_child(_make_card_button(c))
+
+## Your own ultimate meter, shown in the hand header: a small "Ultimate" tag
+## beside the charge bar. Rebuilt each refresh so the bar tracks your charge;
+## drawn only when the meter is enabled (meter_max > 0).
+func _refresh_hand_meter() -> void:
+	_ui._clear_children(_ui.hand_meter_slot)
+	var gm := _ui.gm
+	if gm.meter_max <= 0:
+		return
+	var tag := Label.new()
+	tag.text = "Ultimate"
+	tag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tag.add_theme_font_size_override("font_size", 12)
+	tag.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
+	_ui.hand_meter_slot.add_child(tag)
+	var bar := CardRenderer.make_meter_bar(gm.players[0].meter, gm.meter_max)
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_ui.hand_meter_slot.add_child(bar)
 
 ## Card buttons are both click-to-select toggles and drag sources. Cards on the
 ## table (meld != null) are also drop targets for their own group, and are

@@ -162,11 +162,19 @@ The **Vanilla sandbox** tab holds:
   dealt a random valid three-card group (a set or a run of naturals) straight
   from the stock onto the table, which counts as their opening meld — nobody
   starts locked out of the table on a hand that can't lay a group.
+- **Ultimate meter** — every player (you and the enemies) carries a meter that
+  charges as they play hands and holds once full, shown as a bar under each
+  opponent's name and beside your hand. **Meter max** (0 disables it, default
+  10) is how much it holds; **Charge per play** (default 1) is how much each
+  committed hand adds; **Charge per card played from hand** switches that from
+  once per hand to once per card leaving the hand that turn. Applies from the
+  next new game (the meter max also applies live).
 
 The **Roguelike run** tab holds the run's own copies of the same rules —
 cards drawn per turn (default 2), starting hand size (default 13), max hand
 size (default none), max cards played per turn (default 13), jokers (default
-in) and starting combos (default off). It also holds an **Enemy AI** section
+in), starting combos (default off) and the ultimate meter (default max 10,
+charge 1 per hand). It also holds an **Enemy AI** section
 with the same four sliders (Skill / Style / Attention / Planning) *for each
 individual enemy in the roster*, so any single opponent's brain can be retuned
 for the run; an enemy left untouched keeps its designed personality (every

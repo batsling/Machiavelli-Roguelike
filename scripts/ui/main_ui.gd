@@ -143,6 +143,7 @@ var board_flow: HFlowContainer
 var hand_panel: PanelContainer
 var hand_box: HFlowContainer
 var hand_title: Label
+var hand_meter_slot: HBoxContainer
 var selection_label: Label
 var return_btn: Button
 var undo_action_btn: Button
@@ -165,6 +166,7 @@ func _ready() -> void:
 	gm = GameManager.new()
 	add_child(gm)
 	gm.turn_committed.connect(_on_turn_committed)
+	gm.meter_charged.connect(_on_meter_charged)
 	gm.card_drawn.connect(_on_card_drawn)
 	gm.player_passed.connect(_on_player_passed)
 	gm.game_over.connect(_on_game_over)
@@ -195,6 +197,9 @@ func _new_game() -> void:
 		gm.draw_per_turn = settings.rogue_draw_per_turn
 		gm.max_hand_size = settings.rogue_max_hand_size
 		gm.max_plays_per_turn = settings.rogue_max_plays_per_turn
+		gm.meter_max = settings.rogue_meter_max
+		gm.meter_gain = settings.rogue_meter_gain
+		gm.meter_per_card = settings.rogue_meter_per_card
 		# Let the enemy plant its mechanics on the freshly dealt game.
 		current_enemy.on_combat_start(gm)
 		_log("[b]Round %d[/b] — you face %s. Run rules: draw %d per turn, "
@@ -217,6 +222,9 @@ func _new_game() -> void:
 		gm.draw_per_turn = settings.draw_per_turn
 		gm.max_hand_size = settings.max_hand_size
 		gm.max_plays_per_turn = settings.max_plays_per_turn
+		gm.meter_max = settings.meter_max
+		gm.meter_gain = settings.meter_gain
+		gm.meter_per_card = settings.meter_per_card
 		_log("New game: %d enem%s, %d cards each, double deck, %s." % [settings.enemy_count,
 			"y" if settings.enemy_count == 1 else "ies", settings.start_hand_size,
 			"4 jokers in" if settings.include_jokers else "no jokers"])
@@ -372,6 +380,13 @@ func _build_layout() -> void:
 	hand_title.add_theme_font_size_override("font_size", 15)
 	hand_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 	hand_top.add_child(hand_title)
+
+	# Your own ultimate meter sits in the hand header; refresh_hand fills it (a
+	# label + bar) when the meter is enabled, and leaves it empty otherwise.
+	hand_meter_slot = HBoxContainer.new()
+	hand_meter_slot.add_theme_constant_override("separation", 6)
+	hand_meter_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hand_top.add_child(hand_meter_slot)
 
 	# Suit filter: hovering a suit outlines those cards in your hand and fades
 	# the rest, so you can pick a colour out of a crowded hand at a glance.
@@ -568,6 +583,9 @@ func _apply_live_settings() -> void:
 		gm.draw_per_turn = settings.draw_per_turn
 		gm.max_hand_size = settings.max_hand_size
 		gm.max_plays_per_turn = settings.max_plays_per_turn
+		gm.meter_max = settings.meter_max
+		gm.meter_gain = settings.meter_gain
+		gm.meter_per_card = settings.meter_per_card
 
 func _make_seat() -> VBoxContainer:
 	var seat := VBoxContainer.new()
@@ -1014,6 +1032,13 @@ func _on_draw_pressed() -> void:
 
 func _on_turn_committed(p: PlayerState, cards_played: int) -> void:
 	_log("%s played %d card(s)." % [p.display_name, cards_played])
+
+## A committed hand charged a meter; only announce the moment it fills, so the
+## log stays quiet while meters tick up. The bars themselves show the running
+## charge (refreshed with the rest of the table after the turn).
+func _on_meter_charged(p: PlayerState, _amount: int, now_full: bool) -> void:
+	if now_full:
+		_log("[b]%s's ultimate meter is fully charged![/b]" % p.display_name)
 
 func _on_card_drawn(p: PlayerState, card: Card) -> void:
 	if p == gm.players[0]:
