@@ -69,9 +69,9 @@ func _init() -> void:
 		ok = false
 	# Simulate a won round: Next round advances and picks up any roguelike
 	# settings changed in the meantime — they apply from the next round.
-	ui.rogue_draw_per_turn = 3
-	ui.rogue_start_hand_size = 10
-	ui.rogue_start_combo = true
+	ui.settings.rogue_draw_per_turn = 3
+	ui.settings.rogue_start_hand_size = 10
+	ui.settings.rogue_start_combo = true
 	ui.gm._end_game([ui.gm.players[0]])
 	ui._refresh()
 	if ui.new_game_btn.text != "Next round":
@@ -94,9 +94,9 @@ func _init() -> void:
 		if not m.is_valid():
 			printerr("a starting combo left an invalid meld on the table")
 			ok = false
-	ui.rogue_draw_per_turn = 2
-	ui.rogue_start_hand_size = 13
-	ui.rogue_start_combo = false
+	ui.settings.rogue_draw_per_turn = 2
+	ui.settings.rogue_start_hand_size = 13
+	ui.settings.rogue_start_combo = false
 	# Simulate a lost round: the button offers a fresh run from round 1.
 	ui.gm._end_game([ui.gm.players[1]])
 	ui._refresh()
@@ -109,8 +109,8 @@ func _init() -> void:
 		printerr("New run should reset to round 1, got %d" % ui.rogue_round)
 		ok = false
 	# Back to sandbox: player settings apply again.
-	ui.max_plays_per_turn = 12
-	ui.enemy_count = 3
+	ui.settings.max_plays_per_turn = 12
+	ui.settings.enemy_count = 3
 	ui._on_play_vanilla_pressed()
 	if ui.gm.players.size() != 4 or ui.gm.max_plays_per_turn != 12 \
 			or ui.gm.draw_per_turn != 1:
