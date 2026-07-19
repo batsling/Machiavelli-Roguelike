@@ -164,8 +164,7 @@ var rogue_start_combo := false
 var rogue_ai_overrides := {}
 
 var game_root: VBoxContainer
-var menu_layer: PanelContainer
-var resume_btn: Button
+var menu_layer: MenuScreen
 var seat_top: VBoxContainer
 var seat_left: VBoxContainer
 var seat_right: VBoxContainer
@@ -629,52 +628,19 @@ func _enemy_info_text(player_index: int) -> String:
 			ai_strength, ai_style, ai_attention, ai_planning))
 	return "\n\n".join(lines)
 
+## Instantiate the menu scene and wire each button's intent signal to the
+## controller. The menu itself owns no game state.
 func _build_menu() -> void:
-	menu_layer = PanelContainer.new()
-	menu_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu_layer.add_theme_stylebox_override("panel", CardRenderer.panel_style(UITheme.COL_FELT_DARK, 0))
+	menu_layer = preload("res://scenes/ui/menu_screen.tscn").instantiate()
 	add_child(menu_layer)
-	var center := CenterContainer.new()
-	menu_layer.add_child(center)
-	var col := VBoxContainer.new()
-	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_theme_constant_override("separation", 12)
-	center.add_child(col)
-
-	var title := Label.new()
-	title.text = "Machiavelli"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 54)
-	title.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
-	col.add_child(title)
-	var subtitle := Label.new()
-	subtitle.text = "the Italian rummy of rearranging the whole table"
-	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	subtitle.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	col.add_child(subtitle)
-	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(0, 18)
-	col.add_child(gap)
-
-	resume_btn = _make_menu_button("Resume game", _on_resume_pressed)
-	col.add_child(resume_btn)
-	col.add_child(_make_menu_button("Roguelike run", _on_play_rogue_pressed))
-	col.add_child(_make_menu_button("Vanilla sandbox", _on_play_vanilla_pressed))
-	col.add_child(_make_menu_button("Settings", _on_settings_pressed))
-	col.add_child(_make_menu_button("Quit", _on_quit_pressed))
-
-func _make_menu_button(text: String, on_pressed: Callable) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.custom_minimum_size = Vector2(280, 54)
-	b.add_theme_font_size_override("font_size", 21)
-	b.focus_mode = Control.FOCUS_NONE
-	b.pressed.connect(on_pressed)
-	return b
+	menu_layer.play_vanilla_requested.connect(_on_play_vanilla_pressed)
+	menu_layer.play_rogue_requested.connect(_on_play_rogue_pressed)
+	menu_layer.resume_requested.connect(_on_resume_pressed)
+	menu_layer.settings_requested.connect(_on_settings_pressed)
+	menu_layer.quit_requested.connect(_on_quit_pressed)
 
 func _show_menu() -> void:
-	resume_btn.visible = not gm.players.is_empty()
-	menu_layer.visible = true
+	menu_layer.show_menu(not gm.players.is_empty())
 	game_root.visible = false
 
 func _show_game() -> void:
