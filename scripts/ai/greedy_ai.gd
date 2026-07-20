@@ -409,9 +409,14 @@ static func _plan_rearrange_move(gm: GameManager, profile: AIProfile) -> Diction
 		if pulls.size() > budget:
 			continue
 		# Board model minus the pulled cards; the target itself is valid, so only
-		# the donor melds it thinned might need repairing.
+		# the donor melds it thinned might need repairing. Shape (picture)
+		# groups stay out of the model entirely: they are valid by shape rules
+		# (a line-rule repair would read them as broken), their cards are
+		# immovable, and _apply_rearrange only ever moves modelled cards.
 		var melds: Array = []
 		for m in gm.board.melds:
+			if m.is_shape():
+				continue
 			var arr: Array[Card] = m.cards.duplicate()
 			for p in pulls:
 				arr.erase(p)
@@ -450,15 +455,16 @@ static func _plan_rearrange_move(gm: GameManager, profile: AIProfile) -> Diction
 
 ## Table cards the current player must not lift on their own: those slimed into
 ## a cluster with a neighbour (lifting one drags the whole cluster). A player
-## that ignores_sticky (the Cute Slime) has none. The deep planner simply leaves
-## these where they are, planning only moves it can actually make.
+## that ignores_sticky (the Cute Slime) has none. Cards sealed inside a shape
+## (picture) group are immovable for EVERYONE — even the slime's own planner
+## never unpicks her ultimate. The deep planner simply leaves these where they
+## are, planning only moves it can actually make.
 static func _immovable_cards(gm: GameManager) -> Dictionary:
 	var out := {}
-	if gm.current_player().ignores_sticky:
-		return out
+	var slides_freely := gm.current_player().ignores_sticky
 	for m in gm.board.melds:
 		for c in m.cards:
-			if m.sticky_cluster(c).size() > 1:
+			if m.is_shape() or (not slides_freely and m.sticky_cluster(c).size() > 1):
 				out[c] = true
 	return out
 
@@ -827,6 +833,22 @@ static func apply_move(gm: GameManager, move: Dictionary, profile: AIProfile = n
 		_apply_rearrange(gm, move)
 		if profile != null and profile.picks_safe_joker_reps() and not gm.board.melds.is_empty():
 			_choose_joker_reps(gm, gm.board.melds[-1])
+		return
+	# An ultimate-style shape move builds a picture group on its grid cells
+	# (the Cute Slime's ult). Pulling the picture's cards out may have broken
+	# donor groups; the move carries the repair (planned by the same engine as
+	# deep rearrangements) that mends the leftover table. Spending the
+	# ultimate drains the meter.
+	if move.has("shape_cells"):
+		var shape_err := gm.move_cards_to_new_shape(move["cards"], move["shape_cells"])
+		if shape_err != "":
+			push_warning("GreedyAI staged an illegal shape move (%s)" % shape_err)
+			return
+		if move.has("shape_repair"):
+			_apply_rearrange(gm, {"rearrange": move["shape_repair"],
+				"cards": move["shape_repair_moved"]})
+		if move.get("ult", false):
+			gm.current_player().meter = 0
 		return
 	var cards: Array[Card] = move["cards"]
 	var dest: CardSet = move["dest"]

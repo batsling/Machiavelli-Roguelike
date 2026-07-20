@@ -244,10 +244,12 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 - `scripts/engine/player_state.gd` — `PlayerState`: hand (+ roguelike health/gold, unused)
 - `scripts/engine/game_manager.gd` — `GameManager`: deal, staged turns, per-move undo,
   the opening rule, commit validation, draw/pass, win detection; emits signals
-  the UI listens to. Also carries `stage_cross_meld`, the layout-groundwork
-  move (no card grants it in normal play yet) that stages a new group crossing
-  an existing one at a shared pivot card — the pivot counts as a member of
-  both groups, both must be valid at commit, and both can still take cards
+  the UI listens to. Also carries the layout moves: `move_cards_to_new_shape`
+  (a new picture group on grid cells — the slime's ultimate plays through it)
+  and `stage_cross_meld`, the groundwork move (no card grants it in normal
+  play yet) that stages a new group crossing an existing one at a shared
+  pivot card — the pivot counts as a member of both groups, both must be
+  valid at commit, and both can still take cards
 
 ### AI — `scripts/ai/`
 
@@ -291,7 +293,11 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   her turns she legally combines slimed cards — oozing them next to the most
   valuable slimed card the player could still lift (weighting by versatility:
   jokers, then the flexible 4-8s), as much as helps while keeping every group
-  valid with no leftover cards; she alone moves slimed cards freely
+  valid with no leftover cards; she alone moves slimed cards freely. Once her
+  ultimate meter fills, she gathers every slimed card she can legally take —
+  her hand's, the table's free donations, and cards whose broken groups the
+  repair engine can mend — into a picture group (heart 16 / ladybug 12 /
+  flower 9, grandest that fits) sealed on the felt, and her meter resets
 - `scripts/ai/sadistic_billionaire.gd` — `SadisticBillionaire`: the second designed
   enemy (strong, conservative, attentive). At combat start he turns every card in
   his own deck — all 52 naturals and his 2 jokers — to glass (the Clear effect):
@@ -349,11 +355,14 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   registration and a new-group drop
 - `tests/anim_check.gd` — headless check that an enemy turn drives to
   completion through `EnemyMoveAnimator` with no leaked flying-card proxies
-- `tests/layout_check.gd` — headless check of the board-layout groundwork:
-  orientation and shape cells surviving snapshots, crossing groups (staging,
-  validity, extending either group, undo, commit, shared-card removal), shape
-  groups (the heart template, connectivity, line-through), BoardGrid cluster
-  and adjacency math, and the vertical/grid rendering paths
+- `tests/layout_check.gd` — headless check of the board-layout groundwork and
+  the slime's ultimate: orientation and shape cells surviving snapshots,
+  crossing groups (staging, validity, extending either group, undo, commit,
+  shared-card removal), shape groups (the heart template, connectivity,
+  line-through), BoardGrid cluster and adjacency math, the ultimate (fires on
+  a full meter with gatherable slime, seals a valid picture, resets the
+  meter, holds when short, and fires inside full seeded AI-vs-AI games with
+  every invariant intact), and the vertical/grid rendering paths
 
 ## Headless smoke test
 
@@ -402,11 +411,12 @@ mechanics that will use it still to come:
   combinations at the same time.
 - **Shape ("picture") groups** — a group can place its cards on a small grid
   instead of in a line (`CardSet.set_shape`), valid when the picture is one
-  connected patch. This is the groundwork for the Cute Slime's planned
-  ultimate: gathering her slimed cards into a heart / ladybug / flower on the
-  felt (the heart template lives on `CuteSlime.ULT_HEART`), a "set" any card
-  of which can be played off in any direction that feasibly works —
-  `CardSet.line_through` reads the straight lines those plays will extend.
+  connected patch. This is what the Cute Slime's ultimate builds (her heart /
+  ladybug / flower templates live on `CuteSlime.ULT_HEART` / `ULT_LADYBUG` /
+  `ULT_FLOWER`; the engine move is `GameManager.move_cards_to_new_shape`).
+  Still to come: a picture as a "set" any card of which can be played off in
+  any direction that feasibly works — `CardSet.line_through` reads the
+  straight lines those plays will extend.
 - **Adjacency** — `BoardGrid` lays every connected patch of groups onto a
   local grid and answers `neighbors(card)`: cards directly horizontal or
   vertical to each other, the relation that will eventually make such
@@ -446,6 +456,18 @@ player could still lift, prizing versatility (jokers, then the flexible 4-8s),
 as much as helps while keeping every group valid with no leftover cards. The
 smart AI understands the slime and never plans a move that would drag a
 cluster it didn't mean to.
+
+Her **ultimate** rides the ultimate meter: when it fills and enough slimed
+cards can be legally gathered, she squeezes them into a picture on the felt —
+a heart (16 cards), a ladybug (12) or a flower (9), the grandest that fits —
+and the meter resets. The slime comes from her own hand (naturals first, her
+wildcard jokers last) and from the table: free donations whose groups stay
+valid without them, plus cards whose broken groups the repair engine can
+legally rearrange — mending the leftovers is part of the ultimate, so the
+table is whole again when she is done. The picture is all slimed, so it moves
+only as one lump nothing can legally absorb: those cards are sealed, and no
+planner (not even hers) ever unpicks a picture. Until a picture fits, she
+holds the full meter.
 
 **The Sadistic Billionaire** brings the **Clear** (glass) effect — glass cards
 render transparent and are see-through from the back: everyone can see them

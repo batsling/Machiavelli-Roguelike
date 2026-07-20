@@ -29,6 +29,9 @@ func _init() -> void:
 	_test_cross_meld_undo_and_removal()
 	_test_shape_groups()
 	_test_board_grid()
+	_test_slime_ultimate()
+	_test_slime_ultimate_gates()
+	_test_ult_in_driven_games()
 	await _test_rendering()
 	if ok:
 		print("layout_check: PASS")
@@ -209,6 +212,147 @@ func _test_board_grid() -> void:
 		_fail("the pivot's neighbors should be 3C, 5C and 4D")
 	if BoardGrid.neighbors(board, four_h).size() != 1:
 		_fail("the tail of the cross has exactly one neighbor")
+
+func _slimed(rank: int, suit: String) -> Card:
+	var c := _card(rank, suit)
+	c.effects.append(Card.Effect.STICKY)
+	return c
+
+## A rogue-style 1v1 where the slime's seat is the current player: open,
+## sticky-immune, meter full, with the given hand and table.
+func _slime_gm(hand: Array[Card], melds: Array[CardSet]) -> GameManager:
+	var gm := GameManager.new()
+	gm.setup(["You", "Slime"], 5, 7)
+	gm.board.melds.assign(melds)
+	gm.turn_index = 1
+	var her := gm.players[1]
+	her.has_opened = true
+	her.ignores_sticky = true
+	her.meter = gm.meter_max
+	her.hand = hand.duplicate()
+	gm._begin_turn()
+	return gm
+
+## The ultimate: a full meter plus enough gatherable slime builds the biggest
+## picture that fits, seals it as one lump, and resets the meter.
+func _test_slime_ultimate() -> void:
+	var slime := CuteSlime.new()
+	# Table slime she can take legally: a fully slimed 5-card run (whole group
+	# may leave) and a slimed 8 in a set of four (the leftover trio stays
+	# valid). The clean set of jacks must not be touched.
+	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
+		_slimed(6, "hearts"), _slimed(7, "hearts")])
+	var eights := _meld([_slimed(8, "diamonds"), _card(8, "clubs"), _card(8, "spades"),
+		_card(8, "hearts")])
+	var jacks := _meld([_card(11, "hearts"), _card(11, "clubs"), _card(11, "spades")])
+	# Three slimed naturals in hand: 5 + 1 + 3 = 9 — exactly the flower.
+	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
+		_slimed(12, "hearts"), _card(2, "clubs")]
+	var gm := _slime_gm(hand, [run, eights, jacks] as Array[CardSet])
+	var move := slime.plan_strategy_move(gm)
+	if not move.get("ult", false):
+		_fail("a full meter with 9 gatherable slimed cards should fire the ultimate")
+		gm.free()
+		return
+	if (move["cards"] as Array).size() != 9:
+		_fail("the ultimate should fill the 9-card flower, got %d cards"
+			% (move["cards"] as Array).size())
+	GreedyAI.apply_move(gm, move)
+	var picture: CardSet = gm.board.melds[-1]
+	if not picture.is_shape() or picture.cards.size() != 9 or not picture.is_valid():
+		_fail("the ultimate should leave a valid 9-card picture on the table")
+	if gm.players[1].meter != 0:
+		_fail("spending the ultimate should reset her meter, got %d" % gm.players[1].meter)
+	if gm.board.meld_of(hand[0]) != picture:
+		_fail("her slimed hand cards should be inside the picture")
+	for m in gm.board.melds:
+		if not m.is_valid():
+			_fail("the ultimate left an invalid group behind: %d cards" % m.cards.size())
+	if jacks.cards.size() != 3:
+		_fail("the clean set of jacks must be untouched")
+	if eights.cards.size() != 3:
+		_fail("the slimed eight should leave its set of four (leftover trio valid)")
+	# The picture is one sticky lump: lifting any card drags the whole picture.
+	if picture.sticky_cluster(picture.cards[0]).size() != 9:
+		_fail("the picture should move as one 9-card lump")
+	if gm.commit_turn() != "":
+		_fail("the turn ending on the ultimate should commit")
+	# Her planner never unpicks the picture on later turns.
+	if not GreedyAI._immovable_cards(gm).has(picture.cards[0]):
+		_fail("picture cards should be immovable to every planner")
+	gm.free()
+
+## Gates: no ult below a full meter, and a full meter holds until the slime on
+## offer can legally fill a template.
+func _test_slime_ultimate_gates() -> void:
+	var slime := CuteSlime.new()
+	# Enough slime, but the meter isn't full.
+	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
+		_slimed(6, "hearts"), _slimed(7, "hearts")])
+	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
+		_slimed(12, "hearts"), _slimed(2, "hearts")]
+	var gm := _slime_gm(hand, [run] as Array[CardSet])
+	gm.players[1].meter = gm.meter_max - 1
+	if slime.plan_strategy_move(gm).get("ult", false):
+		_fail("the ultimate must wait for a full meter")
+	gm.free()
+	# Full meter, but the only table slime is locked into its group: a set of
+	# three with one slimed card can't spare it (leftover pair invalid), and
+	# 3 hand cards alone can't fill the 9-card flower.
+	var trio := _meld([_slimed(6, "diamonds"), _card(6, "clubs"), _card(6, "spades")])
+	var gm2 := _slime_gm([_slimed(9, "diamonds"), _slimed(10, "diamonds"),
+		_slimed(12, "hearts")] as Array[Card], [trio] as Array[CardSet])
+	var move := slime.plan_strategy_move(gm2)
+	if move.get("ult", false):
+		_fail("without enough legally gatherable slime the ultimate must hold")
+	if trio.cards.size() != 3:
+		_fail("planning alone must not touch the table")
+	gm2.free()
+
+## The ultimate fires inside real driven games: seeded 1v1s against the slime
+## with a tiny per-card meter so it charges fast. Core invariants (valid
+## table, card conservation) hold after every turn, every game still
+## finishes, and at least one game grows a picture on the felt.
+func _test_ult_in_driven_games() -> void:
+	var pictures := 0
+	for seed_value in [1, 2, 3]:
+		var gm := GameManager.new()
+		gm.setup(["You", "The Cute Slime"], 13, seed_value, true)
+		gm.draw_per_turn = 2
+		gm.max_plays_per_turn = 13
+		gm.meter_max = 5
+		gm.meter_gain = 1
+		gm.meter_per_card = true
+		var slime := CuteSlime.new()
+		slime.on_combat_start(gm)
+		var profile := slime.make_profile(seed_value)
+		var turns := 0
+		var saw_picture := false
+		while not gm.is_game_over and turns < 400:
+			var enemy: Enemy = slime if gm.current_player().is_opponent else null
+			GreedyAI.take_turn(gm, profile, enemy)
+			turns += 1
+			if not gm.board.all_valid():
+				_fail("ult game %d: invalid table after turn %d" % [seed_value, turns])
+				break
+			var count := gm.deck.size() + gm.board.all_cards().size()
+			for p in gm.players:
+				count += p.hand.size()
+			if count != 108:
+				_fail("ult game %d: card conservation broken (%d) after turn %d"
+					% [seed_value, count, turns])
+				break
+			for m in gm.board.melds:
+				if m.is_shape():
+					saw_picture = true
+		if not gm.is_game_over:
+			_fail("ult game %d: did not finish within 400 turns" % seed_value)
+		if saw_picture:
+			pictures += 1
+		gm.free()
+	print("ult games: %d of 3 grew a picture" % pictures)
+	if pictures == 0:
+		_fail("no seeded ult game ever built a picture — the ultimate never fired")
 
 ## Rendering: a vertical group lays its cards out in a column, and a cross
 ## renders as one grid panel with gaps where no card sits.

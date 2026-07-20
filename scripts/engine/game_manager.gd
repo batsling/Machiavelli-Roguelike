@@ -193,6 +193,33 @@ func add_cards_to_meld(cards_to_move: Array[Card], meld: CardSet) -> String:
 	_lock_table_jokers()
 	return ""
 
+## Move cards (from hand and/or table) into a brand-new SHAPE (picture) group
+## laid out on the given grid cells — `cells` maps every moved card to its
+## Vector2i cell, exactly one per card. Same staging, undo and legality as
+## move_cards_to_new_meld; the picture itself is valid when its cells form one
+## connected patch (CardSet). This is what the Cute Slime's ultimate plays
+## through. Returns "" on success or a human-readable reason.
+func move_cards_to_new_shape(cards_to_move: Array[Card], cells: Dictionary) -> String:
+	if cards_to_move.is_empty():
+		return ""
+	# The sticky expansion must not smuggle in cards the picture has no cell
+	# for (a mover bound by slime could drag extras along), so settle the real
+	# card list first and demand a perfect card<->cell match.
+	cards_to_move = _expand_sticky(cards_to_move)
+	if cards_to_move.size() != cells.size():
+		return "The picture needs exactly one cell per card."
+	for c in cards_to_move:
+		if not cells.has(c):
+			return "The picture needs exactly one cell per card."
+	var err := move_cards_to_new_meld(cards_to_move)
+	if err != "":
+		return err
+	# move_cards_to_new_meld appends the new group last; shape it in place.
+	var meld: CardSet = board.melds[-1]
+	meld.set_shape(cells)
+	board_changed.emit()
+	return ""
+
 ## Layout groundwork (no card grants this in normal play yet — a future card
 ## mechanic will): stage a brand-new group that CROSSES an existing one at
 ## `pivot`. The pivot card stays in its current group AND becomes a member of

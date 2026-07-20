@@ -147,7 +147,10 @@ func _fire_trigger(trigger_card: Card, played_card: Card) -> void:
 ## card with no slimed neighbour) is always its own singleton. Adjacency is read
 ## from the meld's display order — what the player actually sees on the felt —
 ## so the cards it drags are the cards sitting next to it, and the cluster is
-## returned in that left-to-right order.
+## returned in that left-to-right order. In a shape (picture) group adjacency
+## is the grid instead: slimed cards touching up/down/left/right stick, so a
+## picture built entirely of slimed cards (the slime's ultimate) moves as one
+## lump — which nothing else on the table can legally absorb, sealing it.
 func sticky_cluster(start_card: Card) -> Array[Card]:
 	var cluster: Array[Card] = []
 	if not cards.has(start_card):
@@ -155,6 +158,8 @@ func sticky_cluster(start_card: Card) -> Array[Card]:
 	if not start_card.is_sticky():
 		cluster.append(start_card)
 		return cluster
+	if is_shape():
+		return _shape_sticky_cluster(start_card)
 	var order := Rules.display_order(cards)
 	var idx := order.find(start_card)
 	var lo := idx
@@ -165,4 +170,23 @@ func sticky_cluster(start_card: Card) -> Array[Card]:
 		hi += 1
 	for i in range(lo, hi + 1):
 		cluster.append(order[i])
+	return cluster
+
+## Flood the shape's grid from start_card over slimed cards touching edge to
+## edge — the picture-group reading of the sticky bond.
+func _shape_sticky_cluster(start_card: Card) -> Array[Card]:
+	var cluster: Array[Card] = []
+	var frontier: Array[Card] = [start_card]
+	var seen := {}
+	while not frontier.is_empty():
+		var c: Card = frontier.pop_back()
+		if seen.has(c):
+			continue
+		seen[c] = true
+		cluster.append(c)
+		var cell: Vector2i = shape_cells[c]
+		for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+			var n := card_at(cell + step)
+			if n != null and n.is_sticky() and not seen.has(n):
+				frontier.append(n)
 	return cluster
