@@ -1,0 +1,131 @@
+extends SceneTree
+
+## Headless check for the hover-to-play hints: hovering a hand card lights up the
+## board spots it can play into right now with no rearranging — a lay-off onto an
+## existing group, or a brand-new group it forms with other cards in the hand.
+## Run: godot --headless --path . --script res://tests/play_hint_check.gd
+
+func _card(rank: int, suit: String) -> Card:
+	var c := Card.new()
+	c.suit = suit
+	c.rank = rank
+	return c
+
+func _joker() -> Card:
+	var c := Card.new()
+	c.suit = "joker"
+	c.is_joker = true
+	return c
+
+func _meld(cards: Array[Card]) -> CardSet:
+	var m := CardSet.new()
+	m.cards = cards
+	return m
+
+func _init() -> void:
+	var ui: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	root.add_child.call_deferred(ui)
+	await process_frame
+	await process_frame
+	ui._on_play_vanilla_pressed()
+	await process_frame
+	var ok := true
+
+	# --- Lay-off onto an existing run (player is open) -------------------------
+	ui.gm.players[0].has_opened = true
+	var run := _meld([_card(5, "hearts"), _card(6, "hearts"), _card(7, "hearts")])
+	var set9 := _meld([_card(9, "hearts"), _card(9, "diamonds"), _card(9, "spades")])
+	var board: Array[CardSet] = [run, set9]
+	ui.gm.board.melds = board
+	var eight_h := _card(8, "hearts")
+	ui.gm.players[0].hand = [eight_h, _card(2, "clubs")] as Array[Card]
+
+	ui._compute_play_hints(eight_h)
+	if not ui.hint_meld_targets.has(run):
+		printerr("8H should lay off onto the 5-6-7H run")
+		ok = false
+	if ui.hint_meld_targets.has(set9):
+		printerr("8H should NOT lay off onto the set of nines")
+		ok = false
+	if ui.hint_new_group:
+		printerr("a lone 8H forms no new group from the hand")
+		ok = false
+
+	# The dead card (2C) fits nowhere on this board and makes no group.
+	ui.hint_meld_targets.clear()
+	ui.hint_new_group = false
+	ui._compute_play_hints(ui.gm.players[0].hand[1])
+	if not ui.hint_meld_targets.is_empty() or ui.hint_new_group:
+		printerr("2C should light up nothing")
+		ok = false
+
+	# --- Rendering: the hinted group panel is spotlighted ----------------------
+	ui._compute_play_hints(eight_h)
+	ui._table.refresh_board()
+	await process_frame
+	var run_card: Button = ui.card_nodes.get(run.cards[0])
+	if run_card != null:
+		var panel := run_card.get_parent().get_parent() as PanelContainer
+		var sb: StyleBoxFlat = panel.get_theme_stylebox("panel")
+		if sb.border_color != UITheme.COL_HINT_EDGE:
+			printerr("the hinted run panel should carry the play-hint border")
+			ok = false
+
+	# --- The opening rule gates lay-offs --------------------------------------
+	ui.gm.players[0].has_opened = false
+	ui.hint_meld_targets.clear()
+	ui.hint_new_group = false
+	ui._compute_play_hints(eight_h)
+	if not ui.hint_meld_targets.is_empty():
+		printerr("before opening, a lay-off onto a table group must not be hinted")
+		ok = false
+	ui.gm.players[0].has_opened = true
+
+	# --- A brand-new group formed from cards already in the hand --------------
+	ui.gm.board.melds = [] as Array[CardSet]
+	var nine_h := _card(9, "hearts")
+	ui.gm.players[0].hand = [nine_h, _card(9, "diamonds"), _card(9, "spades"),
+		_card(2, "clubs")] as Array[Card]
+	ui._compute_play_hints(nine_h)
+	if not ui.hint_new_group:
+		printerr("three nines in hand should light the new-group cue")
+		ok = false
+	if not ui.hint_meld_targets.is_empty():
+		printerr("with an empty board there is nothing to lay off onto")
+		ok = false
+
+	# The cue renders as a spotlighted "New group" ghost on the felt.
+	ui.selected.clear()
+	ui._table.refresh_board()
+	await process_frame
+	var hint_zone_found := false
+	for child in ui.board_flow.get_children():
+		if child is PanelContainer:
+			var sb2: StyleBoxFlat = (child as PanelContainer).get_theme_stylebox("panel")
+			if sb2 != null and sb2.border_color == UITheme.COL_HINT_EDGE:
+				hint_zone_found = true
+	if not hint_zone_found:
+		printerr("the new-group cue should render a spotlighted zone")
+		ok = false
+
+	# --- A run the hand can complete only with a joker ------------------------
+	var run_gap := _card(5, "spades")
+	ui.gm.players[0].hand = [run_gap, _card(6, "spades"), _joker()] as Array[Card]
+	ui._compute_play_hints(run_gap)
+	if not ui.hint_new_group:
+		printerr("5S + 6S + a joker should form a run (new-group cue)")
+		ok = false
+
+	# A lone card with a joker but no partner makes no group.
+	ui.gm.players[0].hand = [_card(5, "spades"), _joker()] as Array[Card]
+	ui._compute_play_hints(ui.gm.players[0].hand[0])
+	if ui.hint_new_group:
+		printerr("one card plus one joker is only two — no group")
+		ok = false
+
+	if ok:
+		print("play_hint_check: PASS")
+		quit(0)
+	else:
+		printerr("play_hint_check: FAIL")
+		quit(1)

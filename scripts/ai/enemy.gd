@@ -35,6 +35,26 @@ func on_combat_start(_gm: GameManager) -> void:
 func mechanic_intro() -> String:
 	return ""
 
+## The deck_owner id of this enemy's own deck: the seat it sits in. In a rogue
+## round there is exactly one opponent (this enemy), so its cards are the ones
+## the combined stock tagged with that seat's id. A designed enemy corrupts only
+## these — the player's own copies stay clean. Returns -1 if no opponent seat is
+## found (shouldn't happen in a real round).
+func own_deck_id(gm: GameManager) -> int:
+	for p in gm.players:
+		if p.is_opponent:
+			return p.player_id
+	return -1
+
+## Every card in the game right after the deal — the stock plus every player's
+## hand — so a combat-start hook can find its own deck's cards wherever they
+## landed.
+func all_dealt_cards(gm: GameManager) -> Array[Card]:
+	var out: Array[Card] = gm.deck.cards.duplicate()
+	for p in gm.players:
+		out.append_array(p.hand)
+	return out
+
 ## The enemy's special strategy move for the current (its own) turn, tried by
 ## GreedyAI once its ordinary plays are spent — a chance to act on a mechanic
 ## rather than just empty its hand. Returns a move Dictionary in GreedyAI's

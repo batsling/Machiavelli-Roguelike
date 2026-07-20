@@ -9,8 +9,12 @@ health/gold, encounters) will be built on.
 
 ## Rules implemented
 
-- Two full 52-card decks (104 cards); you + 1-3 AI enemies (default 2), 13 cards
-  each. Optional: 4 jokers in the deck (settings).
+- Every player brings their own single 52-card deck (plus 2 jokers each when
+  jokers are on); at the start of combat the decks are combined into one stock,
+  so you still draw from a shared pile and play is unchanged — a 1v1 rogue round
+  is the familiar double deck (104 cards, +4 jokers). Each card remembers which
+  deck it came from, which a designed enemy reads to corrupt only its own cards.
+  You + 1-3 AI enemies (default 2), 13 cards each.
 - A valid table group is a **set** (3–4 cards of one rank, all different suits) or a
   **run** (3+ consecutive cards of one suit; ace plays low `A-2-3` or high `Q-K-A`,
   never wrapping).
@@ -96,14 +100,23 @@ groups themselves are untouched). **Sort** lays straights out first — by colou
 then by starting rank — and sets after, by rank; any group you have broken
 mid-rearrange stays put at the end. **Randomize** keeps each group intact but
 shuffles where the groups sit, to jog loose a rearrangement you had not spotted.
+The header also carries a row of suit symbols (♥ ♦ ♣ ♠) — the **suit
+highlighter**: hover any one to outline every card of that suit *everywhere in
+play*, across both the table and your hand at once, and fade the rest, so you can
+pick a colour out of the whole board at a glance (jokers count as every suit).
+Move the mouse off and everything returns to normal.
 
 Your hand works like Balatro's: it keeps whatever order you give it. Drag a card
 onto another hand card to slot it there (left half = before, right half = after),
-or drag onto empty hand space to send it to the end. Its header also carries a
-row of suit symbols (♥ ♦ ♣ ♠): hover any one to outline the cards of that suit in
-your hand and fade the rest, so you can pick a colour out of a crowded hand at a
-glance (jokers count as every suit). Move the mouse off and the hand returns to
-normal.
+or drag onto empty hand space to send it to the end. Its header carries two sort
+buttons — **Sort: straights** groups the hand into suit runs (reds then blacks),
+**Sort: sets** groups it by rank so matching cards sit together (jokers last in
+both). And **hovering a card in your hand shows where it can play right now with
+no rearranging**: every group it could lay off onto is spotlighted green, and a
+green **✓ New group** cue appears on the felt when the card completes a brand-new
+group with other cards already in your hand (jokers included as wildcards). Lay-
+offs only light up once you have opened; the new-group cue always shows, since
+that is how you open.
 
 Enemy turns play out move by move on screen: each card an enemy plays flies from
 where it was (their hidden hand or its previous spot on the table) to where it
@@ -200,8 +213,9 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 - `scripts/engine/rules.gd` — `Rules`: static set/run/meld validation (joker-aware),
   joker value assignment (honoring per-joker stand-in preferences), the list of
   alternative stand-ins a joker could take, display ordering
-- `scripts/engine/deck.gd` — `Deck`: double deck (optional jokers), seeded Fisher-Yates
-  shuffle, stock
+- `scripts/engine/deck.gd` — `Deck`: the players' single decks combined into one
+  double deck (optional jokers), each card tagged with its origin deck
+  (`Card.deck_owner`), seeded Fisher-Yates shuffle, stock
 - `scripts/engine/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
   future Trigger/Sticky effects)
 - `scripts/engine/board.gd` — `Board`: the melds on the table, with snapshot/restore so a
@@ -241,23 +255,26 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   planning, and fully deterministic
 - `scripts/ai/enemy.gd` — `Enemy`: a designed roguelike opponent — a name, an AI
   profile, an `on_combat_start` hook to plant mechanics, a `mechanic_intro`
-  blurb for the game log, and a `plan_strategy_move` hook GreedyAI consults
-  once ordinary play is spent; plus the roster the rogue ladder picks from at
-  random (the Cute Slime and the Sadistic Billionaire)
+  blurb for the game log, a `plan_strategy_move` hook GreedyAI consults once
+  ordinary play is spent, and helpers to find its own deck's cards
+  (`own_deck_id` / `all_dealt_cards`) so a mechanic corrupts only its own half;
+  plus the roster the rogue ladder picks from at random (the Cute Slime and the
+  Sadistic Billionaire)
 - `scripts/ai/cute_slime.gd` — `CuteSlime`: the first designed enemy (strong,
-  oblivious, quick). At combat start she slimes a random 13 hearts, 13 diamonds
-  and all jokers (the Sticky effect); on her turns she legally combines slimed
-  cards — oozing them next to the most valuable slimed card the player could
-  still lift (weighting by versatility: jokers, then the flexible 4-8s), as much
-  as helps while keeping every group valid with no leftover cards; she alone
-  moves slimed cards freely
+  oblivious, quick). At combat start she slimes every heart, diamond and joker in
+  her own deck (the Sticky effect) — one copy of each, so of the two copies of
+  any heart or diamond exactly one is sticky, and only her 2 of the 4 jokers; on
+  her turns she legally combines slimed cards — oozing them next to the most
+  valuable slimed card the player could still lift (weighting by versatility:
+  jokers, then the flexible 4-8s), as much as helps while keeping every group
+  valid with no leftover cards; she alone moves slimed cards freely
 - `scripts/ai/sadistic_billionaire.gd` — `SadisticBillionaire`: the second designed
-  enemy (strong, conservative, attentive). At combat start he turns every
-  joker and a random three quarters of the other cards — stock and hands —
-  to glass (the Clear effect): see-through from the back, visible in any
-  player's hand and on top of the stock, rendered transparent. The information cuts both
-  ways — the player reads his hand off his card backs, and the smart brain
-  counts every glass card in its planning
+  enemy (strong, conservative, attentive). At combat start he turns every card in
+  his own deck — all 52 naturals and his 2 jokers — to glass (the Clear effect):
+  one copy of each, so exactly half the cards in play go see-through from the
+  back, visible in any player's hand and on top of the stock, rendered
+  transparent. The information cuts both ways — the player reads his hand off his
+  card backs, and the smart brain counts every glass card in its planning
 
 ### UI — `scripts/ui/` + `scenes/`
 
@@ -297,8 +314,11 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 - `tests/ui_mode_check.gd` — headless check of the menu modes, the settings
   model, and the roguelike ladder (rules apply from the next round, win/loss
   buttons, starting combos)
-- `tests/suit_filter_check.gd` — headless check of the hand suit-filter and the
-  table Sort/Randomize ordering
+- `tests/suit_filter_check.gd` — headless check of the suit highlighter (across
+  both the hand and the table) and the table Sort/Randomize ordering
+- `tests/play_hint_check.gd` — headless check of the hover-to-play hints: lay-off
+  targets on the board, the new-group cue (including joker-assisted runs), the
+  opening-rule gate, and that both render their green spotlight
 - `tests/view_check.gd` — headless check of the table rendering and drag/drop:
   opponent seats, board meld panels, the "New group" zone, card-node
   registration and a new-group drop
@@ -311,6 +331,8 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 godot --headless --path . --import                              # once, builds class cache
 godot --headless --path . --script res://tests/smoke_test.gd    # unit tests + 65 seeded games
 godot --headless --path . --script res://tests/ui_mode_check.gd    # menu modes + settings
+godot --headless --path . --script res://tests/suit_filter_check.gd # suit highlighter + table sort
+godot --headless --path . --script res://tests/play_hint_check.gd  # hover-to-play hints
 godot --headless --path . --script res://tests/view_check.gd       # table rendering + drag/drop
 godot --headless --path . --script res://tests/anim_check.gd       # enemy-turn animation
 ```
@@ -347,13 +369,17 @@ a starting combo and measure how much it shortens games.
 
 Two designed enemies are in; the rogue ladder picks one at random each round
 (enemies live in `scripts/ai/enemy.gd` + `cute_slime.gd` +
-`sadistic_billionaire.gd`).
+`sadistic_billionaire.gd`). Because every player brings their own deck and the
+decks are only combined into the stock at combat start, each enemy corrupts just
+*its own* deck — of the two copies of any card in play, only the enemy's is
+touched, so only two of the four jokers ever carry a mechanic.
 
 **The Cute Slime** brings the **Sticky** effect — slimed cards (a green
 splotch, top right) stick to *each other*, so a run of them on the table moves
 as one lump: dragging any one drags them all, and the leftover has to stay a
-valid group. The slime slimes a random 13 hearts, 13 diamonds and every joker
-at combat start, moves her own slime freely (`PlayerState.ignores_sticky`),
+valid group. The slime slimes every heart, diamond and joker in her own deck
+at combat start — one copy of each, so 13 hearts, 13 diamonds and her 2 jokers —
+moves her own slime freely (`PlayerState.ignores_sticky`),
 and runs a "slime strategy" that legally combines slimed cards to guard her
 most valuable ones — oozing them next to the most valuable slimed card the
 player could still lift, prizing versatility (jokers, then the flexible 4-8s),
@@ -363,9 +389,9 @@ cluster it didn't mean to.
 
 **The Sadistic Billionaire** brings the **Clear** (glass) effect — glass cards
 render transparent and are see-through from the back: everyone can see them
-in any player's hand and on top of the stock. He turns every joker and a
-random three quarters of all other cards to glass at combat start (like the
-slime, no joker escapes him), so his hand shows most of its faces
+in any player's hand and on top of the stock. He turns every card in his own
+deck to glass at combat start — all 52 naturals and his 2 jokers, one copy of
+each, so exactly half the cards in play — so his hand shows most of its faces
 in his seat, your hand leaks the same way, and a glass stock top telegraphs
 the next draw to the whole table. The smart AI uses exactly that public
 information — counting glass cards in every hand and reading a glass stock

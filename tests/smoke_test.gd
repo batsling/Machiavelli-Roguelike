@@ -99,8 +99,8 @@ func _init() -> void:
 	for seed_value in 8:
 		if not _play_slime_game(seed_value):
 			failures += 1
-	# Glass tables: the Sadistic Billionaire turns 3/4 of all cards to glass,
-	# so the smart brain runs its glass counting every turn.
+	# Glass tables: the Sadistic Billionaire turns his whole deck (half the cards
+	# in play) to glass, so the smart brain runs its glass counting every turn.
 	for seed_value in 8:
 		if not _play_glass_game(seed_value):
 			failures += 1
@@ -394,43 +394,51 @@ func _test_slime_free_move() -> bool:
 		print("slime free move test OK")
 	return ok
 
-## The Cute Slime coats a random half of the hearts (13 of 26), a random half of
-## the diamonds (13 of 26) and every joker at combat start, and no other suit.
+## The Cute Slime coats every heart, diamond and joker in HER OWN deck at combat
+## start — one copy of each, since the combined stock holds one copy per player.
+## So of the 26 hearts and 26 diamonds exactly the 13 from her deck are slimed,
+## only her 2 of the 4 jokers, no clubs/spades, and nothing from the player's deck.
 func _test_slime_setup() -> bool:
 	var gm := GameManager.new()
 	var ok := true
 	gm.setup(["You", "The Cute Slime"], 13, 6, true)
 	CuteSlime.new().on_combat_start(gm)
+	var own := gm.players[1].player_id
 	var all_cards: Array[Card] = gm.deck.cards.duplicate()
 	for p in gm.players:
 		all_cards.append_array(p.hand)
-	var counts := {"hearts": 0, "diamonds": 0}
-	var totals := {"hearts": 0, "diamonds": 0}
+	var slimed_hearts := 0
+	var slimed_diamonds := 0
 	var sticky_jokers := 0
 	var total_jokers := 0
-	var stray := 0
+	var stray := 0        # slimed cards that shouldn't be (wrong suit or wrong deck)
 	for c in all_cards:
 		if c.is_joker:
 			total_jokers += 1
 			if c.is_sticky():
 				sticky_jokers += 1
-		elif c.suit == "hearts" or c.suit == "diamonds":
-			totals[c.suit] += 1
-			if c.is_sticky():
-				counts[c.suit] += 1
-		elif c.is_sticky():
+				if c.deck_owner != own:
+					stray += 1
+			continue
+		if not c.is_sticky():
+			continue
+		if c.deck_owner != own or (c.suit != "hearts" and c.suit != "diamonds"):
 			stray += 1
-	for suit in ["hearts", "diamonds"]:
-		if totals[suit] != 26 or counts[suit] != 13:
-			printerr("slime setup: expected 13 of 26 %s slimed, got %d of %d"
-				% [suit, counts[suit], totals[suit]])
-			ok = false
-	if sticky_jokers != total_jokers or total_jokers != Deck.JOKER_COUNT:
-		printerr("slime setup: expected all %d jokers slimed, got %d of %d"
-			% [Deck.JOKER_COUNT, sticky_jokers, total_jokers])
+		elif c.suit == "hearts":
+			slimed_hearts += 1
+		else:
+			slimed_diamonds += 1
+	if slimed_hearts != 13 or slimed_diamonds != 13:
+		printerr("slime setup: expected all 13 of her hearts and 13 diamonds slimed, got %d / %d"
+			% [slimed_hearts, slimed_diamonds])
+		ok = false
+	if sticky_jokers != 2 or total_jokers != Deck.JOKER_COUNT:
+		printerr("slime setup: expected only her 2 of %d jokers slimed, got %d"
+			% [Deck.JOKER_COUNT, sticky_jokers])
 		ok = false
 	if stray != 0:
-		printerr("slime setup: %d clubs/spades cards were slimed" % stray)
+		printerr("slime setup: %d cards were slimed that shouldn't be (wrong suit or wrong deck)"
+			% stray)
 		ok = false
 	# She marks her own seat immune so she moves slimed cards freely.
 	if not gm.players[1].ignores_sticky:
@@ -620,36 +628,45 @@ func _test_slime_guards_on_draw() -> bool:
 		print("slime guards on draw test OK")
 	return ok
 
-## The Sadistic Billionaire turns every joker and exactly three quarters of
-## all other cards — the stock and every hand — to glass at combat start;
-## glass is pure information, so it stacks with slime on the same card; and
-## the rogue roster now offers both designed enemies.
+## The Sadistic Billionaire turns every card in HIS OWN deck — all 52 naturals
+## and both his jokers — to glass at combat start. The combined stock holds one
+## copy of each card per player, so exactly his half (54 of 108) goes glass, only
+## his 2 of the 4 jokers, and nothing from the player's deck. Glass is pure
+## information, so it stacks with slime on the same card; and the rogue roster
+## now offers both designed enemies.
 func _test_glass_setup() -> bool:
 	var gm := GameManager.new()
 	var ok := true
 	gm.setup(["You", "The Sadistic Billionaire"], 13, 6, true)
 	SadisticBillionaire.new().on_combat_start(gm)
+	var own := gm.players[1].player_id
 	var all_cards: Array[Card] = gm.deck.cards.duplicate()
 	for p in gm.players:
 		all_cards.append_array(p.hand)
 	var glass := 0
 	var glass_jokers := 0
 	var total_jokers := 0
+	var stray := 0        # glass cards from the wrong (player's) deck
 	for c in all_cards:
 		if c.is_glass():
 			glass += 1
+			if c.deck_owner != own:
+				stray += 1
 		if c.is_joker:
 			total_jokers += 1
 			if c.is_glass():
 				glass_jokers += 1
-	# 78 of the 104 naturals (3/4) plus all 4 jokers.
-	if all_cards.size() != 108 or glass != 82:
-		printerr("glass setup: expected 82 of 108 cards glass, got %d of %d"
+	# All 52 naturals + 2 jokers of his own deck: 54 of the 108 cards.
+	if all_cards.size() != 108 or glass != 54:
+		printerr("glass setup: expected 54 of 108 cards glass, got %d of %d"
 			% [glass, all_cards.size()])
 		ok = false
-	if glass_jokers != total_jokers or total_jokers != Deck.JOKER_COUNT:
-		printerr("glass setup: expected all %d jokers glass, got %d of %d"
-			% [Deck.JOKER_COUNT, glass_jokers, total_jokers])
+	if stray != 0:
+		printerr("glass setup: %d glass cards came from the player's deck" % stray)
+		ok = false
+	if glass_jokers != 2 or total_jokers != Deck.JOKER_COUNT:
+		printerr("glass setup: expected only his 2 of %d jokers glass, got %d"
+			% [Deck.JOKER_COUNT, glass_jokers])
 		ok = false
 	var both := _glass(_sticky(_card(5, "hearts")))
 	if not (both.is_glass() and both.is_sticky()):

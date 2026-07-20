@@ -45,7 +45,8 @@ func _init() -> void:
 	for p in ui.gm.players:
 		all_cards.append_array(p.hand)
 	if ui.current_enemy is CuteSlime:
-		# She marks her own seat immune and slimes hearts, diamonds and jokers.
+		# She marks her own seat immune and slimes the hearts, diamonds and jokers
+		# of her own deck only (one copy of each).
 		if not ui.gm.players[1].ignores_sticky:
 			printerr("the slime's seat should ignore sticky")
 			ok = false
@@ -53,20 +54,17 @@ func _init() -> void:
 		for c in all_cards:
 			if c.is_sticky():
 				slimed += 1
-		if slimed != 30:  # 13 hearts + 13 diamonds + 4 jokers
-			printerr("expected 30 slimed cards at combat start, got %d" % slimed)
+		if slimed != 28:  # 13 hearts + 13 diamonds + 2 jokers, all from her deck
+			printerr("expected 28 slimed cards at combat start, got %d" % slimed)
 			ok = false
 	elif ui.current_enemy is SadisticBillionaire:
-		# He glasses all 4 jokers plus three quarters of the 104 naturals.
+		# He glasses his own deck only: all 52 naturals + his 2 jokers = 54 of 108.
 		var glass := 0
 		for c in all_cards:
 			if c.is_glass():
 				glass += 1
-			elif c.is_joker:
-				printerr("every joker should be glass at combat start")
-				ok = false
-		if glass != 82:
-			printerr("expected 82 glass cards at combat start, got %d" % glass)
+		if glass != 54:
+			printerr("expected 54 glass cards at combat start, got %d" % glass)
 			ok = false
 	else:
 		printerr("round 1 should face a designed enemy, got %s" % ui.current_enemy)

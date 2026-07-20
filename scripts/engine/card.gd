@@ -25,6 +25,13 @@ const JOKER_GLYPH := "★"
 @export var suit: String = ""        # "hearts", "diamonds", "clubs", "spades" ("joker" for jokers)
 @export var rank: int = 0            # 1-13 (ace = 1); 0 for jokers
 @export var owner_id: int = -1       # which player/opponent this card currently belongs to
+# Which player's deck this physical card came from. Every player brings their
+# own single deck to the table; at combat start the decks are combined into one
+# stock (Deck.build_double_deck), but each card keeps the id of its origin deck
+# for good. A designed enemy corrupts only the cards from its own deck — so of
+# the two copies of any card in the combined stock, only the enemy's is touched.
+# -1 for cards built outside a dealt game (e.g. test fixtures).
+@export var deck_owner: int = -1
 @export var effects: Array[Effect] = []
 @export var is_joker: bool = false   # counts as any card; see Rules.assign_jokers
 
