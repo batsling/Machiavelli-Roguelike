@@ -109,14 +109,15 @@ Move the mouse off and everything returns to normal.
 Your hand works like Balatro's: it keeps whatever order you give it. Drag a card
 onto another hand card to slot it there (left half = before, right half = after),
 or drag onto empty hand space to send it to the end. Its header carries two sort
-buttons — **Sort: straights** groups the hand into suit runs (reds then blacks),
-**Sort: sets** groups it by rank so matching cards sit together (jokers last in
-both). And **hovering a card in your hand shows where it can play right now with
-no rearranging**: every group it could lay off onto is spotlighted green, and a
-green **✓ New group** cue appears on the felt when the card completes a brand-new
-group with other cards already in your hand (jokers included as wildcards). Lay-
-offs only light up once you have opened; the new-group cue always shows, since
-that is how you open.
+buttons — **Sort: rank** lays the hand out by rank, increasing left to right,
+and **Sort: suit** groups it by suit (reds then blacks, rank order within each);
+jokers sort last either way. And **hovering a card in your hand shows where it
+can play right now with no rearranging**: every group it could lay off onto is
+spotlighted green, and a green **✓ New group** cue appears on the felt when the
+card completes a brand-new group with other naturals already in your hand. Plays
+that would need a joker to close are disregarded, so the cue only lights for
+groups you can form without spending a wildcard. Lay-offs only light up once you
+have opened; the new-group cue always shows, since that is how you open.
 
 Enemy turns play out move by move on screen: each card an enemy plays flies from
 where it was (their hidden hand or its previous spot on the table) to where it
@@ -186,8 +187,8 @@ The **Vanilla sandbox** tab holds:
 The **Roguelike run** tab holds the run's own copies of the same rules —
 cards drawn per turn (default 2), starting hand size (default 13), max hand
 size (default none), max cards played per turn (default 13), jokers (default
-in), starting combos (default off) and the ultimate meter (default max 10,
-charge 1 per hand). It also holds an **Enemy AI** section
+in), starting combos (default on) and the ultimate meter (default max 10,
+charge 1 per card played from hand). It also holds an **Enemy AI** section
 with the same four sliders (Skill / Style / Attention / Planning) *for each
 individual enemy in the roster*, so any single opponent's brain can be retuned
 for the run; an enemy left untouched keeps its designed personality (every
@@ -317,8 +318,9 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 - `tests/suit_filter_check.gd` — headless check of the suit highlighter (across
   both the hand and the table) and the table Sort/Randomize ordering
 - `tests/play_hint_check.gd` — headless check of the hover-to-play hints: lay-off
-  targets on the board, the new-group cue (including joker-assisted runs), the
-  opening-rule gate, and that both render their green spotlight
+  targets on the board, the new-group cue (natural groups only, joker-assisted
+  plays disregarded), the opening-rule gate, and that both render their green
+  spotlight
 - `tests/view_check.gd` — headless check of the table rendering and drag/drop:
   opponent seats, board meld panels, the "New group" zone, card-node
   registration and a new-group drop
