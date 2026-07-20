@@ -26,6 +26,38 @@ extends Enemy
 ## a turn with no ordinary play: she reworks the felt and then draws, keeping the
 ## rearrangement (GameManager.draw_and_end_turn), so she never wastes the guard.
 
+## Groundwork for her planned ultimate: once her meter fills she will gather
+## the slimed cards she can and arrange them into a picture on the felt — a
+## heart, a ladybug, a flower — as a shape group (CardSet.set_shape) that any
+## card of can be played off in any direction that feasibly works. The heart
+## template is laid out here as grid cells, row by row:
+##   . X . X .
+##   X X X X X
+##   X X X X X
+##   . X X X .
+##   . . X . .
+## The ladybug and flower templates land with the ultimate itself.
+const ULT_HEART: Array[Vector2i] = [
+	Vector2i(1, 0), Vector2i(3, 0),
+	Vector2i(0, 1), Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1), Vector2i(4, 1),
+	Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2), Vector2i(3, 2), Vector2i(4, 2),
+	Vector2i(1, 3), Vector2i(2, 3), Vector2i(3, 3),
+	Vector2i(2, 4),
+]
+
+## Build one of her picture groups from a template and the cards to fill it
+## (in template order). Needs exactly as many cards as the template has cells;
+## returns null when the count doesn't fit.
+static func build_shape_meld(template: Array[Vector2i], cards: Array[Card]) -> CardSet:
+	if cards.size() != template.size():
+		return null
+	var cells := {}
+	for i in template.size():
+		cells[cards[i]] = template[i]
+	var meld := CardSet.new()
+	meld.set_shape(cells)
+	return meld
+
 func _init() -> void:
 	display_name = "The Cute Slime"
 	strength = 1.0     # strongest difficulty (for now every enemy is)

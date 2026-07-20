@@ -69,7 +69,7 @@ var max_plays_per_turn := 0
 ## meter_max 0 disables the meter entirely. Each committed hand adds
 ## meter_gain points — once per hand, or meter_gain per card played from hand
 ## when meter_per_card is on.
-var meter_max := 10
+var meter_max := 30
 var meter_gain := 1
 var meter_per_card := false
 
@@ -189,6 +189,42 @@ func add_cards_to_meld(cards_to_move: Array[Card], meld: CardSet) -> String:
 	if err != "":
 		return err
 	_push_undo()
+	_move_cards(cards_to_move, meld)
+	_lock_table_jokers()
+	return ""
+
+## Layout groundwork (no card grants this in normal play yet — a future card
+## mechanic will): stage a brand-new group that CROSSES an existing one at
+## `pivot`. The pivot card stays in its current group AND becomes a member of
+## the new one, which lies perpendicular across it on the felt — one card
+## sitting in two combinations at once. Both groups remain ordinary melds:
+## each must be valid at commit with the pivot counted in, and each can still
+## take further cards (add_cards_to_meld works on either). Taking the pivot
+## off the table removes it from both (Board.remove_card). Returns "" on
+## success or a human-readable reason the move is not allowed.
+func stage_cross_meld(pivot: Card, cards_to_move: Array[Card]) -> String:
+	var host := board.meld_of(pivot)
+	if host == null:
+		return "The crossing card must already be in a group on the table."
+	if board.melds_of(pivot).size() > 1:
+		return "That card is already shared between two groups."
+	if cards_to_move.is_empty():
+		return ""
+	if cards_to_move.has(pivot):
+		return "The crossing card stays where it is — bring the other cards to it."
+	cards_to_move = _expand_sticky(cards_to_move)
+	# Crossing reads and builds on a table group, so the opening rule treats it
+	# like adding to that group.
+	var err := _stage_error(cards_to_move, host)
+	if err != "":
+		return err
+	_push_undo()
+	var meld := CardSet.new()
+	meld.orientation = CardSet.Orientation.VERTICAL \
+		if host.orientation == CardSet.Orientation.HORIZONTAL \
+		else CardSet.Orientation.HORIZONTAL
+	meld.add_card(pivot)  # shared: joins the new group without leaving its host
+	board.melds.append(meld)
 	_move_cards(cards_to_move, meld)
 	_lock_table_jokers()
 	return ""

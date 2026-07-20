@@ -94,6 +94,10 @@ placed this turn still has a choice, right-click it to pick its stand-in (handy
 for setting up — or blocking — the swap). Right-clicking anything else — a
 card, the felt, your hand — clears the current selection.
 
+Each lone group on the felt carries a small **⟳** control that stands it
+upright or lays it flat — purely how it sits on the table (the group itself is
+untouched), and the first visible piece of the layout groundwork below.
+
 The table can get crowded, so its header carries **Sort** and **Randomize**
 buttons that reorder the groups on the felt (a purely visual reshuffle — the
 groups themselves are untouched). **Sort** lays straights out first — by colour,
@@ -130,7 +134,11 @@ since you last acted; they clear when the enemies start their next round.
 
 The **Settings** button opens a dialog with two tabs — **Vanilla sandbox**
 (free-play games only) and **Roguelike run** (the run's own rules, so the
-roguelike can be balanced without touching the sandbox).
+roguelike can be balanced without touching the sandbox). The dialog is built
+to always fit fully on screen: each tab is a compact, scrolling column of
+single-line rows (each AI dial is one line with its end labels beside the
+slider), the longer rule explainers live in tooltips, and the pop-up clamps
+itself inside the window.
 
 The **Vanilla sandbox** tab holds:
 
@@ -179,7 +187,7 @@ The **Vanilla sandbox** tab holds:
 - **Ultimate meter** — every player (you and the enemies) carries a meter that
   charges as they play hands and holds once full, shown as a bar under each
   opponent's name and beside your hand. **Meter max** (0 disables it, default
-  10) is how much it holds; **Charge per play** (default 1) is how much each
+  30) is how much it holds; **Charge per play** (default 1) is how much each
   committed hand adds; **Charge per card played from hand** switches that from
   once per hand to once per card leaving the hand that turn. Applies from the
   next new game (the meter max also applies live).
@@ -187,7 +195,7 @@ The **Vanilla sandbox** tab holds:
 The **Roguelike run** tab holds the run's own copies of the same rules —
 cards drawn per turn (default 2), starting hand size (default 13), max hand
 size (default none), max cards played per turn (default 13), jokers (default
-in), starting combos (default on) and the ultimate meter (default max 10,
+in), starting combos (default on) and the ultimate meter (default max 30,
 charge 1 per card played from hand). It also holds an **Enemy AI** section
 with the same four sliders (Skill / Style / Attention / Planning) *for each
 individual enemy in the roster*, so any single opponent's brain can be retuned
@@ -218,13 +226,28 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   double deck (optional jokers), each card tagged with its origin deck
   (`Card.deck_owner`), seeded Fisher-Yates shuffle, stock
 - `scripts/engine/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
-  future Trigger/Sticky effects)
+  future Trigger/Sticky effects), plus the layout groundwork: an orientation
+  (a line group can lie flat or stand upright on the felt) and shape cells
+  (a "picture" group placing its cards on a small grid, with line-through
+  helpers for the future play-off rules)
 - `scripts/engine/board.gd` — `Board`: the melds on the table, with snapshot/restore so a
-  whole turn's rearrangement can be rolled back
+  whole turn's rearrangement can be rolled back (snapshots keep each group's
+  orientation and shape). A card may sit in more than one meld at once — an
+  intersection, where a vertical group crosses a horizontal one at a shared
+  card — via `melds_of` / `intersections`; taking a card off the table
+  removes it from every group holding it
+- `scripts/engine/board_grid.gd` — `BoardGrid`: the grid math for the layout
+  groundwork — lays every connected patch of groups onto a local grid (lines
+  along their orientation, crossings aligned at the shared card, pictures by
+  their own cells) and answers adjacency queries (`neighbors`), the future
+  "cards directly beside each other are a legal play" relation
 - `scripts/engine/player_state.gd` — `PlayerState`: hand (+ roguelike health/gold, unused)
 - `scripts/engine/game_manager.gd` — `GameManager`: deal, staged turns, per-move undo,
   the opening rule, commit validation, draw/pass, win detection; emits signals
-  the UI listens to
+  the UI listens to. Also carries `stage_cross_meld`, the layout-groundwork
+  move (no card grants it in normal play yet) that stages a new group crossing
+  an existing one at a shared pivot card — the pivot counts as a member of
+  both groups, both must be valid at commit, and both can still take cards
 
 ### AI — `scripts/ai/`
 
@@ -326,6 +349,11 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   registration and a new-group drop
 - `tests/anim_check.gd` — headless check that an enemy turn drives to
   completion through `EnemyMoveAnimator` with no leaked flying-card proxies
+- `tests/layout_check.gd` — headless check of the board-layout groundwork:
+  orientation and shape cells surviving snapshots, crossing groups (staging,
+  validity, extending either group, undo, commit, shared-card removal), shape
+  groups (the heart template, connectivity, line-through), BoardGrid cluster
+  and adjacency math, and the vertical/grid rendering paths
 
 ## Headless smoke test
 
@@ -337,6 +365,7 @@ godot --headless --path . --script res://tests/suit_filter_check.gd # suit highl
 godot --headless --path . --script res://tests/play_hint_check.gd  # hover-to-play hints
 godot --headless --path . --script res://tests/view_check.gd       # table rendering + drag/drop
 godot --headless --path . --script res://tests/anim_check.gd       # enemy-turn animation
+godot --headless --path . --script res://tests/layout_check.gd     # board-layout groundwork
 ```
 
 ## Headless balance stats
@@ -353,6 +382,35 @@ gold cutoffs from the rounds-to-win terciles, and how often the player plays
 a hand vs draws (hands per game, cards per hand) for tuning ultimate-meter
 charge rates (`tests/balance_stats.gd`). Add `--combo` to deal every player
 a starting combo and measure how much it shortens games.
+
+## Board layout groundwork
+
+The table is growing past "a bag of horizontal lines". The groundwork for the
+planned bizarre layouts is in — model, math, rendering and tests — with the
+mechanics that will use it still to come:
+
+- **Orientation** — every line group lies flat or stands upright
+  (`CardSet.orientation`); vertical groups render as columns, and the ⟳
+  control on each group toggles it. Validity never depends on direction.
+- **Intersections** — a card can sit in a horizontal AND a vertical group at
+  once, where they cross (`GameManager.stage_cross_meld`,
+  `Board.melds_of` / `intersections`). Both groups must be valid at commit
+  with the shared card counted in both, both can still take lay-offs, moves
+  are undoable, and pulling the shared card off the table removes it from
+  both. Crossings render as one grid panel. No card grants this in normal
+  play yet — a future card mechanic will let its card be used in two
+  combinations at the same time.
+- **Shape ("picture") groups** — a group can place its cards on a small grid
+  instead of in a line (`CardSet.set_shape`), valid when the picture is one
+  connected patch. This is the groundwork for the Cute Slime's planned
+  ultimate: gathering her slimed cards into a heart / ladybug / flower on the
+  felt (the heart template lives on `CuteSlime.ULT_HEART`), a "set" any card
+  of which can be played off in any direction that feasibly works —
+  `CardSet.line_through` reads the straight lines those plays will extend.
+- **Adjacency** — `BoardGrid` lays every connected patch of groups onto a
+  local grid and answers `neighbors(card)`: cards directly horizontal or
+  vertical to each other, the relation that will eventually make such
+  neighbours a legal card play.
 
 ## Design notes / references
 

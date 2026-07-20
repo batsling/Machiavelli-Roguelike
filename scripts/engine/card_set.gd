@@ -5,13 +5,110 @@ extends Resource
 ## Machiavelli rules: a set of one rank, or a run of one suit). Membership is
 ## tracked here so the roguelike effects (Sticky, Bomb, Trigger) have a
 ## concrete place to hook into later; the vanilla engine only uses is_valid().
+##
+## Beyond the vanilla line group, this carries the groundwork for the planned
+## bizarre table layouts:
+##  - `orientation`: a line group can lie horizontally or vertically on the
+##    felt. Validity never depends on it, but direction is what lets a
+##    vertical group cross a horizontal one at a shared card (see
+##    Board.melds_of / GameManager.stage_cross_meld) with both still valid and
+##    extendable.
+##  - `shape_cells`: a "picture" group (e.g. the Cute Slime's planned ultimate
+##    arranging her slimed cards into a heart) places its cards on a small
+##    local grid instead of in a line. Any card of the picture is meant to be
+##    played off of in any direction that feasibly works — those play rules
+##    arrive with the mechanic; the grid helpers here (cell_of / card_at /
+##    line_through) are what they will read. Cards directly beside each other
+##    on the grid are the future "adjacent = playable" relation (BoardGrid).
+
+## How a line group lies on the felt (ignored by shape groups, which carry
+## their own cells).
+enum Orientation { HORIZONTAL, VERTICAL }
 
 @export var cards: Array[Card] = []
 # id of a board tile effect applied to this set's space, if any
 @export var board_tile_effect: String = ""
+@export var orientation := Orientation.HORIZONTAL
+## Card -> Vector2i local grid cell. Empty for ordinary line groups; non-empty
+## makes this a shape (picture) group, valid when its cells form one
+## edge-connected patch covering exactly its cards.
+@export var shape_cells := {}
 
 func is_valid() -> bool:
+	if is_shape():
+		return _shape_is_valid()
 	return Rules.is_valid_meld(cards)
+
+# --- Shape (picture) groups — groundwork -------------------------------------
+
+func is_shape() -> bool:
+	return not shape_cells.is_empty()
+
+## Turn this group into a shape: `cells` maps every card to its local grid
+## cell. Replaces the membership so cards and cells always agree.
+func set_shape(cells: Dictionary) -> void:
+	shape_cells = cells.duplicate()
+	cards.clear()
+	for c: Card in cells:
+		cards.append(c)
+
+## A shape group is valid by construction — the mechanic that builds it is the
+## legality gate — but it must be well-formed: one cell per card, every card
+## placed, no two cards sharing a cell, and the whole picture edge-connected.
+func _shape_is_valid() -> bool:
+	if cards.size() < Rules.MIN_MELD_SIZE or shape_cells.size() != cards.size():
+		return false
+	var used := {}
+	for c in cards:
+		if not shape_cells.has(c):
+			return false
+		var cell: Vector2i = shape_cells[c]
+		if used.has(cell):
+			return false
+		used[cell] = c
+	# Flood-fill from any cell; a picture in one piece reaches every cell.
+	var seen := {}
+	var frontier: Array[Vector2i] = [shape_cells[cards[0]]]
+	while not frontier.is_empty():
+		var cell: Vector2i = frontier.pop_back()
+		if seen.has(cell) or not used.has(cell):
+			continue
+		seen[cell] = true
+		for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+			frontier.append(cell + step)
+	return seen.size() == used.size()
+
+## The cell this card occupies in the shape, or SHAPE_NO_CELL when it has none.
+const SHAPE_NO_CELL := Vector2i(-2147483648, -2147483648)
+
+func cell_of(card: Card) -> Vector2i:
+	return shape_cells.get(card, SHAPE_NO_CELL)
+
+func card_at(cell: Vector2i) -> Card:
+	for c: Card in shape_cells:
+		if shape_cells[c] == cell:
+			return c
+	return null
+
+## The maximal contiguous straight line of shape cards through `card`, along
+## one axis, in cell order. This is what the future "play off any picture card
+## in any feasible direction" rule will validate extensions against.
+func line_through(card: Card, horizontal: bool) -> Array[Card]:
+	var out: Array[Card] = []
+	if not shape_cells.has(card):
+		return out
+	var step := Vector2i.RIGHT if horizontal else Vector2i.DOWN
+	var start: Vector2i = shape_cells[card]
+	while card_at(start - step) != null:
+		start -= step
+	var cell := start
+	while true:
+		var c := card_at(cell)
+		if c == null:
+			break
+		out.append(c)
+		cell += step
+	return out
 
 func size() -> int:
 	return cards.size()
@@ -28,6 +125,7 @@ func add_card(card: Card, index: int = -1) -> void:
 
 func remove_card(card: Card) -> void:
 	cards.erase(card)
+	shape_cells.erase(card)
 
 func _resolve_triggers(played_card: Card) -> void:
 	# OPEN QUESTION: resolution order when a set has more than one TRIGGER card.

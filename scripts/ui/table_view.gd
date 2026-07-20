@@ -122,6 +122,10 @@ func _make_card_backs(hand: Array[Card], horizontal: bool) -> BoxContainer:
 			box.add_child(CardRenderer.make_card_back(back_size))
 	return box
 
+## The felt renders one panel per cluster (see BoardGrid): a lone line group
+## keeps the plain panel — laid flat or upright by its orientation — while
+## crossing groups (sharing a card) and shape (picture) groups render on a
+## grid, empty cells and all.
 func refresh_board() -> void:
 	var gm := _ui.gm
 	_ui._clear_children(_ui.board_flow)
@@ -130,8 +134,12 @@ func refresh_board() -> void:
 		empty.text = "The table is empty — drag cards here to lay down the first group."
 		empty.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
 		_ui.board_flow.add_child(empty)
-	for meld in gm.board.melds:
-		_ui.board_flow.add_child(_make_meld_panel(meld))
+	for cluster in BoardGrid.clusters(gm.board):
+		var melds: Array[CardSet] = cluster["melds"]
+		if melds.size() == 1 and not melds[0].is_shape():
+			_ui.board_flow.add_child(_make_meld_panel(melds[0]))
+		else:
+			_ui.board_flow.add_child(_make_cluster_panel(cluster))
 	# The "+ New group" click target only appears while cards are selected;
 	# drags can always land on empty felt instead.
 	if not _ui.selected.is_empty() and _ui._is_human_turn():
@@ -169,11 +177,76 @@ func _make_meld_panel(meld: CardSet) -> PanelContainer:
 			+ "from your own hand first."
 	panel.set_drag_forwarding(Callable(),
 		_ui._can_drop_on_meld.bind(meld), _ui._drop_on_meld.bind(meld))
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 4)
-	panel.add_child(row)
+	# The group lies along its orientation: a row when flat, a column upright.
+	var box: BoxContainer
+	if meld.orientation == CardSet.Orientation.VERTICAL:
+		box = VBoxContainer.new()
+	else:
+		box = HBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	panel.add_child(box)
 	for c in Rules.display_order(meld.cards):
-		row.add_child(_make_card_button(c, meld))
+		box.add_child(_make_card_button(c, meld))
+	if _ui._is_human_turn():
+		box.add_child(_make_rotate_button(meld))
+	return panel
+
+## A small control on each lone group that turns it between lying flat and
+## standing upright — purely how it sits on the felt, the group is unchanged.
+## Groundwork for the layouts where direction matters (crossings, pictures).
+func _make_rotate_button(meld: CardSet) -> Button:
+	var b := Button.new()
+	b.text = "⟳"
+	b.tooltip_text = "Turn this group %s on the felt (visual only)." \
+		% ("flat" if meld.orientation == CardSet.Orientation.VERTICAL else "upright")
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_font_size_override("font_size", 13)
+	b.custom_minimum_size = Vector2(24, 24)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	b.pressed.connect(_ui._on_rotate_meld_pressed.bind(meld))
+	return b
+
+## A cluster panel: crossing groups and shape (picture) groups laid out on a
+## grid of card cells, gaps left where the picture has none. Cards keep their
+## usual behaviour (select, drag, drop onto them to add to their group); at a
+## shared cell the card answers for its host group.
+func _make_cluster_panel(cluster: Dictionary) -> PanelContainer:
+	var melds: Array[CardSet] = cluster["melds"]
+	for m in melds:
+		Rules.assign_jokers(m.cards)
+	var panel := PanelContainer.new()
+	var all_valid := true
+	for m in melds:
+		if not m.is_valid():
+			all_valid = false
+	var sb := CardRenderer.panel_style(Color(1, 1, 1, 0.045), 10)
+	sb.border_color = UITheme.COL_MELD_BORDER if all_valid else UITheme.COL_MELD_BAD
+	sb.set_border_width_all(1 if all_valid else 2)
+	panel.add_theme_stylebox_override("panel", sb)
+	if not all_valid:
+		panel.tooltip_text = "Not a valid group yet — fix it before ending your turn."
+	elif melds.size() > 1:
+		panel.tooltip_text = "Crossing groups — they share the card where they meet, " \
+			+ "and each can still take cards."
+	var grid_size: Vector2i = cluster["size"]
+	var grid := GridContainer.new()
+	grid.columns = maxi(grid_size.x, 1)
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+	panel.add_child(grid)
+	var cells: Dictionary = cluster["cells"]
+	var meld_at: Dictionary = cluster["meld_at"]
+	for y in grid_size.y:
+		for x in grid_size.x:
+			var cell := Vector2i(x, y)
+			if cells.has(cell):
+				grid.add_child(_make_card_button(cells[cell], meld_at[cell]))
+			else:
+				var gap := Control.new()
+				gap.custom_minimum_size = UITheme.BOARD_CARD_SIZE
+				gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				grid.add_child(gap)
 	return panel
 
 func _make_new_group_zone() -> Button:

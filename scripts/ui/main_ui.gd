@@ -609,7 +609,7 @@ func _build_settings_dialog() -> void:
 	settings_dialog.setup(settings, _apply_live_settings)
 
 func _on_settings_pressed() -> void:
-	settings_dialog.popup_centered()
+	settings_dialog.open()
 
 ## Push the settings whose changes apply immediately onto the running game, but
 ## only in sandbox — a roguelike run keeps the rules it started under.
@@ -693,7 +693,9 @@ func _make_suit_filter_button(suit: String) -> Button:
 	return b
 
 func _on_suit_filter_enter(suit: String) -> void:
-	if hover_filter_suit == suit:
+	# Never redraw mid enemy animation: rebuilding the board frees the buttons
+	# the flying cards are heading for.
+	if ai_running or hover_filter_suit == suit:
 		return
 	hover_filter_suit = suit
 	_table.refresh_board()
@@ -702,7 +704,7 @@ func _on_suit_filter_enter(suit: String) -> void:
 func _on_suit_filter_exit(suit: String) -> void:
 	# Guarded so sliding straight from one suit onto the next (exit fires after
 	# the new enter) doesn't wipe the filter the new button just set.
-	if hover_filter_suit != suit:
+	if ai_running or hover_filter_suit != suit:
 		return
 	hover_filter_suit = ""
 	_table.refresh_board()
@@ -711,8 +713,12 @@ func _on_suit_filter_exit(suit: String) -> void:
 # --- Play hints ---------------------------------------------------------------
 
 ## Hovering a hand card spotlights every board spot it could play into right now
-## with no rearranging (see _compute_play_hints). Only on your own turn.
+## with no rearranging (see _compute_play_hints). Only on your own turn. Skipped
+## outright while enemy cards are flying — redrawing the board would free their
+## destination buttons mid-flight.
 func _on_hand_card_hover_enter(c: Card) -> void:
+	if ai_running:
+		return
 	hover_hint_card = c
 	hint_meld_targets.clear()
 	hint_new_group = false
@@ -723,7 +729,7 @@ func _on_hand_card_hover_enter(c: Card) -> void:
 func _on_hand_card_hover_exit(c: Card) -> void:
 	# Guarded like the suit highlighter: sliding onto the next card fires that
 	# card's enter before this exit, so only clear when we are still that card.
-	if hover_hint_card != c:
+	if ai_running or hover_hint_card != c:
 		return
 	hover_hint_card = null
 	if hint_meld_targets.is_empty() and not hint_new_group:
@@ -1092,6 +1098,15 @@ func _on_sort_board_pressed() -> void:
 	for e: Dictionary in keyed:
 		out.append(e["meld"])
 	gm.board.melds.assign(out)
+	_refresh()
+
+## The ⟳ control on a group: stand it upright or lay it flat on the felt.
+## Purely visual (like Sort/Randomize) — the group itself is untouched — but
+## it exercises the orientation groundwork the crossing/picture layouts build on.
+func _on_rotate_meld_pressed(meld: CardSet) -> void:
+	meld.orientation = CardSet.Orientation.HORIZONTAL \
+		if meld.orientation == CardSet.Orientation.VERTICAL \
+		else CardSet.Orientation.VERTICAL
 	_refresh()
 
 ## "Randomize": keep every group intact but shuffle where the groups sit on the

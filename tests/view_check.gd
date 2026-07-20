@@ -82,7 +82,8 @@ func _init() -> void:
 	if ui.gm.board.melds.size() != 1:
 		printerr("new-group drop should stage one meld, got %d" % ui.gm.board.melds.size())
 		ok = false
-	# The board now renders that meld's three cards as buttons.
+	# The board now renders that meld's three cards as buttons (card buttons
+	# are toggles; the ⟳ rotate control is not counted).
 	var board_cards := 0
 	for panel in ui.board_flow.get_children():
 		if panel is PanelContainer:
@@ -107,7 +108,7 @@ func _has_new_group_zone(ui: Control) -> bool:
 func _count_buttons(node: Node) -> int:
 	var n := 0
 	for child in node.get_children():
-		if child is Button:
+		if child is Button and (child as Button).toggle_mode:
 			n += 1
 		n += _count_buttons(child)
 	return n
