@@ -62,7 +62,7 @@ extends Control
 ## Your hand works like Balatro's: it keeps whatever order you give it. Drag
 ## a card onto another hand card to move it there (left half = before, right
 ## half = after), drag to the hand's empty space to send it to the end, or use
-## the "Sort: straights" / "Sort: sets" buttons in the hand header. Hovering a
+## the "Sort: rank" / "Sort: suit" buttons in the hand header. Hovering a
 ## hand card spotlights every board spot it could play into right now with no
 ## rearranging — the groups it lays off onto, and a "New group" cue when it
 ## completes a fresh group with other cards in your hand.
@@ -419,24 +419,24 @@ func _build_layout() -> void:
 	hand_top.add_child(hand_meter_slot)
 
 	# Hand sort buttons: the hand keeps whatever order you give it, but these lay
-	# it out the two ways players think about melds — into runs (grouped by suit,
-	# reds then blacks) or into sets (grouped by rank). Jokers sort to the end.
+	# it out the two plain ways players read a hand — by rank (increasing, left to
+	# right) or by suit (reds then blacks, rank order within). Jokers sort last.
 	var sort_row := HBoxContainer.new()
 	sort_row.add_theme_constant_override("separation", 4)
 	sort_row.alignment = BoxContainer.ALIGNMENT_END
 	hand_top.add_child(sort_row)
-	var sort_suit_btn := Button.new()
-	sort_suit_btn.text = "Sort: straights"
-	sort_suit_btn.tooltip_text = "Group your hand into runs by suit, reds then blacks (jokers last)"
-	sort_suit_btn.focus_mode = Control.FOCUS_NONE
-	sort_suit_btn.pressed.connect(_on_sort_suit_pressed)
-	sort_row.add_child(sort_suit_btn)
 	var sort_rank_btn := Button.new()
-	sort_rank_btn.text = "Sort: sets"
-	sort_rank_btn.tooltip_text = "Group your hand by rank so matching sets sit together (jokers last)"
+	sort_rank_btn.text = "Sort: rank"
+	sort_rank_btn.tooltip_text = "Sort your hand by rank, increasing left to right (jokers last)"
 	sort_rank_btn.focus_mode = Control.FOCUS_NONE
 	sort_rank_btn.pressed.connect(_on_sort_rank_pressed)
 	sort_row.add_child(sort_rank_btn)
+	var sort_suit_btn := Button.new()
+	sort_suit_btn.text = "Sort: suit"
+	sort_suit_btn.tooltip_text = "Sort your hand by suit, reds then blacks (jokers last)"
+	sort_suit_btn.focus_mode = Control.FOCUS_NONE
+	sort_suit_btn.pressed.connect(_on_sort_suit_pressed)
+	sort_row.add_child(sort_suit_btn)
 
 	hand_box = HFlowContainer.new()
 	hand_box.add_theme_constant_override("h_separation", 4)
@@ -749,31 +749,28 @@ func _compute_play_hints(c: Card) -> void:
 			hint_meld_targets[meld] = true
 	hint_new_group = _hand_forms_new_group(c)
 
-## True when the hovered card plus other cards already in the hand (jokers
-## included as wildcards) make a valid new group — a set of its rank across
-## distinct suits, or a run of its suit. A hovered joker can't anchor a group on
-## its own, so it never lights the new-group cue.
+## True when the hovered card plus other naturals already in the hand make a
+## valid new group — a set of its rank across distinct suits, or a run of its
+## suit. Plays that would need a joker to complete are disregarded, so the cue
+## only lights for groups you can form without spending a wildcard. A hovered
+## joker can't anchor a group on its own, so it never lights the new-group cue.
 func _hand_forms_new_group(c: Card) -> bool:
 	if c.is_joker:
 		return false
 	var hand := gm.players[0].hand
-	var jokers := 0
-	for h in hand:
-		if h != c and h.is_joker:
-			jokers += 1
-	# Set: c plus other naturals of the same rank in distinct suits, jokers filling.
+	# Set: c plus other naturals of the same rank in distinct suits (no jokers).
 	var suits := {c.suit: true}
 	for h in hand:
 		if h != c and not h.is_joker and h.rank == c.rank:
 			suits[h.suit] = true
-	if suits.size() + jokers >= Rules.MIN_MELD_SIZE:
+	if suits.size() >= Rules.MIN_MELD_SIZE:
 		return true
-	# Run: c plus other naturals of the same suit, jokers bridging gaps or extending.
+	# Run: c plus other naturals of the same suit, with no jokers to bridge gaps.
 	var ranks := {c.rank: true}
 	for h in hand:
 		if h != c and not h.is_joker and h.suit == c.suit:
 			ranks[h.rank] = true
-	return _run_reachable(c.rank, ranks, jokers)
+	return _run_reachable(c.rank, ranks, 0)
 
 ## Whether a run of at least MIN_MELD_SIZE cards covering `target` fits within one
 ## suit given the natural ranks present and `jokers` wildcards to fill gaps or
@@ -1130,8 +1127,8 @@ func _key_less(a: Array, b: Array) -> bool:
 			return a[i] < b[i]
 	return false
 
-## "Sort: sets": lay the hand out by rank so matching cards (the makings of a
-## set) sit together; ties break by suit. Jokers sort to the end.
+## "Sort: rank": lay the hand out by rank, increasing from left to right; ties
+## break by suit. Jokers sort to the end.
 func _on_sort_rank_pressed() -> void:
 	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
 		if a.is_joker != b.is_joker:
@@ -1141,8 +1138,8 @@ func _on_sort_rank_pressed() -> void:
 		return a.suit < b.suit)
 	_refresh()
 
-## "Sort: straights": lay the hand out into suit runs (the makings of a straight),
-## suits grouped reds-then-blacks and each run in rank order. Jokers sort to the end.
+## "Sort: suit": lay the hand out grouped by suit, reds then blacks, each suit in
+## rank order. Jokers sort to the end.
 func _on_sort_suit_pressed() -> void:
 	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
 		if a.is_joker != b.is_joker:

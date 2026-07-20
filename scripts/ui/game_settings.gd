@@ -40,11 +40,11 @@ var rogue_start_hand_size := GameManager.DEFAULT_HAND_SIZE
 var rogue_max_hand_size := 0
 var rogue_max_plays_per_turn := 13
 var rogue_jokers := true
-var rogue_start_combo := false
+var rogue_start_combo := true
 # The run's own copy of the ultimate-meter tuning (see the sandbox block).
 var rogue_meter_max := 10
 var rogue_meter_gain := 1
-var rogue_meter_per_card := false
+var rogue_meter_per_card := true
 # Per-enemy AI overrides for roguelike runs, keyed by enemy display_name ->
 # {"strength", "style", "attention", "planning"}. Seeded from each designed
 # enemy's own dials (see seed_ai_overrides) and editable from the Settings

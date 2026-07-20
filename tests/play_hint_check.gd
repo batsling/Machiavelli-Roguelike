@@ -108,12 +108,29 @@ func _init() -> void:
 		printerr("the new-group cue should render a spotlighted zone")
 		ok = false
 
-	# --- A run the hand can complete only with a joker ------------------------
+	# --- A run of naturals lights the cue -------------------------------------
+	var run_lo := _card(5, "spades")
+	ui.gm.players[0].hand = [run_lo, _card(6, "spades"), _card(7, "spades")] as Array[Card]
+	ui._compute_play_hints(run_lo)
+	if not ui.hint_new_group:
+		printerr("5S + 6S + 7S should form a run (new-group cue)")
+		ok = false
+
+	# --- A run the hand can complete only with a joker is disregarded ---------
+	# The hint should surface plays that need no wildcard, so a group that only
+	# closes with a joker must NOT light the cue.
 	var run_gap := _card(5, "spades")
 	ui.gm.players[0].hand = [run_gap, _card(6, "spades"), _joker()] as Array[Card]
 	ui._compute_play_hints(run_gap)
-	if not ui.hint_new_group:
-		printerr("5S + 6S + a joker should form a run (new-group cue)")
+	if ui.hint_new_group:
+		printerr("5S + 6S + a joker requires a joker — the cue must stay dark")
+		ok = false
+
+	# A set the hand can complete only with a joker is likewise disregarded.
+	ui.gm.players[0].hand = [_card(4, "hearts"), _card(4, "clubs"), _joker()] as Array[Card]
+	ui._compute_play_hints(ui.gm.players[0].hand[0])
+	if ui.hint_new_group:
+		printerr("two fours plus a joker requires a joker — the cue must stay dark")
 		ok = false
 
 	# A lone card with a joker but no partner makes no group.

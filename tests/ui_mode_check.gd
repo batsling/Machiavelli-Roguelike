@@ -21,7 +21,7 @@ func _init() -> void:
 		printerr("rogue rules wrong: draw %d, plays %d, hand cap %d"
 			% [ui.gm.draw_per_turn, ui.gm.max_plays_per_turn, ui.gm.max_hand_size])
 		ok = false
-	if ui.gm.meter_max != 10 or ui.gm.meter_gain != 1 or ui.gm.meter_per_card:
+	if ui.gm.meter_max != 10 or ui.gm.meter_gain != 1 or not ui.gm.meter_per_card:
 		printerr("rogue meter defaults wrong: max %d gain %d per_card %s"
 			% [ui.gm.meter_max, ui.gm.meter_gain, ui.gm.meter_per_card])
 		ok = false
@@ -41,9 +41,13 @@ func _init() -> void:
 		ok = false
 	# The round-1 enemy is drawn at random from the roster; whichever it is,
 	# its mechanic must be planted across the freshly dealt game.
+	# Roguelike runs deal starting combos by default, so the enemy's marked cards
+	# can land on the felt too — count deck, hands and board together.
 	var all_cards: Array = ui.gm.deck.cards.duplicate()
 	for p in ui.gm.players:
 		all_cards.append_array(p.hand)
+	for m in ui.gm.board.melds:
+		all_cards.append_array(m.cards)
 	if ui.current_enemy is CuteSlime:
 		# She marks her own seat immune and slimes the hearts, diamonds and jokers
 		# of her own deck only (one copy of each).
