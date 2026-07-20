@@ -5,12 +5,15 @@ extends Enemy
 ## overlooking the plays that read the table) and quick (dumps cards as soon as
 ## she can). Her mechanic is the slime.
 ##
-## At combat start she coats a random half of the hearts, a random half of the
-## diamonds, and every joker in slime, giving them the Sticky effect. Slimed
-## cards only stick to each other (see CardSet.sticky_cluster): a run of slimed
-## cards on the table is one lump the player can't pick a single card out of —
-## dragging one drags them all. The Cute Slime herself is immune (ignores_sticky
-## on her PlayerState), so she slides her slime around freely.
+## At combat start she coats every heart, every diamond and every joker in her
+## own deck in slime, giving them the Sticky effect. Because the combined stock
+## holds one copy of each card per player, only her copy is slimed — of the two
+## copies of any heart or diamond in the game, exactly one carries slime, and
+## only two of the four jokers (hers) are sticky. Slimed cards only stick to each
+## other (see CardSet.sticky_cluster): a run of slimed cards on the table is one
+## lump the player can't pick a single card out of — dragging one drags them all.
+## The Cute Slime herself is immune (ignores_sticky on her PlayerState), so she
+## slides her slime around freely.
 ##
 ## Slime strategy: once she has spent her ordinary plays for the turn, she uses
 ## her free movement to legally combine slimed cards — moving one slimed card
@@ -30,45 +33,30 @@ func _init() -> void:
 	attention = 0.0    # oblivious
 
 func mechanic_intro() -> String:
-	return "[b]%s[/b] slimes half the hearts, half the diamonds and every " \
+	return "[b]%s[/b] slimes every heart, diamond and joker in her own deck " \
 		% display_name \
-		+ "joker (green splotch). Slimed cards stick to each other, so a " \
-		+ "run of them is one lump — dragging one drags them all. She " \
-		+ "oozes freely and combines her slime to guard her most valuable " \
-		+ "cards (jokers, then the versatile 4-8s) out of your reach."
+		+ "(green splotch) — one copy of each, so only her half is sticky. " \
+		+ "Slimed cards stick to each other, so a run of them is one lump — " \
+		+ "dragging one drags them all. She oozes freely and combines her slime " \
+		+ "to guard her most valuable cards (jokers, then the versatile 4-8s) " \
+		+ "out of your reach."
 
-## Slime a random half of the hearts, a random half of the diamonds, and all of
-## the jokers, wherever they sit right after the deal (the stock and every
-## player's hand). The random halves ride on the deck's own RNG, so a seeded
-## game slimes the same cards every replay. Her own seat is marked immune so she
-## moves slimed cards freely.
+## Slime every heart, diamond and joker that came from her own deck, wherever
+## they sit right after the deal (the stock and every player's hand). Only her
+## copies carry slime — the player's matching cards stay clean — so of the two
+## copies of any heart or diamond exactly one is sticky, and only her two jokers.
+## Deterministic (no RNG), so a seeded game slimes the same cards every replay.
+## Her own seat is marked immune so she moves slimed cards freely.
 func on_combat_start(gm: GameManager) -> void:
-	var hearts: Array[Card] = []
-	var diamonds: Array[Card] = []
-	var pool: Array[Card] = gm.deck.cards.duplicate()
+	var own := own_deck_id(gm)
 	for p in gm.players:
-		pool.append_array(p.hand)
 		if p.is_opponent:
 			p.ignores_sticky = true
-	for c in pool:
-		if c.is_joker:
+	for c in all_dealt_cards(gm):
+		if c.deck_owner != own:
+			continue
+		if c.is_joker or c.suit == "hearts" or c.suit == "diamonds":
 			_slime(c)
-		elif c.suit == "hearts":
-			hearts.append(c)
-		elif c.suit == "diamonds":
-			diamonds.append(c)
-	_slime_half(gm.deck.rng, hearts)
-	_slime_half(gm.deck.rng, diamonds)
-
-## Shuffle a suit's cards with the given RNG and slime the first half of them.
-func _slime_half(rng: RandomNumberGenerator, pile: Array[Card]) -> void:
-	for i in range(pile.size() - 1, 0, -1):
-		var j := rng.randi_range(0, i)
-		var tmp := pile[i]
-		pile[i] = pile[j]
-		pile[j] = tmp
-	for i in pile.size() / 2:
-		_slime(pile[i])
 
 func _slime(card: Card) -> void:
 	if not card.has_effect(Card.Effect.STICKY):

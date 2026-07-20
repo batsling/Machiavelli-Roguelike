@@ -5,26 +5,22 @@ extends Enemy
 ## his opening meld until it is big enough and holds cards that still pair up)
 ## and fully attentive (never blunders). His mechanic is glass.
 ##
-## At combat start he turns every joker and a random three quarters of all
-## other cards — wherever the deal put them, the stock and every hand — to
-## glass (the Clear effect). A glass card is see-through from the back:
-## everyone can see it while it sits in any player's hand or on top of the
-## stock. The information cuts both ways: the
-## player reads his glass cards straight off his card backs, but the smart AI
-## counts every glass card too (GreedyAI's glass awareness) — it knows which
-## cards it wants are visibly locked in an opponent's hand (not worth waiting
-## for), which lay-offs an opponent visibly holds (not worth feeding), which
-## joker stand-ins an opponent holds the swap card for (never point a joker
-## there), and what the next draw will be whenever the top of the stock is
-## glass.
+## At combat start he turns every card in his own deck — all 52 naturals and both
+## his jokers, wherever the deal put them, the stock and every hand — to glass
+## (the Clear effect). Because the combined stock holds one copy of each card per
+## player, only his copy goes glass: of the two copies of any card exactly one is
+## see-through, and only two of the four jokers (his). A glass card is
+## see-through from the back: everyone can see it while it sits in any player's
+## hand or on top of the stock. The information cuts both ways: the player reads
+## his glass cards straight off his card backs, but the smart AI counts every
+## glass card too (GreedyAI's glass awareness) — it knows which cards it wants are
+## visibly locked in an opponent's hand (not worth waiting for), which lay-offs an
+## opponent visibly holds (not worth feeding), which joker stand-ins an opponent
+## holds the swap card for (never point a joker there), and what the next draw
+## will be whenever the top of the stock is glass.
 ##
 ## Glass is pure information — it never restricts how a card moves — so a card
 ## can be both glass and slimed without conflict.
-
-## The fraction of the non-joker cards turned to glass at combat start (3/4);
-## every joker is glassed on top of that, like the slime slimes them all.
-const GLASS_NUMERATOR := 3
-const GLASS_DENOMINATOR := 4
 
 func _init() -> void:
 	display_name = "The Sadistic Billionaire"
@@ -33,35 +29,22 @@ func _init() -> void:
 	attention = 1.0    # attentive
 
 func mechanic_intro() -> String:
-	return "[b]%s[/b] turns every joker and three quarters of the other cards " \
+	return "[b]%s[/b] turns every card in his own deck to glass (transparent) " \
 		% display_name \
-		+ "to glass (transparent). A glass card is see-through from the back: " \
-		+ "everyone can see it in any player's hand and on top of the stock. He " \
-		+ "reads your glass cards and knows a glass next draw — but you can " \
-		+ "read his hand the same way."
+		+ "— one copy of each, so only his half is see-through. A glass card is " \
+		+ "see-through from the back: everyone can see it in any player's hand " \
+		+ "and on top of the stock. He reads your glass cards and knows a glass " \
+		+ "next draw — but you can read his hand the same way."
 
-## Turn every joker and a random three quarters of all other cards in the game
-## — the stock and all hands, wherever the deal put them — to glass. The random
-## share rides the deck's own RNG, so a seeded game glasses the same cards
-## every replay.
+## Turn every card from his own deck — all 52 naturals and both his jokers,
+## wherever the deal put them, the stock and all hands — to glass. Only his
+## copies go glass, so of the two copies of any card exactly one is see-through.
+## Deterministic (no RNG), so a seeded game glasses the same cards every replay.
 func on_combat_start(gm: GameManager) -> void:
-	var all_cards: Array[Card] = gm.deck.cards.duplicate()
-	for p in gm.players:
-		all_cards.append_array(p.hand)
-	var pool: Array[Card] = []
-	for c in all_cards:
-		if c.is_joker:
+	var own := own_deck_id(gm)
+	for c in all_dealt_cards(gm):
+		if c.deck_owner == own:
 			_glass(c)
-		else:
-			pool.append(c)
-	var rng := gm.deck.rng
-	for i in range(pool.size() - 1, 0, -1):
-		var j := rng.randi_range(0, i)
-		var tmp := pool[i]
-		pool[i] = pool[j]
-		pool[j] = tmp
-	for i in pool.size() * GLASS_NUMERATOR / GLASS_DENOMINATOR:
-		_glass(pool[i])
 
 func _glass(card: Card) -> void:
 	if not card.has_effect(Card.Effect.CLEAR):

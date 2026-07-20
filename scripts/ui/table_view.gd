@@ -136,6 +136,10 @@ func refresh_board() -> void:
 	# drags can always land on empty felt instead.
 	if not _ui.selected.is_empty() and _ui._is_human_turn():
 		_ui.board_flow.add_child(_make_new_group_zone())
+	# The hover hint's "forms a new group" cue: shown only when nothing is
+	# selected (so it never sits beside the interactive New group zone).
+	elif _ui.hint_new_group and _ui._is_human_turn():
+		_ui.board_flow.add_child(_make_new_group_hint())
 
 func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	var gm := _ui.gm
@@ -145,11 +149,20 @@ func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	var locked := _ui._is_human_turn() and not gm.current_player_is_open() \
 		and not gm.is_own_staged_meld(meld)
 	# Valid groups sit quietly on the felt; only broken ones shout.
-	var sb := CardRenderer.panel_style(Color(1, 1, 1, 0.045), 10)
-	sb.border_color = UITheme.COL_MELD_BORDER if valid else UITheme.COL_MELD_BAD
-	sb.set_border_width_all(1 if valid else 2)
+	var play_hint: bool = _ui.hint_meld_targets.has(meld)
+	var sb := CardRenderer.panel_style(
+		UITheme.COL_HINT_BG if play_hint else Color(1, 1, 1, 0.045), 10)
+	if play_hint:
+		# The hovered hand card lays off here as-is — spotlight the group.
+		sb.border_color = UITheme.COL_HINT_EDGE
+		sb.set_border_width_all(3)
+	else:
+		sb.border_color = UITheme.COL_MELD_BORDER if valid else UITheme.COL_MELD_BAD
+		sb.set_border_width_all(1 if valid else 2)
 	panel.add_theme_stylebox_override("panel", sb)
-	if not valid:
+	if play_hint:
+		panel.tooltip_text = "You can lay the hovered card here without moving anything."
+	elif not valid:
 		panel.tooltip_text = "Not a valid group yet — fix it before ending your turn."
 	elif locked:
 		panel.tooltip_text = "Locked until you open — lay down a valid group " \
@@ -177,6 +190,25 @@ func _make_new_group_zone() -> Button:
 	zone.add_theme_stylebox_override("pressed", sb)
 	zone.pressed.connect(_ui._on_new_meld_pressed)
 	zone.set_drag_forwarding(Callable(), _ui._can_drop_new_group, _ui._drop_new_group)
+	return zone
+
+## A passive ghost of the "+ New group" zone, spotlighted in the hint colour, to
+## tell the player the card they are hovering forms a fresh group with other
+## cards already in their hand. Purely a cue — the real play is a drag or select.
+func _make_new_group_hint() -> PanelContainer:
+	var zone := PanelContainer.new()
+	zone.custom_minimum_size = UITheme.NEW_GROUP_SIZE
+	zone.tooltip_text = "The hovered card starts a new group with cards in your hand."
+	var sb := CardRenderer.panel_style(UITheme.COL_HINT_BG, 10)
+	sb.border_color = UITheme.COL_HINT_EDGE
+	sb.set_border_width_all(3)
+	zone.add_theme_stylebox_override("panel", sb)
+	var lbl := Label.new()
+	lbl.text = "✓ New group"
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.add_theme_color_override("font_color", UITheme.COL_HINT_EDGE)
+	zone.add_child(lbl)
 	return zone
 
 func refresh_hand() -> void:
@@ -274,11 +306,11 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 		bg = UITheme.COL_SELECT_BG
 		border = UITheme.COL_SELECT
 		border_w = 3
-	# Suit filter (hand cards only): while a suit is hovered, cards of that suit
-	# get a bright outline and everything else is faded out below. Jokers match
-	# every suit since they can stand in for any of them. Selection/enemy-touch
-	# borders keep priority so those states still read.
-	var filter_active := not on_board and _ui.hover_filter_suit != ""
+	# Suit highlighter (every card in play — hand and table): while a suit is
+	# hovered, cards of that suit get a bright outline and everything else is
+	# faded out below. Jokers match every suit since they can stand in for any of
+	# them. Selection/enemy-touch borders keep priority so those states still read.
+	var filter_active := _ui.hover_filter_suit != ""
 	var filter_match := filter_active and (c.is_joker or c.suit == _ui.hover_filter_suit)
 	if filter_match and not _ui.selected.has(c) and not _ui.highlighted.has(c):
 		border = UITheme.COL_FILTER_EDGE
@@ -315,5 +347,10 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 		# them moves those cards next to this one.
 		b.set_drag_forwarding(_ui._get_card_drag_data.bind(c, b),
 			_ui._can_drop_on_hand_card.bind(c), _ui._drop_on_hand_card.bind(c))
+		# Hovering a hand card lights up any spot on the board it could play into
+		# right now with no rearranging — a lay-off onto an existing group, or a
+		# brand-new group it forms with other cards already in your hand.
+		b.mouse_entered.connect(_ui._on_hand_card_hover_enter.bind(c))
+		b.mouse_exited.connect(_ui._on_hand_card_hover_exit.bind(c))
 	_ui.card_nodes[c] = b
 	return b

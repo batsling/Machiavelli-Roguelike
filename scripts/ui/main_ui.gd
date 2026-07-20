@@ -14,15 +14,16 @@ extends Control
 ## Beat an enemy to advance to the next round (the "New game" button becomes
 ## "Next round"); lose and the run is over ("New run" starts over at round
 ## 1). Each round faces a designed enemy picked at random from Enemy.roster():
-## the Cute Slime, who slimes half the hearts, half the diamonds and every
-## joker (slimed cards carry a green splotch and stick to each other, so a run
-## of them moves as one lump), or the Sadistic Billionaire, who turns every
-## joker and three quarters of the other cards to glass (glass cards render
-## transparent and are
-## visible from the back — in any hand and on top of the stock — so his glass
-## cards show face-up in his seat and a glass stock top is shown beside the
-## stock count). Vanilla sandbox settings never apply during a run; roguelike
-## settings apply from the next round.
+## the Cute Slime, who slimes every heart, diamond and joker in her own deck
+## (slimed cards carry a green splotch and stick to each other, so a run of them
+## moves as one lump), or the Sadistic Billionaire, who turns every card in his
+## own deck to glass (glass cards render transparent and are visible from the
+## back — in any hand and on top of the stock — so his glass cards show face-up
+## in his seat and a glass stock top is shown beside the stock count). Because
+## each player brings their own deck and they only merge into the stock at combat
+## start, an enemy corrupts just its own half — one copy of any card, so only two
+## of the four jokers. Vanilla sandbox settings never apply during a run;
+## roguelike settings apply from the next round.
 ##
 ## Table layout: you sit at the bottom; opponents sit around the table showing
 ## the backs of their cards. The first enemy sits directly opposite you at the
@@ -60,8 +61,15 @@ extends Control
 ##
 ## Your hand works like Balatro's: it keeps whatever order you give it. Drag
 ## a card onto another hand card to move it there (left half = before, right
-## half = after), drag to the hand's empty space to send it to the end, or
-## use the "Sort: rank" / "Sort: suit" buttons.
+## half = after), drag to the hand's empty space to send it to the end, or use
+## the "Sort: straights" / "Sort: sets" buttons in the hand header. Hovering a
+## hand card spotlights every board spot it could play into right now with no
+## rearranging — the groups it lays off onto, and a "New group" cue when it
+## completes a fresh group with other cards in your hand.
+##
+## The table header carries "Sort" and "Randomize" (reorder the groups on the
+## felt) plus a suit highlighter (♥ ♦ ♣ ♠): hover a suit to outline every card
+## of it across the whole table AND your hand at once, fading the rest.
 ##
 ## The Settings dialog is split into two tabs. "Vanilla sandbox" holds: the
 ## enemy AI dials (apply from the next enemy turn), the number of enemies
@@ -97,8 +105,9 @@ const DRAG_TYPE := "machiavelli_cards"
 const MAX_PLAYERS := 4
 const ENEMY_NAMES := ["Rosso", "Nero", "Bianco"]
 
-## Suit order for the "Sort: suit" button: reds together, then blacks, so runs
-## of the same colour sit side by side. Jokers are handled separately (last).
+## Suit order for the "Sort: straights" hand button and the table Sort: reds
+## together, then blacks, so runs of the same colour sit side by side. Jokers
+## are handled separately (last).
 const SUIT_ORDER := {"hearts": 0, "diamonds": 1, "clubs": 2, "spades": 3}
 
 var gm: GameManager
@@ -111,9 +120,18 @@ var current_enemy: Enemy = null
 var rogue_round_won := false
 var selected: Array[Card] = []
 var highlighted := {}  # Card -> true; every card the enemies touched last round
-# While a suit-filter button is hovered this holds that suit; the hand redraws
-# with those cards outlined and every other suit faded. "" = no filter active.
+# While a suit-highlighter button is hovered this holds that suit; the table and
+# hand redraw with those cards outlined and every other suit faded. "" = none.
 var hover_filter_suit := ""
+# While a hand card is hovered, the board spots it can be played into right now
+# with no rearranging: hint_meld_targets is the set of existing groups it lays
+# off onto (CardSet -> true), and hint_new_group is true when it forms a
+# brand-new group with other cards already in the hand. hover_hint_card is the
+# card driving them, so a stale mouse_exited from the card just left doesn't wipe
+# the hints the newly hovered card set.
+var hint_meld_targets := {}
+var hint_new_group := false
+var hover_hint_card: Card = null
 var ai_running := false
 # Bumped on every new game so a suspended AI coroutine from the previous game
 # notices on resume and bails out instead of acting on the fresh state.
@@ -317,10 +335,12 @@ func _build_layout() -> void:
 	table_col.add_theme_constant_override("separation", 4)
 	table_panel.add_child(table_col)
 
-	# Table header: a title plus buttons that reorder the groups on the felt so a
-	# crowded table is easy to read. Sort lays straights out first (by colour,
-	# then starting rank) and sets after (by rank); Randomize keeps each group
-	# intact but shuffles where the groups sit.
+	# Table header: a title, the suit highlighter, and buttons that reorder the
+	# groups on the felt so a crowded table is easy to read. Sort lays straights
+	# out first (by colour, then starting rank) and sets after (by rank);
+	# Randomize keeps each group intact but shuffles where the groups sit. The
+	# highlighter (♥ ♦ ♣ ♠) outlines that suit across the whole table AND your
+	# hand at once, so a colour can be picked out of everything in play at a glance.
 	var table_top := HBoxContainer.new()
 	table_top.add_theme_constant_override("separation", 8)
 	table_col.add_child(table_top)
@@ -330,6 +350,16 @@ func _build_layout() -> void:
 	table_title.add_theme_font_size_override("font_size", 15)
 	table_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
 	table_top.add_child(table_title)
+	# Suit highlighter: hovering a suit outlines those cards everywhere in play
+	# (hand and table) and fades the rest.
+	var highlight_hint := Label.new()
+	highlight_hint.text = "Highlight suit:"
+	highlight_hint.add_theme_font_size_override("font_size", 12)
+	highlight_hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+	highlight_hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	table_top.add_child(highlight_hint)
+	for suit in ["hearts", "diamonds", "clubs", "spades"]:
+		table_top.add_child(_make_suit_filter_button(suit))
 	sort_board_btn = Button.new()
 	sort_board_btn.text = "Sort"
 	sort_board_btn.tooltip_text = "Reorder the groups on the table: straights first " \
@@ -388,20 +418,25 @@ func _build_layout() -> void:
 	hand_meter_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hand_top.add_child(hand_meter_slot)
 
-	# Suit filter: hovering a suit outlines those cards in your hand and fades
-	# the rest, so you can pick a colour out of a crowded hand at a glance.
-	var filter_row := HBoxContainer.new()
-	filter_row.add_theme_constant_override("separation", 4)
-	filter_row.alignment = BoxContainer.ALIGNMENT_END
-	hand_top.add_child(filter_row)
-	var filter_hint := Label.new()
-	filter_hint.text = "Highlight suit:"
-	filter_hint.add_theme_font_size_override("font_size", 12)
-	filter_hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
-	filter_hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	filter_row.add_child(filter_hint)
-	for suit in ["hearts", "diamonds", "clubs", "spades"]:
-		filter_row.add_child(_make_suit_filter_button(suit))
+	# Hand sort buttons: the hand keeps whatever order you give it, but these lay
+	# it out the two ways players think about melds — into runs (grouped by suit,
+	# reds then blacks) or into sets (grouped by rank). Jokers sort to the end.
+	var sort_row := HBoxContainer.new()
+	sort_row.add_theme_constant_override("separation", 4)
+	sort_row.alignment = BoxContainer.ALIGNMENT_END
+	hand_top.add_child(sort_row)
+	var sort_suit_btn := Button.new()
+	sort_suit_btn.text = "Sort: straights"
+	sort_suit_btn.tooltip_text = "Group your hand into runs by suit, reds then blacks (jokers last)"
+	sort_suit_btn.focus_mode = Control.FOCUS_NONE
+	sort_suit_btn.pressed.connect(_on_sort_suit_pressed)
+	sort_row.add_child(sort_suit_btn)
+	var sort_rank_btn := Button.new()
+	sort_rank_btn.text = "Sort: sets"
+	sort_rank_btn.tooltip_text = "Group your hand by rank so matching sets sit together (jokers last)"
+	sort_rank_btn.focus_mode = Control.FOCUS_NONE
+	sort_rank_btn.pressed.connect(_on_sort_rank_pressed)
+	sort_row.add_child(sort_rank_btn)
 
 	hand_box = HFlowContainer.new()
 	hand_box.add_theme_constant_override("h_separation", 4)
@@ -597,6 +632,11 @@ func _make_seat() -> VBoxContainer:
 
 func _refresh() -> void:
 	card_nodes.clear()
+	# Any real state change (a play, an AI move, a new turn) invalidates the
+	# transient hover hints, which point at now-stale groups.
+	hint_meld_targets.clear()
+	hint_new_group = false
+	hover_hint_card = null
 	_prune_selection()
 	_table.refresh_seats()
 	_table.refresh_board()
@@ -634,16 +674,17 @@ func _refresh_buttons() -> void:
 
 # --- Suit filter --------------------------------------------------------------
 
-## One suit symbol in the filter row. It does nothing on click — hovering is the
-## whole interaction: entering sets hover_filter_suit and redraws the hand so
-## this suit is outlined and the others fade; leaving clears it again.
+## One suit symbol in the highlighter row. It does nothing on click — hovering is
+## the whole interaction: entering sets hover_filter_suit and redraws the table
+## and hand so this suit is outlined everywhere and the others fade; leaving
+## clears it again.
 func _make_suit_filter_button(suit: String) -> Button:
 	var b := Button.new()
 	b.text = Card.SUIT_SYMBOLS.get(suit, suit)
 	b.focus_mode = Control.FOCUS_NONE
 	b.custom_minimum_size = Vector2(30, 26)
 	b.add_theme_font_size_override("font_size", 18)
-	b.tooltip_text = "Hover to highlight the %s in your hand and fade the other suits." % suit
+	b.tooltip_text = "Hover to highlight every %s in play (hand and table) and fade the rest." % suit
 	var col := UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(suit) else UITheme.COL_CARD_BLACK
 	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		b.add_theme_color_override(state, col)
@@ -655,6 +696,7 @@ func _on_suit_filter_enter(suit: String) -> void:
 	if hover_filter_suit == suit:
 		return
 	hover_filter_suit = suit
+	_table.refresh_board()
 	_table.refresh_hand()
 
 func _on_suit_filter_exit(suit: String) -> void:
@@ -663,7 +705,98 @@ func _on_suit_filter_exit(suit: String) -> void:
 	if hover_filter_suit != suit:
 		return
 	hover_filter_suit = ""
+	_table.refresh_board()
 	_table.refresh_hand()
+
+# --- Play hints ---------------------------------------------------------------
+
+## Hovering a hand card spotlights every board spot it could play into right now
+## with no rearranging (see _compute_play_hints). Only on your own turn.
+func _on_hand_card_hover_enter(c: Card) -> void:
+	hover_hint_card = c
+	hint_meld_targets.clear()
+	hint_new_group = false
+	if _is_human_turn():
+		_compute_play_hints(c)
+	_table.refresh_board()
+
+func _on_hand_card_hover_exit(c: Card) -> void:
+	# Guarded like the suit highlighter: sliding onto the next card fires that
+	# card's enter before this exit, so only clear when we are still that card.
+	if hover_hint_card != c:
+		return
+	hover_hint_card = null
+	if hint_meld_targets.is_empty() and not hint_new_group:
+		return
+	hint_meld_targets.clear()
+	hint_new_group = false
+	_table.refresh_board()
+
+## Fill hint_meld_targets / hint_new_group for the hovered card: which existing
+## valid groups it lays off onto as-is (respecting the opening rule — before you
+## open, only your own just-laid groups count), and whether it completes a
+## brand-new valid group with other cards already in your hand.
+func _compute_play_hints(c: Card) -> void:
+	var open := gm.current_player_is_open()
+	for meld in gm.board.melds:
+		if not meld.is_valid():
+			continue
+		if not open and not gm.is_own_staged_meld(meld):
+			continue
+		var candidate: Array[Card] = meld.cards.duplicate()
+		candidate.append(c)
+		if Rules.is_valid_meld(candidate):
+			hint_meld_targets[meld] = true
+	hint_new_group = _hand_forms_new_group(c)
+
+## True when the hovered card plus other cards already in the hand (jokers
+## included as wildcards) make a valid new group — a set of its rank across
+## distinct suits, or a run of its suit. A hovered joker can't anchor a group on
+## its own, so it never lights the new-group cue.
+func _hand_forms_new_group(c: Card) -> bool:
+	if c.is_joker:
+		return false
+	var hand := gm.players[0].hand
+	var jokers := 0
+	for h in hand:
+		if h != c and h.is_joker:
+			jokers += 1
+	# Set: c plus other naturals of the same rank in distinct suits, jokers filling.
+	var suits := {c.suit: true}
+	for h in hand:
+		if h != c and not h.is_joker and h.rank == c.rank:
+			suits[h.suit] = true
+	if suits.size() + jokers >= Rules.MIN_MELD_SIZE:
+		return true
+	# Run: c plus other naturals of the same suit, jokers bridging gaps or extending.
+	var ranks := {c.rank: true}
+	for h in hand:
+		if h != c and not h.is_joker and h.suit == c.suit:
+			ranks[h.rank] = true
+	return _run_reachable(c.rank, ranks, jokers)
+
+## Whether a run of at least MIN_MELD_SIZE cards covering `target` fits within one
+## suit given the natural ranks present and `jokers` wildcards to fill gaps or
+## extend the ends. Tries the ace both low and high, never wrapping.
+func _run_reachable(target: int, ranks: Dictionary, jokers: int) -> bool:
+	for ace_high in [false, true]:
+		var present := {}
+		for r: int in ranks:
+			present[14 if ace_high and r == 1 else r] = true
+		var t := 14 if ace_high and target == 1 else target
+		var low := 2 if ace_high else 1
+		var high := 14 if ace_high else 13
+		for s in range(low, t + 1):
+			for e in range(t, high + 1):
+				if e - s + 1 < Rules.MIN_MELD_SIZE:
+					continue
+				var nat := 0
+				for r in range(s, e + 1):
+					if present.has(r):
+						nat += 1
+				if (e - s + 1) - nat <= jokers:
+					return true
+	return false
 
 func _clear_children(node: Node) -> void:
 	for child in node.get_children():
@@ -996,6 +1129,30 @@ func _key_less(a: Array, b: Array) -> bool:
 		if a[i] != b[i]:
 			return a[i] < b[i]
 	return false
+
+## "Sort: sets": lay the hand out by rank so matching cards (the makings of a
+## set) sit together; ties break by suit. Jokers sort to the end.
+func _on_sort_rank_pressed() -> void:
+	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
+		if a.is_joker != b.is_joker:
+			return b.is_joker
+		if a.rank != b.rank:
+			return a.rank < b.rank
+		return a.suit < b.suit)
+	_refresh()
+
+## "Sort: straights": lay the hand out into suit runs (the makings of a straight),
+## suits grouped reds-then-blacks and each run in rank order. Jokers sort to the end.
+func _on_sort_suit_pressed() -> void:
+	gm.players[0].hand.sort_custom(func(a: Card, b: Card) -> bool:
+		if a.is_joker != b.is_joker:
+			return b.is_joker
+		var order_a: int = SUIT_ORDER.get(a.suit, 99)
+		var order_b: int = SUIT_ORDER.get(b.suit, 99)
+		if order_a != order_b:
+			return order_a < order_b
+		return a.rank < b.rank)
+	_refresh()
 
 func _on_return_pressed() -> void:
 	_return_to_hand(selected.duplicate())

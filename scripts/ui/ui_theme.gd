@@ -49,6 +49,8 @@ const COL_GLASS_EDGE := Color(0.62, 0.84, 0.92)  # icy border of a glass card
 const GLASS_BG_ALPHA := 0.3   # glass cards let the felt show through
 const COL_FILTER_EDGE := Color(0.15, 0.78, 0.80)  # outline on the suit being hovered
 const FILTER_DIM_ALPHA := 0.28   # the other suits fade this low while a suit is hovered
+const COL_HINT_EDGE := Color(0.34, 0.86, 0.46)    # play-hint spotlight on a group you can play into
+const COL_HINT_BG := Color(0.34, 0.86, 0.46, 0.12)  # faint green fill behind a hinted group
 
 # --- Ultimate meter -----------------------------------------------------------
 const COL_METER_TRACK := Color(0, 0, 0, 0.38)      # empty channel behind the fill

@@ -80,6 +80,22 @@ func _init() -> void:
 				printerr("matching card %s missing filter outline" % c.label())
 				ok = false
 
+	# The highlighter reaches the table too: a heart on the board is outlined,
+	# a club faded, exactly as in the hand.
+	var board_heart: Button = ui.card_nodes.get(heart_run.cards[0])
+	if board_heart != null:
+		if board_heart.modulate.a < 0.999:
+			printerr("board heart should not be faded while hearts is hovered")
+			ok = false
+		var sb: StyleBoxFlat = board_heart.get_theme_stylebox("normal")
+		if sb.border_color != UITheme.COL_FILTER_EDGE:
+			printerr("board heart missing filter outline")
+			ok = false
+	var board_club: Button = ui.card_nodes.get(club_run.cards[0])
+	if board_club != null and board_club.modulate.a >= 0.999:
+		printerr("board club should be faded while hearts is hovered")
+		ok = false
+
 	ui._on_suit_filter_exit("hearts")
 	await process_frame
 	if ui.hover_filter_suit != "":
