@@ -86,7 +86,7 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	info_btn.pressed.connect(_ui._on_enemy_info_pressed.bind(player_index))
 	row.add_child(info_btn)
 	if gm.meter_max > 0:
-		var meter := CardRenderer.make_meter_bar(p.meter, gm.meter_max)
+		var meter := CardRenderer.make_meter_bar(gm.projected_meter(p), gm.meter_max)
 		meter.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		col.add_child(meter)
 	return chip
@@ -567,7 +567,7 @@ func _refresh_hand_meter() -> void:
 	tag.add_theme_font_size_override("font_size", 12)
 	tag.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	_ui.hand_meter_slot.add_child(tag)
-	var bar := CardRenderer.make_meter_bar(gm.players[0].meter, gm.meter_max)
+	var bar := CardRenderer.make_meter_bar(gm.projected_meter(gm.players[0]), gm.meter_max)
 	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_ui.hand_meter_slot.add_child(bar)
 

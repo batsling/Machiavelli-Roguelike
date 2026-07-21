@@ -874,7 +874,7 @@ static func apply_move(gm: GameManager, move: Dictionary, profile: AIProfile = n
 			_apply_rearrange(gm, {"rearrange": move["shape_repair"],
 				"cards": move["shape_repair_moved"]})
 		if move.get("ult", false):
-			gm.current_player().meter = 0
+			gm.spend_meter()
 		return
 	var cards: Array[Card] = move["cards"]
 	var dest: CardSet = move["dest"]

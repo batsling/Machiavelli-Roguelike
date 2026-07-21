@@ -26,31 +26,29 @@ extends Enemy
 ## rearrangement (GameManager.draw_and_end_turn), so she never wastes the guard.
 ##
 ## Ultimate: when her meter fills AND enough slimed cards can be gathered
-## legally, she squeezes them into a picture on the felt — a heart, a ladybug
-## or a flower (see the template block below) — sealing them away as one
-## immovable lump, and her meter resets. She holds a full meter until a
-## picture actually fits.
+## legally, she squeezes them into a heart picture on the felt (see the
+## template block below) — sealing them away as one immovable lump, and her
+## meter resets. She holds a full meter until the picture actually fits.
 
 ## Her ultimate: once her meter is full she gathers every slimed card she can
-## and squeezes them into a picture on the felt — a heart, a ladybug or a
-## flower, grandest first. The slime comes from her own hand (naturals first;
-## her joker wildcards only as a last resort) and from table groups that can
-## legally spare it: the cards left behind in every donor group must still be
-## a valid group, or nothing at all. The picture is a shape group
-## (CardSet.set_shape) — valid as one connected patch — and its cards are
+## and squeezes them into a heart picture on the felt. The slime comes from her
+## own hand (naturals first; her joker wildcards only as a last resort) and from
+## table groups that can legally spare it: the cards left behind in every donor
+## group must still be a valid group, or nothing at all. The picture is a shape
+## group (CardSet.set_shape) — valid as one connected patch — and its cards are
 ## sealed out of reach (only a joker can still leave, swapped out by the exact
 ## card it stands for). Sealing is a mechanic, not a play: the hand cards the
 ## picture swallows never count as her play for the turn, so she still draws
 ## (or plays a real card) to end it. Spending the ultimate resets her meter
-## to zero. The pictures are hollow outlines, not filled blocks — every cell
-## still shares an edge with the next, so each stays one connected patch.
-## Templates are grid cells, row by row:
+## to zero. The picture is a hollow outline, not a filled block — every cell
+## still shares an edge with the next, so it stays one connected patch.
+## The template is grid cells, row by row:
 ##
-##   heart (17)    ladybug (12)    flower (9)
-##   . X . X .      X X X X         X X X
-##   X X X X X      X . . X         X . X
-##   X . . . X      X . . X         X X X
-##   X X . X X      X X X X         . X .
+##   heart (17)
+##   . X . X .
+##   X X X X X
+##   X . . . X
+##   X X . X X
 ##   . X X X .
 ##   . . X . .
 const ULT_HEART: Array[Vector2i] = [
@@ -61,26 +59,13 @@ const ULT_HEART: Array[Vector2i] = [
 	Vector2i(1, 4), Vector2i(2, 4), Vector2i(3, 4),
 	Vector2i(2, 5),
 ]
-const ULT_LADYBUG: Array[Vector2i] = [
-	Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0),
-	Vector2i(0, 1), Vector2i(3, 1),
-	Vector2i(0, 2), Vector2i(3, 2),
-	Vector2i(0, 3), Vector2i(1, 3), Vector2i(2, 3), Vector2i(3, 3),
-]
-const ULT_FLOWER: Array[Vector2i] = [
-	Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0),
-	Vector2i(0, 1), Vector2i(2, 1),
-	Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2),
-	Vector2i(1, 3),
-]
 
-## The three picture templates, grandest first — the ultimate builds the
-## biggest one the slime at hand can fill.
+## The picture templates the ultimate can build. For now there is only the
+## heart; the search still walks a list (grandest first) so more shapes can be
+## added back later.
 static func ult_templates() -> Array[Dictionary]:
 	return [
 		{"name": "heart", "cells": ULT_HEART},
-		{"name": "ladybug", "cells": ULT_LADYBUG},
-		{"name": "flower", "cells": ULT_FLOWER},
 	]
 
 ## Build one of her picture groups from a template and the cards to fill it
@@ -110,7 +95,7 @@ func mechanic_intro() -> String:
 		+ "dragging one drags them all. She oozes freely and combines her slime " \
 		+ "to guard her most valuable cards (jokers, then the versatile 4-8s) " \
 		+ "out of your reach. Once her ultimate meter fills she squeezes every " \
-		+ "slimed card she can gather into a hollow picture on the felt, sealed " \
+		+ "slimed card she can gather into a hollow heart on the felt, sealed " \
 		+ "away — only a joker can leave it, swapped out by the exact card it " \
 		+ "stands for."
 
@@ -208,7 +193,10 @@ const ULT_REPAIR_BUDGET := 12
 ## move_cards_to_new_shape (plus the leftover repair) and resets her meter.
 func _plan_ultimate(gm: GameManager) -> Dictionary:
 	var me := gm.current_player()
-	if gm.meter_max <= 0 or me.meter < gm.meter_max:
+	# The meter builds live as she plays this turn, so read the projected charge
+	# (what her turn-so-far already earned): that lets the ultimate fire the very
+	# turn the bar completes, not a turn later.
+	if gm.meter_max <= 0 or gm.projected_meter(me) < gm.meter_max:
 		return {}
 	var naturals: Array[Card] = []
 	var jokers: Array[Card] = []
