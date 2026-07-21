@@ -196,7 +196,7 @@ The **Vanilla sandbox** tab holds:
   opponent's name and beside your hand. The bar builds **live** as cards are
   played this turn — the current player's bar previews the charge their staged
   plays will bank — so an ultimate can fire the very turn its meter completes,
-  not a turn later. **Meter max** (0 disables it, default 30) is how much it
+  not a turn later. **Meter max** (0 disables it, default 20) is how much it
   holds; **Charge per play** (default 1) is how much each committed hand adds;
   **Charge per card played from hand** switches that from once per hand to once
   per card leaving the hand that turn. Applies from the next new game (the
@@ -205,7 +205,7 @@ The **Vanilla sandbox** tab holds:
 The **Roguelike run** tab holds the run's own copies of the same rules —
 cards drawn per turn (default 2), starting hand size (default 13), max hand
 size (default none), max cards played per turn (default 13), jokers (default
-in), starting combos (default on) and the ultimate meter (default max 30,
+in), starting combos (default on) and the ultimate meter (default max 20,
 charge 1 per card played from hand). It also holds an **Enemy AI** section
 with the same four sliders (Skill / Style / Attention / Planning) *for each
 individual enemy in the roster*, so any single opponent's brain can be retuned
@@ -242,8 +242,7 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   depth-first search over sets and runs, ace low/high, joker-aware). Run over the
   Billionaire's hand for his Riichi three ways — the wait set (`wait_cards`), the
   tsumo/ron go-out (`can_partition`), and a cheap one-wildcard tenpai gate
-  (`can_partition_with_wild`) — plus a distance-to-going-out measure
-  (`min_extra_to_tile`) his hand-shaping strategy reads
+  (`can_partition_with_wild`)
 - `scripts/engine/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
   future Trigger/Sticky effects), plus the layout state: an orientation
   (a line group can lie flat or stand upright on the felt), shape cells
@@ -572,11 +571,13 @@ declare. The wait is **self-contained in his hand**: the winning card completes
 his own melds, so nobody rearranging the shared felt can change or break it (a
 board-dependent wait would be unstable, and un-mahjong-like). To get there he
 **plays for tenpai** instead of racing to empty out like the baseline AI: his
-hand-shaping strategy (`GreedyAI.avoids_play`) holds his developing melds and
-partials together — refusing any play that would leave his hand further from
-going out (`Tiling.min_extra_to_tile`) — while still shedding complete groups
-and useless floaters, so a structured chunk survives and grows toward a good
-wait. First he weighs whether declaring is worth it: he enumerates his waits and counts how many live copies
+hand-shaping strategy hands his ordinary turn over to a shed policy
+(`avoids_play` + `plan_strategy_move`) that keeps a chunk of about a hand-cap's
+worth of cards — one he could actually lay down in a turn — trimming only the
+excess: complete groups he already holds and lone floaters (cards with no
+partner to build a group with), never a developing partial he is growing his
+wait on. So a Riichi hand is always small enough to play out. First he weighs
+whether declaring is worth it: he enumerates his waits and counts how many live copies
 of each are still winnable, and, reading his own glass passive Washizu-style, he
 **won't declare into a dead wait** — one whose only remaining copies he can see
 locked in an opponent's hand, where he could neither draw it nor expect a smart

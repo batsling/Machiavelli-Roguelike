@@ -75,7 +75,7 @@ var max_plays_per_turn := 0
 ## meter_max 0 disables the meter entirely. Each committed hand adds
 ## meter_gain points — once per hand, or meter_gain per card played from hand
 ## when meter_per_card is on.
-var meter_max := 25
+var meter_max := 20
 var meter_gain := 1
 var meter_per_card := false
 

@@ -124,54 +124,108 @@ func on_opponent_commit(gm: GameManager, committer: PlayerState) -> bool:
 
 # --- Riichi: shaping the hand toward tenpai -----------------------------------
 
-## How far from going out he bothers to distinguish; beyond this a hand is just
-## "far" and shedding within that range is unconstrained.
-const AWAY_CAP := 3
+## The size of hand he shapes toward and keeps — a chunk he could lay down in one
+## turn (the play cap), so a completed Riichi hand is one he can actually play out.
+func _target_hand(gm: GameManager) -> int:
+	return gm.max_plays_per_turn if gm.max_plays_per_turn > 0 else 13
 
-## Cache of his current hand's distance-to-going-out, reused across the many
-## candidate plays the smart brain scores in one turn (the hand is fixed then).
-var _away_sig := -1
-var _away_val := 0
-
-## His hand-shaping strategy, consulted by GreedyAI's smart brain (avoids_play):
-## veto any ordinary play that works against building a Riichi hand. He holds his
-## developing melds and partials together — he never sheds a card whose loss
-## pushes his hand further from going out — but freely lays down complete
-## combinations and pure floaters (which don't hurt, and keep his meter charging).
-## A play that empties his hand wins outright and is never vetoed; with the meter
-## off there is no Riichi to build toward, so the strategy stands down. GreedyAI
-## ignores the veto when racing to finish, so a tight endgame still overrides it.
+## Hands his whole pre-Riichi turn over to his own shed policy (plan_strategy_move
+## below): GreedyAI's smart brain would otherwise dump his hand or, being
+## conservative, sit on it — neither of which builds a Riichi tenpai. So he vetoes
+## every ordinary play that lays cards from his hand, unless it goes out (a normal
+## win is always taken). With the meter off there is no Riichi to build, and
+## GreedyAI ignores the veto when racing to finish, so a tight endgame overrides it.
 func avoids_play(gm: GameManager, move: Dictionary) -> bool:
 	if riichi or gm.meter_max <= 0:
+		return false
+	# Let him open normally: his shed policy only runs once he has opened (that is
+	# when GreedyAI consults plan_strategy_move), so vetoing the opening meld would
+	# lock him out of ever playing.
+	if not gm.current_player_is_open():
 		return false
 	var me := _my_state(gm)
 	if me == null:
 		return false
-	var from_hand: Array[Card] = []
+	var new_hand: Array[Card] = me.hand.duplicate()
+	var plays_from_hand := false
 	for c: Card in move["cards"]:
 		if me.hand.has(c):
-			from_hand.append(c)
-	if from_hand.is_empty():
+			plays_from_hand = true
+			new_hand.erase(c)
+	if not plays_from_hand:
 		return false  # a table-only rearrangement sheds nothing from his hand
-	var new_hand: Array[Card] = me.hand.duplicate()
-	for c in from_hand:
-		new_hand.erase(c)
-	if new_hand.is_empty():
-		return false  # this play goes out — always take the win
-	# Hold the play back only if it would leave his hand further from going out —
-	# i.e. it breaks up a developing meld or partial he is building his wait on.
-	return Tiling.min_extra_to_tile(new_hand, AWAY_CAP) > _hand_away(me.hand)
+	return not new_hand.is_empty()  # veto every hand play except one that goes out
 
-## His current hand's distance to going out, cached for the run of candidate
-## plays the smart brain scores against one fixed hand this turn.
-func _hand_away(hand: Array[Card]) -> int:
-	var sig := hand.size()
-	for c in hand:
-		sig = sig * 31 + (100 if c.is_joker else c.rank * 4 + Deck.SUITS.find(c.suit))
-	if sig != _away_sig:
-		_away_sig = sig
-		_away_val = Tiling.min_extra_to_tile(hand, AWAY_CAP)
-	return _away_val
+## His shed policy, the heart of playing for tenpai. He keeps a chunk of about a
+## hand-cap's worth of cards and only trims the excess: while at or over that size
+## he sheds a complete meld (which never breaks the partials he is building his
+## wait on) or, failing that, a lone floater whose loss doesn't set his tenpai
+## back — each shed also charging his meter. Under his target size he holds and
+## draws, growing his structure toward a good tenpai. Returns {} to draw.
+func plan_strategy_move(gm: GameManager) -> Dictionary:
+	if riichi or gm.meter_max <= 0:
+		return {}
+	var me := _my_state(gm)
+	if me == null or me.hand.size() < _target_hand(gm):
+		return {}
+	# Stop once this turn's plays would reach the target (also respecting the play
+	# cap), so he never loops trying to shed more than a turn allows.
+	var budget := _target_hand(gm) - gm.cards_played_this_turn()
+	if gm.max_plays_per_turn > 0:
+		budget = mini(budget, gm.max_plays_per_turn - gm.cards_played_this_turn())
+	if budget <= 0:
+		return {}
+	# Laying a complete meld from hand needs no open — it IS his opening meld the
+	# first time — and never breaks a partial, so it is his preferred shed.
+	var meld := GreedyAI._find_meld(me.hand)
+	if not meld.is_empty() and meld.size() <= budget:
+		return {"cards": meld, "dest": null,
+			"text": "sets down %s" % GreedyAI._cards_text(meld)}
+	# No complete meld to lay: shed a lone floater onto a table meld (only once he
+	# has opened). A floater is a card with no partner in hand — nothing it could
+	# grow a set or run with — so parting with it never breaks a wait he is
+	# building. A cheap structural read, no solver in this hot path.
+	if not gm.current_player_is_open():
+		return {}
+	for c in me.hand:
+		if not _is_floater(c, me.hand):
+			continue
+		for m in gm.board.melds:
+			if not GreedyAI._plain_meld(m):
+				continue
+			if Rules.is_valid_meld(m.cards + [c]):
+				return {"cards": [c], "dest": m, "text": "lays off %s" % c.label()}
+	# Well over target with no clean shed (no complete meld, no floater with a
+	# home): lay off any card that fits, so his hand can't drown even through a dry
+	# stretch — better a broken partial than a bloated hand he can't play out.
+	if me.hand.size() >= _target_hand(gm) + 4:
+		for c in me.hand:
+			for m in gm.board.melds:
+				if not GreedyAI._plain_meld(m):
+					continue
+				if Rules.is_valid_meld(m.cards + [c]):
+					return {"cards": [c], "dest": m, "text": "lays off %s" % c.label()}
+	return {}
+
+## True when this card has no partner in the hand — no other card it could form
+## or extend a group with (same rank, or same suit within two ranks, the ace
+## neighbouring both the two and the king). Such a card is dead weight he can
+## shed without touching a developing meld. Jokers are never floaters.
+func _is_floater(card: Card, hand: Array[Card]) -> bool:
+	if card.is_joker:
+		return false
+	for o in hand:
+		if o == card:
+			continue
+		if o.is_joker:
+			return false  # a joker can pair with anything, so keep this card
+		if o.rank == card.rank and o.suit != card.suit:
+			return false  # a set partner
+		if o.suit == card.suit:
+			var d := absi(o.rank - card.rank)
+			if d <= 2 or d == 11 or d == 12:  # near in rank (or ace-high wrap to K/Q)
+				return false  # a run partner
+	return true
 
 # --- Riichi: the declaration decision -----------------------------------------
 
@@ -201,14 +255,9 @@ func _should_declare(gm: GameManager) -> bool:
 	var waits := Tiling.wait_cards(pool)
 	if waits.is_empty():
 		return false
-	var winnable := _wait_winnable(gm, waits)
-	if winnable <= 0:
-		return false  # dead wait — the Washizu rule: never Riichi into it
-	# Pickier while the stock is still deep; take a thinner wait late.
-	var need := RIICHI_MIN_WINNABLE
-	if gm.deck.size() > gm.players.size() * 4:
-		need = 2
-	return winnable >= need
+	# Any live, winnable wait is worth declaring; only a dead wait (every copy he
+	# can see locked in an opponent's hand) is refused — the Washizu rule.
+	return _wait_winnable(gm, waits) >= RIICHI_MIN_WINNABLE
 
 ## The total number of live, winnable copies across all his waits: for each wait
 ## card, the copies not already in his hand or on the table, minus the ones his

@@ -112,7 +112,10 @@ static func plan_move(gm: GameManager, profile: AIProfile = null,
 		if _feeds_riichi(gm, move):
 			return {}
 		return move
-	if enemy != null and gm.current_player_is_open():
+	# A designed enemy's own strategy (the slime guarding, the Billionaire shaping
+	# a Riichi hand). Each self-guards on the opening rule as it needs to — the
+	# slime only rearranges once open, the Billionaire opens with his first shed.
+	if enemy != null:
 		return enemy.plan_strategy_move(gm)
 	return {}
 
