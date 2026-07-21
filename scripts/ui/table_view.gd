@@ -122,32 +122,143 @@ func _make_card_backs(hand: Array[Card], horizontal: bool) -> BoxContainer:
 			box.add_child(CardRenderer.make_card_back(back_size))
 	return box
 
-## The felt renders one panel per cluster (see BoardGrid): a lone line group
+## The felt is a freeform canvas: one draggable panel per cluster (see
+## BoardGrid), each sitting wherever its group was placed. A lone line group
 ## keeps the plain panel — laid flat or upright by its orientation — while
-## crossing groups (sharing a card) and shape (picture) groups render on a
-## grid, empty cells and all.
+## crossing groups (sharing a card) and shape (picture) groups render on a grid,
+## empty cells and all. A group with no spot yet (freshly laid, or cleared by
+## Sort/Randomize) is auto-placed into the next free patch of felt, so mixed
+## vertical and horizontal groups nestle together instead of ruling off rows.
 func refresh_board() -> void:
 	var gm := _ui.gm
 	_ui._clear_children(_ui.board_flow)
+	# Rects already spoken for on the felt, so auto-placement never overlaps.
+	var placed: Array[Rect2] = []
+	var width := _canvas_width()
 	if gm.board.melds.is_empty():
 		var empty := Label.new()
 		empty.text = "The table is empty — drag cards here to lay down the first group."
 		empty.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+		empty.position = Vector2(UITheme.BOARD_PAD, UITheme.BOARD_PAD)
+		empty.size = empty.get_combined_minimum_size()
 		_ui.board_flow.add_child(empty)
 	for cluster in BoardGrid.clusters(gm.board):
 		var melds: Array[CardSet] = cluster["melds"]
+		var panel: Control
 		if melds.size() == 1 and not melds[0].is_shape():
-			_ui.board_flow.add_child(_make_meld_panel(melds[0]))
+			panel = _make_meld_panel(melds[0])
 		else:
-			_ui.board_flow.add_child(_make_cluster_panel(cluster))
+			panel = _make_cluster_panel(cluster)
+		_ui.board_flow.add_child(panel)
+		_place_panel(panel, melds, placed, width)
 	# The "+ New group" click target only appears while cards are selected;
-	# drags can always land on empty felt instead.
+	# drags can always land on empty felt instead. It (and the hover hint) tuck
+	# into a free patch of felt like any group, but keep no lasting spot.
 	if not _ui.selected.is_empty() and _ui._is_human_turn():
-		_ui.board_flow.add_child(_make_new_group_zone())
+		var zone := _make_new_group_zone()
+		_ui.board_flow.add_child(zone)
+		_place_panel(zone, [], placed, width)
 	# The hover hint's "forms a new group" cue: shown only when nothing is
 	# selected (so it never sits beside the interactive New group zone).
 	elif _ui.hint_new_group and _ui._is_human_turn():
-		_ui.board_flow.add_child(_make_new_group_hint())
+		var hint := _make_new_group_hint()
+		_ui.board_flow.add_child(hint)
+		_place_panel(hint, [], placed, width)
+	_size_canvas(placed)
+
+## Put one group's panel on the felt: at the spot its group remembers, or — for
+## an unplaced group — the next free patch, which is then stored on every meld
+## of the group so a crossing/picture cluster keeps one shared spot. Transient
+## panels (the New group zone/hint) pass no melds and store nothing.
+func _place_panel(panel: Control, melds: Array[CardSet], placed: Array[Rect2],
+		width: float) -> void:
+	var size := panel.get_combined_minimum_size()
+	panel.size = size
+	var anchor: CardSet = melds[0] if not melds.is_empty() else null
+	var pos: Vector2
+	if anchor != null and anchor.is_placed():
+		pos = anchor.board_pos
+	else:
+		pos = _free_spot(size, placed, width)
+		for m in melds:
+			m.board_pos = pos
+	panel.position = pos
+	placed.append(Rect2(pos, size))
+
+## The next open spot for a panel of `size`: the topmost-then-leftmost candidate
+## corner (the felt's top-left, plus the right and bottom edges every placed
+## panel opens up) that neither overlaps a placed panel nor overflows `width`.
+## Placing every group this way packs them into tidy shelves that let a tall
+## vertical group and a short horizontal one share a row with no wasted gap.
+func _free_spot(size: Vector2, placed: Array[Rect2], width: float) -> Vector2:
+	var pad := float(UITheme.BOARD_PAD)
+	var cand_x: Array[float] = [pad]
+	var cand_y: Array[float] = [pad]
+	for r in placed:
+		cand_x.append(r.position.x + r.size.x + pad)
+		cand_y.append(r.position.y + r.size.y + pad)
+	var best := Vector2.INF
+	for y in cand_y:
+		for x in cand_x:
+			if x + size.x > width and x > pad:
+				continue  # would spill past the right edge of the felt
+			if _overlaps_any(Rect2(Vector2(x, y), size), placed):
+				continue
+			if y < best.y or (y == best.y and x < best.x):
+				best = Vector2(x, y)
+	if best == Vector2.INF:
+		# Nothing fit within the width — drop it below everything on the felt.
+		var bottom := pad
+		for r in placed:
+			bottom = maxf(bottom, r.position.y + r.size.y + pad)
+		best = Vector2(pad, bottom)
+	return best
+
+func _overlaps_any(rect: Rect2, placed: Array[Rect2]) -> bool:
+	for r in placed:
+		if rect.intersects(r):
+			return true
+	return false
+
+## The felt's usable width for packing — its laid-out width once known, or a
+## sensible default on the very first build before layout has run.
+func _canvas_width() -> float:
+	var w := _ui.board_flow.size.x
+	return w if w > 100.0 else 820.0
+
+## Grow the canvas tall enough to hold every placed panel, so the scroll area
+## can reach a group parked near the bottom of the felt.
+func _size_canvas(placed: Array[Rect2]) -> void:
+	var bottom := 0.0
+	for r in placed:
+		bottom = maxf(bottom, r.position.y + r.size.y)
+	_ui.board_flow.custom_minimum_size = Vector2(0, bottom + UITheme.BOARD_PAD)
+
+## A slim grip strip along the top of a group's panel: press it and drag to
+## slide the whole group (a crossing/picture cluster moves as one) anywhere on
+## the felt. main_ui follows the motion and stores the resting spot.
+func _make_move_handle(panel: Control, melds: Array[CardSet]) -> Control:
+	var handle := Panel.new()
+	handle.custom_minimum_size = Vector2(0, UITheme.GROUP_HANDLE_HEIGHT)
+	handle.mouse_filter = Control.MOUSE_FILTER_STOP
+	handle.mouse_default_cursor_shape = Control.CURSOR_MOVE
+	handle.tooltip_text = "Drag to move this group around the felt"
+	handle.add_theme_stylebox_override("panel",
+		CardRenderer.panel_style(UITheme.COL_GROUP_HANDLE, 6))
+	var dots := Label.new()
+	dots.text = "⠿"
+	dots.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	dots.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	dots.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+	dots.add_theme_font_size_override("font_size", 11)
+	dots.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dots.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	handle.add_child(dots)
+	handle.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.pressed \
+				and event.button_index == MOUSE_BUTTON_LEFT:
+			_ui.begin_group_drag(panel, melds))
+	return handle
 
 func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	var gm := _ui.gm
@@ -184,12 +295,23 @@ func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	else:
 		box = HBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
-	panel.add_child(box)
 	for c in Rules.display_order(meld.cards):
 		box.add_child(_make_card_button(c, meld))
 	if _ui._is_human_turn():
 		box.add_child(_make_rotate_button(meld))
+	panel.add_child(_with_handle(panel, box, [meld] as Array[CardSet]))
 	return panel
+
+## Stack a group's move handle over its content in one column, so every panel on
+## the felt carries a grip to drag it by. Keeps the card box as the direct
+## parent of its cards (a vertical group's column, a cluster's grid) so the
+## layout the rest of the code and tests read is unchanged.
+func _with_handle(panel: Control, content: Control, melds: Array[CardSet]) -> VBoxContainer:
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 3)
+	outer.add_child(_make_move_handle(panel, melds))
+	outer.add_child(content)
+	return outer
 
 ## A small control on each lone group that turns it between lying flat and
 ## standing upright — purely how it sits on the felt, the group is unchanged.
@@ -243,7 +365,7 @@ func _make_cluster_panel(cluster: Dictionary) -> PanelContainer:
 	grid.columns = maxi(hi.x - lo.x, 1)
 	grid.add_theme_constant_override("h_separation", 4)
 	grid.add_theme_constant_override("v_separation", 4)
-	panel.add_child(grid)
+	panel.add_child(_with_handle(panel, grid, melds))
 	for y in range(lo.y, hi.y):
 		for x in range(lo.x, hi.x):
 			var cell := Vector2i(x, y)

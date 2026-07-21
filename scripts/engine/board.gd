@@ -85,6 +85,7 @@ func snapshot() -> Array:
 		snap.append({
 			"cards": m.cards.duplicate(),
 			"orientation": m.orientation,
+			"board_pos": m.board_pos,
 			"shape": m.shape_cells.duplicate(),
 			"attach_anchor": m.attach_anchor,
 			"attach_step": m.attach_step,
@@ -98,6 +99,7 @@ func restore(snap: Array) -> void:
 		for c: Card in entry["cards"]:
 			m.cards.append(c)
 		m.orientation = entry["orientation"]
+		m.board_pos = entry["board_pos"]
 		m.shape_cells = (entry["shape"] as Dictionary).duplicate()
 		m.attach_anchor = entry["attach_anchor"]
 		m.attach_step = entry["attach_step"]

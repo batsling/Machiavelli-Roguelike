@@ -25,10 +25,22 @@ extends Resource
 ## their own cells).
 enum Orientation { HORIZONTAL, VERTICAL }
 
+## Sentinel board_pos: "not placed yet". The table view auto-places any group
+## carrying it (into the next free spot), so a fresh group finds a home without
+## the engine ever caring where groups sit.
+const UNPLACED := Vector2(-1, -1)
+
 @export var cards: Array[Card] = []
 # id of a board tile effect applied to this set's space, if any
 @export var board_tile_effect: String = ""
 @export var orientation := Orientation.HORIZONTAL
+## Where this group's panel sits on the freeform felt — the canvas-local
+## top-left of its panel, or UNPLACED until the table view places it. Purely
+## visual (like orientation): the player drags groups around, Sort/Randomize
+## rewrite it, and it is snapshotted so an undo restores the layout, not just
+## the membership. A crossing/picture cluster shares one position across its
+## melds.
+@export var board_pos := UNPLACED
 ## Card -> Vector2i local grid cell. Empty for ordinary line groups; non-empty
 ## makes this a shape (picture) group, valid when its cells form one
 ## edge-connected patch covering exactly its cards.
@@ -42,6 +54,10 @@ enum Orientation { HORIZONTAL, VERTICAL }
 ## off whole or not at all (GameManager enforces).
 var attach_anchor: Card = null
 @export var attach_step := Vector2i.ZERO
+
+## True once this group has been given a spot on the freeform felt.
+func is_placed() -> bool:
+	return board_pos != UNPLACED
 
 func is_valid() -> bool:
 	if is_shape():

@@ -157,7 +157,11 @@ var stock_label: Label
 var stock_top_slot: HBoxContainer
 var status_label: Label
 var log_box: RichTextLabel
-var board_flow: HFlowContainer
+## The freeform felt: a plain canvas whose children (group panels) are each
+## positioned absolutely at their group's board_pos, so a tall vertical group
+## and a wide horizontal one sit side by side wherever they are dropped rather
+## than being packed into flow rows. TableView owns the layout math.
+var board_flow: Control
 var hand_panel: PanelContainer
 var hand_box: HFlowContainer
 var hand_title: Label
@@ -179,13 +183,16 @@ var anim_layer: Control
 var animator: EnemyMoveAnimator
 # Renders the seats, board and hand into the containers above.
 var _table := TableView.new()
+## The in-progress freeform group drag, or {} when nothing is being dragged. Set
+## by a panel's move handle (TableView), followed and finished in _input.
+var _group_drag := {}
 
 func _ready() -> void:
 	gm = GameManager.new()
 	add_child(gm)
 	gm.turn_committed.connect(_on_turn_committed)
 	gm.meter_charged.connect(_on_meter_charged)
-	gm.card_drawn.connect(_on_card_drawn)
+	gm.cards_drawn.connect(_on_cards_drawn)
 	gm.player_passed.connect(_on_player_passed)
 	gm.game_over.connect(_on_game_over)
 	# Seed the per-enemy AI overrides from the roster, then let any saved
@@ -379,12 +386,11 @@ func _build_layout() -> void:
 	table_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	table_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	table_col.add_child(table_scroll)
-	board_flow = HFlowContainer.new()
+	board_flow = Control.new()
 	board_flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	board_flow.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	board_flow.mouse_filter = Control.MOUSE_FILTER_PASS
-	board_flow.add_theme_constant_override("h_separation", 10)
-	board_flow.add_theme_constant_override("v_separation", 10)
+	board_flow.clip_contents = true
 	table_scroll.add_child(board_flow)
 	for zone: Control in [table_panel, table_scroll, board_flow]:
 		zone.set_drag_forwarding(Callable(), _can_drop_new_group, _drop_new_group)
@@ -844,6 +850,41 @@ func _card_is_interactive(meld: CardSet) -> bool:
 		return true
 	return gm.current_player_is_open() or gm.is_own_staged_meld(meld)
 
+# --- Freeform group dragging --------------------------------------------------
+
+## Begin dragging a whole group by its move handle: remember which melds move
+## together (a crossing/picture cluster moves as one lump) and where the cursor
+## grabbed the panel, so _input can follow the motion. Disabled mid-AI-turn,
+## when the board is being rebuilt under us. Purely visual — no engine move.
+func begin_group_drag(panel: Control, melds: Array[CardSet]) -> void:
+	if ai_running:
+		return
+	_group_drag = {"panel": panel, "melds": melds, "grab": panel.get_local_mouse_position()}
+	panel.move_to_front()
+
+## Follow and finish a group drag. Motion slides the live panel under the cursor
+## (kept on the felt); release writes the resting spot onto every meld of the
+## group and rebuilds the felt so the canvas re-measures its bounds.
+func _input(event: InputEvent) -> void:
+	if _group_drag.is_empty():
+		return
+	var panel: Control = _group_drag["panel"]
+	if not is_instance_valid(panel):
+		_group_drag = {}
+		return
+	if event is InputEventMouseMotion:
+		var pos: Vector2 = board_flow.get_local_mouse_position() - (_group_drag["grab"] as Vector2)
+		panel.position = Vector2(maxf(pos.x, 0.0), maxf(pos.y, 0.0))
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and not event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT:
+		var pos := Vector2(maxf(panel.position.x, 0.0), maxf(panel.position.y, 0.0))
+		for m: CardSet in _group_drag["melds"]:
+			m.board_pos = pos
+		_group_drag = {}
+		get_viewport().set_input_as_handled()
+		_refresh()
+
 # --- Drag and drop ---------------------------------------------------------------
 
 ## Dragging a selected card drags the whole selection; dragging an unselected
@@ -1114,10 +1155,12 @@ func _on_new_game_pressed() -> void:
 			rogue_round = 1
 	_new_game()
 
-## "Sort": reorder the groups on the table so a busy felt is easy to scan.
-## Straights come first — by colour, then by their starting rank — and sets
-## after, by rank. Any group that is momentarily invalid (mid-rearrange) keeps
-## its place at the end so nothing you are editing jumps around under you.
+## "Sort": tidy the freeform felt back into a readable arrangement. Straights
+## come first — by colour, then by their starting rank — and sets after, by
+## rank; any group that is momentarily invalid (mid-rearrange) keeps its place
+## at the end. Groups the player has scattered are cleared of their spots and
+## re-laid in that order (left to right, wrapping down the felt) — the sort
+## doing as best it can to organize whatever the table has become.
 func _on_sort_board_pressed() -> void:
 	if ai_running:
 		return
@@ -1130,7 +1173,14 @@ func _on_sort_board_pressed() -> void:
 	for e: Dictionary in keyed:
 		out.append(e["meld"])
 	gm.board.melds.assign(out)
+	_reset_board_positions()
 	_refresh()
+
+## Clear every group's spot on the felt so the next refresh re-places them all
+## from scratch, in board order — the tidy packing Sort and Randomize rely on.
+func _reset_board_positions() -> void:
+	for m in gm.board.melds:
+		m.board_pos = CardSet.UNPLACED
 
 ## The ⟳ control on a group: stand it upright or lay it flat on the felt.
 ## Purely visual (like Sort/Randomize) — the group itself is untouched — but
@@ -1147,6 +1197,7 @@ func _on_randomize_board_pressed() -> void:
 	if ai_running:
 		return
 	gm.board.melds.shuffle()
+	_reset_board_positions()
 	_refresh()
 
 ## A lexicographic sort key for one table group, compared field by field:
@@ -1241,11 +1292,31 @@ func _on_meter_charged(p: PlayerState, _amount: int, now_full: bool) -> void:
 	if now_full:
 		_log("[b]%s's ultimate meter is fully charged![/b]" % p.display_name)
 
-func _on_card_drawn(p: PlayerState, card: Card) -> void:
+## Announce a draw as one line. Your own cards are named (a single card, or
+## "2 cards, X and Y" for a multi-draw); an opponent's stay face-down, so only
+## the count shows.
+func _on_cards_drawn(p: PlayerState, cards: Array[Card]) -> void:
+	var n := cards.size()
 	if p == gm.players[0]:
-		_log("You drew %s." % card.label())
-	else:
+		if n == 1:
+			_log("You drew %s." % cards[0].label())
+		else:
+			_log("You drew %d cards, %s." % [n, _join_card_labels(cards)])
+	elif n == 1:
 		_log("%s drew a card." % p.display_name)
+	else:
+		# An opponent's cards stay face-down — announce the count, not the faces.
+		_log("%s drew %d cards." % [p.display_name, n])
+
+## Join card labels for a log line: "X", "X and Y", or "X, Y and Z".
+func _join_card_labels(cards: Array[Card]) -> String:
+	var labels := PackedStringArray()
+	for c in cards:
+		labels.append(c.label())
+	if labels.size() == 1:
+		return labels[0]
+	var head := ", ".join(labels.slice(0, labels.size() - 1))
+	return "%s and %s" % [head, labels[labels.size() - 1]]
 
 func _on_player_passed(p: PlayerState) -> void:
 	var why := "stock is empty" if gm.deck.is_empty() else "hand is full"

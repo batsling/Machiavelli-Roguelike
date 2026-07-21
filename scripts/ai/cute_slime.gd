@@ -5,15 +5,14 @@ extends Enemy
 ## overlooking the plays that read the table) and quick (dumps cards as soon as
 ## she can). Her mechanic is the slime.
 ##
-## At combat start she coats every heart, every diamond and every joker in her
-## own deck in slime, giving them the Sticky effect. Because the combined stock
-## holds one copy of each card per player, only her copy is slimed — of the two
-## copies of any heart or diamond in the game, exactly one carries slime, and
-## only two of the four jokers (hers) are sticky. Slimed cards only stick to each
-## other (see CardSet.sticky_cluster): a run of slimed cards on the table is one
-## lump the player can't pick a single card out of — dragging one drags them all.
-## The Cute Slime herself is immune (ignores_sticky on her PlayerState), so she
-## slides her slime around freely.
+## At combat start she coats every card in her own deck in slime, giving them
+## the Sticky effect. Because the combined stock holds one copy of each card per
+## player, only her copy is slimed — of the two copies of any card in the game,
+## exactly one carries slime, and only two of the four jokers (hers) are sticky.
+## Slimed cards only stick to each other (see CardSet.sticky_cluster): a run of
+## slimed cards on the table is one lump the player can't pick a single card out
+## of — dragging one drags them all. The Cute Slime herself is immune
+## (ignores_sticky on her PlayerState), so she slides her slime around freely.
 ##
 ## Slime strategy: once she has spent her ordinary plays for the turn, she uses
 ## her free movement to legally combine slimed cards — moving one slimed card
@@ -100,7 +99,7 @@ func _init() -> void:
 	attention = 0.0    # oblivious
 
 func mechanic_intro() -> String:
-	return "[b]%s[/b] slimes every heart, diamond and joker in her own deck " \
+	return "[b]%s[/b] slimes every card in her own deck " \
 		% display_name \
 		+ "(green splotch) — one copy of each, so only her half is sticky. " \
 		+ "Slimed cards stick to each other, so a run of them is one lump — " \
@@ -110,21 +109,19 @@ func mechanic_intro() -> String:
 		+ "slimed card she can gather into a picture on the felt, sealed away " \
 		+ "for good."
 
-## Slime every heart, diamond and joker that came from her own deck, wherever
-## they sit right after the deal (the stock and every player's hand). Only her
-## copies carry slime — the player's matching cards stay clean — so of the two
-## copies of any heart or diamond exactly one is sticky, and only her two jokers.
-## Deterministic (no RNG), so a seeded game slimes the same cards every replay.
-## Her own seat is marked immune so she moves slimed cards freely.
+## Slime every card that came from her own deck, wherever they sit right after
+## the deal (the stock and every player's hand). Only her copies carry slime —
+## the player's matching cards stay clean — so of the two copies of any card
+## exactly one is sticky, and only her two of the four jokers. Deterministic
+## (no RNG), so a seeded game slimes the same cards every replay. Her own seat
+## is marked immune so she moves slimed cards freely.
 func on_combat_start(gm: GameManager) -> void:
 	var own := own_deck_id(gm)
 	for p in gm.players:
 		if p.is_opponent:
 			p.ignores_sticky = true
 	for c in all_dealt_cards(gm):
-		if c.deck_owner != own:
-			continue
-		if c.is_joker or c.suit == "hearts" or c.suit == "diamonds":
+		if c.deck_owner == own:
 			_slime(c)
 
 func _slime(card: Card) -> void:

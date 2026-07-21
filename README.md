@@ -94,16 +94,23 @@ placed this turn still has a choice, right-click it to pick its stand-in (handy
 for setting up — or blocking — the swap). Right-clicking anything else — a
 card, the felt, your hand — clears the current selection.
 
-Each lone group on the felt carries a small **⟳** control that stands it
-upright or lays it flat — purely how it sits on the table (the group itself is
-untouched), and the first visible piece of the layout groundwork below.
+The felt is **freeform**: every group sits wherever you put it, not packed into
+rows and columns. Each group's panel carries a slim grip (**⠿**) along its top —
+grab it and drag to slide the whole group (a crossing or picture cluster moves as
+one) anywhere on the table, so a tall vertical run and a wide horizontal one
+nestle side by side however you like. A freshly laid group drops into the next
+open patch of felt on its own. Each lone group also carries a small **⟳** control
+that stands it upright or lays it flat — purely how it sits on the table (the
+group itself is untouched).
 
 The table can get crowded, so its header carries **Sort** and **Randomize**
-buttons that reorder the groups on the felt (a purely visual reshuffle — the
-groups themselves are untouched). **Sort** lays straights out first — by colour,
-then by starting rank — and sets after, by rank; any group you have broken
-mid-rearrange stays put at the end. **Randomize** keeps each group intact but
-shuffles where the groups sit, to jog loose a rearrangement you had not spotted.
+buttons that re-place the groups on the felt (a purely visual reshuffle — the
+groups themselves are untouched). **Sort** does as best it can to organize
+whatever you have scattered: it lays straights out first — by colour, then by
+starting rank — and sets after, by rank, packing them tidily from the top-left;
+any group you have broken mid-rearrange stays put at the end. **Randomize** keeps
+each group intact but reshuffles where the groups sit, to jog loose a
+rearrangement you had not spotted.
 The header also carries a row of suit symbols (♥ ♦ ♣ ♠) — the **suit
 highlighter**: hover any one to outline every card of that suit *everywhere in
 play*, across both the table and your hand at once, and fade the rest, so you can
@@ -291,9 +298,9 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   plus the roster the rogue ladder picks from at random (the Cute Slime and the
   Sadistic Billionaire)
 - `scripts/ai/cute_slime.gd` — `CuteSlime`: the first designed enemy (strong,
-  oblivious, quick). At combat start she slimes every heart, diamond and joker in
-  her own deck (the Sticky effect) — one copy of each, so of the two copies of
-  any heart or diamond exactly one is sticky, and only her 2 of the 4 jokers; on
+  oblivious, quick). At combat start she slimes every card in her own deck (the
+  Sticky effect) — one copy of each, so of the two copies of any card exactly one
+  is sticky, and only her 2 of the 4 jokers; on
   her turns she legally combines slimed cards — oozing them next to the most
   valuable slimed card the player could still lift (weighting by versatility:
   jokers, then the flexible 4-8s), as much as helps while keeping every group
@@ -466,9 +473,9 @@ touched, so only two of the four jokers ever carry a mechanic.
 **The Cute Slime** brings the **Sticky** effect — slimed cards (a green
 splotch, top right) stick to *each other*, so a run of them on the table moves
 as one lump: dragging any one drags them all, and the leftover has to stay a
-valid group. The slime slimes every heart, diamond and joker in her own deck
-at combat start — one copy of each, so 13 hearts, 13 diamonds and her 2 jokers —
-moves her own slime freely (`PlayerState.ignores_sticky`),
+valid group. The slime slimes every card in her own deck at combat start — one
+copy of each, so all 52 of her cards and her 2 jokers — moves her own slime
+freely (`PlayerState.ignores_sticky`),
 and runs a "slime strategy" that legally combines slimed cards to guard her
 most valuable ones — oozing them next to the most valuable slimed card the
 player could still lift, prizing versatility (jokers, then the flexible 4-8s),
