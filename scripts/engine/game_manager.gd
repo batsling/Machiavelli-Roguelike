@@ -35,6 +35,9 @@ signal board_changed
 ## draw_per_turn cards). Batched so the UI can announce a multi-card draw as a
 ## single line ("… drew 2 cards, X and Y") instead of one line per card.
 signal cards_drawn(player: PlayerState, cards: Array[Card])
+## Fired when a card is sent to the face-up discard pile (the Billionaire's
+## Riichi auto-discards), so the UI can log and render it.
+signal card_discarded(player: PlayerState, card: Card)
 signal turn_committed(player: PlayerState, cards_played: int)
 signal player_passed(player: PlayerState)
 signal game_over(winners: Array)
@@ -72,9 +75,17 @@ var max_plays_per_turn := 0
 ## meter_max 0 disables the meter entirely. Each committed hand adds
 ## meter_gain points — once per hand, or meter_gain per card played from hand
 ## when meter_per_card is on.
-var meter_max := 25
+var meter_max := 20
 var meter_gain := 1
 var meter_per_card := false
+
+## Optional duck-typed observer that gets a veto/interrupt right after any player
+## commits a hand to the table. A designed enemy registers itself here in
+## on_combat_start; commit_turn calls its on_opponent_commit(gm, committer) and,
+## if it returns true, the interceptor has already ended the game (the Sadistic
+## Billionaire's Riichi "ron" — he claims the table and wins the instant an
+## opponent's play lets his frozen hand go out). null in vanilla games.
+var play_interceptor: Object = null
 
 # Staging state for the current turn. _hand_snapshot is the current player's
 # hand at the start of the turn; swap_joker() appends to it in place (the
@@ -105,6 +116,9 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 	round_number = 1
 	is_game_over = false
 	_consecutive_passes = 0
+	# A fresh game carries no mechanic interceptor until on_combat_start plants
+	# one, so a previous round's Billionaire can never fire into this game.
+	play_interceptor = null
 	for i in player_names.size():
 		var p := PlayerState.new()
 		p.player_id = i
@@ -460,6 +474,17 @@ func reset_turn() -> void:
 func cards_played_this_turn() -> int:
 	return _hand_snapshot.size() - current_player().hand.size()
 
+## The cards the current player has moved from their hand onto the table this
+## turn (in the turn-start snapshot but no longer in hand). Read by a mechanic
+## interceptor to see exactly what an opponent just played (the Billionaire's
+## ron checks these against his waits).
+func cards_placed_this_turn() -> Array[Card]:
+	var out: Array[Card] = []
+	for c in _hand_snapshot:
+		if not current_player().hand.has(c):
+			out.append(c)
+	return out
+
 ## True when every given card is one the current player laid down from hand
 ## this turn (still in the turn-start snapshot but no longer in the hand) —
 ## i.e. the whole batch may legally go back into the hand.
@@ -660,8 +685,12 @@ func commit_turn() -> String:
 	_charge_meter(p, played)
 	if p.hand.is_empty():
 		_end_game([p])
-	else:
-		_advance()
+		return ""
+	# A registered interceptor (the Billionaire in Riichi) may claim this play
+	# and win outright — his "ron". It ends the game itself; we just stop here.
+	if play_interceptor != null and play_interceptor.on_opponent_commit(self, p):
+		return ""
+	_advance()
 	return ""
 
 ## Charge a player's ultimate meter for the hand they just committed:
@@ -762,6 +791,46 @@ func draw_and_end_turn() -> void:
 		if _consecutive_passes >= players.size():
 			_end_game(_fewest_cards_winners())
 			return
+	_advance()
+
+# --- Mechanic-driven turns (Riichi) ------------------------------------------
+# Primitives a designed enemy uses to drive a turn that isn't an ordinary
+# play-or-draw: the Billionaire's Riichi draws one card and either wins on it
+# (tsumo) or discards it face-up. Centralized here so pass/advance/round
+# bookkeeping stays in one place.
+
+## Draw one card off the top of the stock (folding the discards back in first
+## when the stock is dry), returning it without placing it in any hand. Lets a
+## mechanic inspect the draw before deciding its fate. null only when the stock
+## and the discard pile are both empty.
+func draw_from_stock() -> Card:
+	return deck.draw()
+
+## Send a card to the face-up discard pile and announce it.
+func send_to_discard(p: PlayerState, card: Card) -> void:
+	deck.discard(card)
+	card_discarded.emit(p, card)
+
+## End the game with these winners — the win path for mechanics that go out
+## outside the ordinary empty-hand check (the Billionaire's tsumo and ron).
+func win_now(winners: Array) -> void:
+	_end_game(winners)
+
+## Advance to the next player after a mechanic resolved the turn without a
+## commit or a pass (a card left the stock, so this is not a pass).
+func advance_after_action() -> void:
+	_consecutive_passes = 0
+	_advance()
+
+## Register a pass for the current player (stock and discards both dry), ending
+## the game if this completes a full round of passes.
+func pass_turn() -> void:
+	var p := current_player()
+	_consecutive_passes += 1
+	player_passed.emit(p)
+	if _consecutive_passes >= players.size():
+		_end_game(_fewest_cards_winners())
+		return
 	_advance()
 
 # --- Internals ---------------------------------------------------------------

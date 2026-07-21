@@ -21,6 +21,10 @@ extends Resource
 # card on its own instead of dragging its whole cluster. The Cute Slime sets
 # this on herself, so she alone slips her slime around freely.
 @export var ignores_sticky: bool = false
+# True once this player has declared Riichi (the Sadistic Billionaire's
+# ultimate): their hand is frozen and every turn is a draw toward tsumo. Public
+# so the UI can badge the seat and other AIs can play defensively around it.
+@export var declared_riichi: bool = false
 
 func take_damage(amount: int) -> void:
 	health = max(0, health - amount)

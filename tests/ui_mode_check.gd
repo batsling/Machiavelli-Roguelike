@@ -21,7 +21,7 @@ func _init() -> void:
 		printerr("rogue rules wrong: draw %d, plays %d, hand cap %d"
 			% [ui.gm.draw_per_turn, ui.gm.max_plays_per_turn, ui.gm.max_hand_size])
 		ok = false
-	if ui.gm.meter_max != 25 or ui.gm.meter_gain != 1 or not ui.gm.meter_per_card:
+	if ui.gm.meter_max != 20 or ui.gm.meter_gain != 1 or not ui.gm.meter_per_card:
 		printerr("rogue meter defaults wrong: max %d gain %d per_card %s"
 			% [ui.gm.meter_max, ui.gm.meter_gain, ui.gm.meter_per_card])
 		ok = false
@@ -132,7 +132,7 @@ func _init() -> void:
 			or ui.gm.draw_per_turn != 1:
 		printerr("sandbox game should use sandbox settings")
 		ok = false
-	if ui.gm.meter_gain != 2 or not ui.gm.meter_per_card or ui.gm.meter_max != 25:
+	if ui.gm.meter_gain != 2 or not ui.gm.meter_per_card or ui.gm.meter_max != 20:
 		printerr("sandbox game should use sandbox meter settings: max %d gain %d per_card %s"
 			% [ui.gm.meter_max, ui.gm.meter_gain, ui.gm.meter_per_card])
 		ok = false

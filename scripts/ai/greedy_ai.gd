@@ -68,6 +68,11 @@ const MAX_PLAN_NODES := 600
 
 static func take_turn(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> void:
+	# A designed enemy may drive its whole turn itself (the Billionaire's Riichi
+	# draw), bypassing ordinary play entirely.
+	if enemy != null and enemy.wants_control(gm):
+		enemy.run_controlled_turn(gm)
+		return
 	while true:
 		var move := plan_move(gm, profile, enemy)
 		if move.is_empty():
@@ -98,18 +103,76 @@ static func take_turn(gm: GameManager, profile: AIProfile = null,
 ## rearrangement on the felt (see draw_and_end_turn) rather than rolling it back.
 static func plan_move(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> Dictionary:
-	var move := _plan_normal_move(gm, profile)
+	var move := _plan_normal_move(gm, profile, enemy)
 	if not move.is_empty():
+		# Defense: if an opponent has declared Riichi, don't hand them the card
+		# they are waiting on. Cards already played safely this turn stand; the
+		# player just stops short of feeding (folds to a draw if nothing is safe).
+		# A move that empties our own hand wins first, so it is always taken.
+		if _feeds_riichi(gm, move):
+			return {}
 		return move
-	if enemy != null and gm.current_player_is_open():
+	# A designed enemy's own strategy (the slime guarding, the Billionaire shaping
+	# a Riichi hand). Each self-guards on the opening rule as it needs to — the
+	# slime only rearranges once open, the Billionaire opens with his first shed.
+	if enemy != null:
 		return enemy.plan_strategy_move(gm)
 	return {}
 
+## True when this move would lay one of a Riichi opponent's wait cards onto the
+## table (feeding their ron) without itself going out. The wait is self-contained
+## in their hand, so the danger set is read from what we can see of that hand —
+## their glass-visible cards — meaning opaque waits still leak, but the obvious
+## see-through feeds are avoided. A move that empties our own hand wins first, so
+## it is never held back.
+static func _feeds_riichi(gm: GameManager, move: Dictionary) -> bool:
+	var danger := _riichi_danger(gm)
+	if danger.is_empty():
+		return false
+	if _move_goes_out(gm, move):
+		return false
+	var hand := gm.current_player().hand
+	for c: Card in move["cards"]:
+		# Only a card leaving our hand for the table can feed; a pure table
+		# rearrangement plays no new card.
+		if hand.has(c) and not c.is_joker and danger.has("%d,%s" % [c.rank, c.suit]):
+			return true
+	return false
+
+## The wait cards ("rank,suit" keys) a Riichi opponent could be waiting on, read
+## from their glass-visible hand cards (their wait is self-contained in hand).
+## Empty (and cheap) whenever no opponent has declared Riichi.
+static func _riichi_danger(gm: GameManager) -> Dictionary:
+	var out := {}
+	for p in gm.players:
+		if p == gm.current_player() or not p.declared_riichi:
+			continue
+		var pool: Array[Card] = []
+		for c in p.hand:
+			if c.is_glass():
+				pool.append(c)
+		for w in Tiling.wait_cards(pool):
+			out["%d,%s" % [w["rank"], w["suit"]]] = true
+	return out
+
+## True when this move plays every card left in the current player's hand — it
+## empties the hand, so it wins outright and outranks any Riichi-feed caution.
+static func _move_goes_out(gm: GameManager, move: Dictionary) -> bool:
+	var hand := gm.current_player().hand
+	var from_hand := 0
+	for c: Card in move["cards"]:
+		if hand.has(c):
+			from_hand += 1
+	return from_hand > 0 and from_hand == hand.size()
+
 ## The AI's ordinary move search (complete melds, lay-offs, rearrangements),
-## independent of any enemy strategy. See plan_move for the return shape.
-static func _plan_normal_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
+## independent of any enemy strategy. See plan_move for the return shape. A
+## designed enemy (when given) may veto individual candidates via avoids_play —
+## the Billionaire holding his developing tenpai together.
+static func _plan_normal_move(gm: GameManager, profile: AIProfile = null,
+		enemy: Enemy = null) -> Dictionary:
 	if profile != null and profile.uses_smart_brain():
-		return _plan_smart_move(gm, profile)
+		return _plan_smart_move(gm, profile, enemy)
 	# Cards still playable under the play cap this turn (-1 = unlimited).
 	# Every planned move stays within it, or staging would reject the move.
 	var budget := -1
@@ -211,7 +274,8 @@ static func _plan_normal_move(gm: GameManager, profile: AIProfile = null) -> Dic
 ## the best (or {} to hold and draw when nothing scores positive). Mirrors
 ## plan_move's move families and rules (opening gate, play cap) but compares
 ## candidates instead of taking the first.
-static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
+static func _plan_smart_move(gm: GameManager, profile: AIProfile,
+		enemy: Enemy = null) -> Dictionary:
 	var budget := -1
 	if gm.max_plays_per_turn > 0:
 		budget = gm.max_plays_per_turn - gm.cards_played_this_turn()
@@ -326,6 +390,11 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 	var best: Dictionary = {}
 	var best_score := 0.0  # hold and draw rather than play a net-negative move
 	for cand in candidates:
+		# A designed enemy's strategy may veto a candidate outright — the
+		# Billionaire refusing to break up the hand he is shaping toward a Riichi
+		# tenpai. Racing to finish overrides the strategy (endgame is endgame).
+		if enemy != null and not race and enemy.avoids_play(gm, cand):
+			continue
 		var score := _score_move(gm, cand, hand, race)
 		if score > best_score:
 			best_score = score

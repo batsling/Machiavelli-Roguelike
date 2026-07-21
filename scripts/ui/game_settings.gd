@@ -28,7 +28,7 @@ var start_combo := false  # deal each player a random opening group on the table
 # Ultimate meter (sandbox). Every player charges a meter by playing hands;
 # meter_max 0 turns it off. meter_gain is the charge per hand, or per card
 # played from hand when meter_per_card is on. Apply from the next game.
-var meter_max := 25
+var meter_max := 20
 var meter_gain := 1
 var meter_per_card := false
 
@@ -42,7 +42,7 @@ var rogue_max_plays_per_turn := 13
 var rogue_jokers := true
 var rogue_start_combo := true
 # The run's own copy of the ultimate-meter tuning (see the sandbox block).
-var rogue_meter_max := 25
+var rogue_meter_max := 20
 var rogue_meter_gain := 1
 var rogue_meter_per_card := true
 # Per-enemy AI overrides for roguelike runs, keyed by enemy display_name ->

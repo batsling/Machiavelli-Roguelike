@@ -196,7 +196,7 @@ The **Vanilla sandbox** tab holds:
   opponent's name and beside your hand. The bar builds **live** as cards are
   played this turn — the current player's bar previews the charge their staged
   plays will bank — so an ultimate can fire the very turn its meter completes,
-  not a turn later. **Meter max** (0 disables it, default 30) is how much it
+  not a turn later. **Meter max** (0 disables it, default 20) is how much it
   holds; **Charge per play** (default 1) is how much each committed hand adds;
   **Charge per card played from hand** switches that from once per hand to once
   per card leaving the hand that turn. Applies from the next new game (the
@@ -205,7 +205,7 @@ The **Vanilla sandbox** tab holds:
 The **Roguelike run** tab holds the run's own copies of the same rules —
 cards drawn per turn (default 2), starting hand size (default 13), max hand
 size (default none), max cards played per turn (default 13), jokers (default
-in), starting combos (default on) and the ultimate meter (default max 30,
+in), starting combos (default on) and the ultimate meter (default max 20,
 charge 1 per card played from hand). It also holds an **Enemy AI** section
 with the same four sliders (Skill / Style / Attention / Planning) *for each
 individual enemy in the roster*, so any single opponent's brain can be retuned
@@ -234,7 +234,15 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   alternative stand-ins a joker could take, display ordering
 - `scripts/engine/deck.gd` — `Deck`: the players' single decks combined into one
   double deck (optional jokers), each card tagged with its origin deck
-  (`Card.deck_owner`), seeded Fisher-Yates shuffle, stock
+  (`Card.deck_owner`), seeded Fisher-Yates shuffle, stock, and a face-up
+  discard pile that recycles into the stock when it runs dry (the
+  Billionaire's Riichi discards feed it)
+- `scripts/engine/tiling.gd` — `Tiling`: the exact "can this pile be laid down
+  into valid melds with none left over?" solver (a memoized, in-place
+  depth-first search over sets and runs, ace low/high, joker-aware). Run over the
+  Billionaire's hand for his Riichi three ways — the wait set (`wait_cards`), the
+  tsumo/ron go-out (`can_partition`), and a cheap one-wildcard tenpai gate
+  (`can_partition_with_wild`)
 - `scripts/engine/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
   future Trigger/Sticky effects), plus the layout state: an orientation
   (a line group can lie flat or stand upright on the felt), shape cells
@@ -318,7 +326,20 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   one copy of each, so exactly half the cards in play go see-through from the
   back, visible in any player's hand and on top of the stock, rendered
   transparent. The information cuts both ways — the player reads his hand off his
-  card backs, and the smart brain counts every glass card in its planning
+  card backs, and the smart brain counts every glass card in its planning. His
+  ultimate is the **Riichi**: with a full meter and a hand one card from laying
+  itself down as its own melds (the `Tiling` solver over his hand alone — a
+  self-contained wait the table can't disturb), he weighs the wait — counting
+  winnable copies and, with his glass vision, refusing to declare into a wait
+  whose copies are all visible in an opponent's hand — then freezes his hand,
+  drains his meter, and every turn draws one card: a tsumo win if it completes
+  his hand, else a face-up discard. An opponent who plays one of his wait cards
+  onto the table hands him the win (ron), through `GameManager.play_interceptor`.
+  Other AI opponents read those waits off his glass cards and fold rather than
+  feed them (`GreedyAI._feeds_riichi`). To reach a tenpai hand at all he plays a
+  hand-shaping strategy (`avoids_play`, consulted by the smart brain): he holds
+  his developing melds and partials together, shedding only complete groups and
+  floaters, rather than dumping his hand like the baseline AI
 
 ### UI — `scripts/ui/` + `scenes/`
 
@@ -355,6 +376,15 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   counting (visible copies, obtainable copies, glass feed threats, glass-aware
   holding and joker stand-ins) — including full slimed, glass, and
   glass-plus-slimed AI-vs-AI games
+- `tests/tiling_check.gd` — headless check of the `Tiling` go-out solver: sets,
+  runs (ace low, high and the no-wrap rule), joker fills, multi-meld piles, and
+  the wait-set enumeration
+- `tests/riichi_check.gd` — headless check of the Billionaire's Riichi: the
+  discard-pile reshuffle, the declaration gate (full meter + a live wait, not an
+  already-complete hand), dead-wait avoidance off glass information, the tsumo
+  win, the face-up draw-and-discard turn, the ron via the commit interceptor, a
+  rival folding rather than feeding the ron, and invariant-checked (validity,
+  108-card conservation, termination) AI-vs-AI games
 - `tests/ui_mode_check.gd` — headless check of the menu modes, the settings
   model, and the roguelike ladder (rules apply from the next round, win/loss
   buttons, starting combos)
@@ -369,6 +399,8 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   registration and a new-group drop
 - `tests/anim_check.gd` — headless check that an enemy turn drives to
   completion through `EnemyMoveAnimator` with no leaked flying-card proxies
+- `tests/riichi_view_check.gd` — headless check that the Riichi UI renders: the
+  face-up discard pile beside the stock and the RIICHI seat badge
 - `tests/layout_check.gd` — headless check of the board-layout groundwork and
   the slime's ultimate: orientation and shape cells surviving snapshots,
   crossing groups (staging, validity, extending either group, undo, commit,
@@ -396,6 +428,9 @@ godot --headless --path . --script res://tests/play_hint_check.gd  # hover-to-pl
 godot --headless --path . --script res://tests/view_check.gd       # table rendering + drag/drop
 godot --headless --path . --script res://tests/anim_check.gd       # enemy-turn animation
 godot --headless --path . --script res://tests/layout_check.gd     # board-layout groundwork
+godot --headless --path . --script res://tests/tiling_check.gd     # go-out / wait solver
+godot --headless --path . --script res://tests/riichi_check.gd     # the Billionaire's Riichi
+godot --headless --path . --script res://tests/riichi_view_check.gd # Riichi UI (discard pile, badge)
 ```
 
 ## Headless balance stats
@@ -528,6 +563,35 @@ opponent visibly holds are feeds it avoids, joker stand-ins whose swap card
 an opponent visibly holds are never picked, and a card that pairs with a
 known upcoming draw is held. Glass is pure information — it never restricts
 movement — so a card can be both glass and slimed.
+
+His **ultimate** is the **Riichi**, borrowed from mahjong. When his meter fills
+and his hand is *tenpai* — one card away from laying his whole hand down as its
+own valid melds, computed by the `Tiling` solver over his hand alone — he may
+declare. The wait is **self-contained in his hand**: the winning card completes
+his own melds, so nobody rearranging the shared felt can change or break it (a
+board-dependent wait would be unstable, and un-mahjong-like). To get there he
+**plays for tenpai** instead of racing to empty out like the baseline AI: his
+hand-shaping strategy hands his ordinary turn over to a shed policy
+(`avoids_play` + `plan_strategy_move`) that keeps a chunk of about a hand-cap's
+worth of cards — one he could actually lay down in a turn — trimming only the
+excess: complete groups he already holds and lone floaters (cards with no
+partner to build a group with), never a developing partial he is growing his
+wait on. So a Riichi hand is always small enough to play out. First he weighs
+whether declaring is worth it: he enumerates his waits and counts how many live copies
+of each are still winnable, and, reading his own glass passive Washizu-style, he
+**won't declare into a dead wait** — one whose only remaining copies he can see
+locked in an opponent's hand, where he could neither draw it nor expect a smart
+rival to feed it. On declaring, his hand **freezes** and his meter drains. From
+then on every turn is a single draw: if it completes his hand he wins by
+**tsumo**; otherwise he **discards it face up**, out of play until the stock runs
+dry and the discard pile is shuffled back in. And if any opponent plays one of
+his wait cards onto the table, he claims it and wins on the spot — his **ron**.
+Because ron is fed by what opponents lay on the shared table, other AI opponents
+play around it: reading his waits off his glass cards, a rival **folds** rather
+than lay one (it still plays freely otherwise, and always takes its own winning
+turn over folding), so in a multi-opponent game the ron isn't handed over for
+free. Because his hand must be structured into near-complete melds, Riichi is —
+as in mahjong — a special situation, not something he reaches every game.
 
 Still kept as data stubs so the vanilla engine stays clean: the other card
 effect flags on `Card` (Spiked, Brittle, Bomb, Clone, Trigger, Mirrored),
