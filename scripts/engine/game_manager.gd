@@ -116,6 +116,9 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 	round_number = 1
 	is_game_over = false
 	_consecutive_passes = 0
+	# A fresh game carries no mechanic interceptor until on_combat_start plants
+	# one, so a previous round's Billionaire can never fire into this game.
+	play_interceptor = null
 	for i in player_names.size():
 		var p := PlayerState.new()
 		p.player_id = i
