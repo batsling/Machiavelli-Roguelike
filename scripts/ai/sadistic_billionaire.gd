@@ -193,8 +193,11 @@ func plan_strategy_move(gm: GameManager) -> Dictionary:
 		for m in gm.board.melds:
 			if not GreedyAI._plain_meld(m):
 				continue
-			if Rules.is_valid_meld(m.cards + [c]):
-				return {"cards": [c], "dest": m, "text": "lays off %s" % c.label()}
+			var candidate: Array[Card] = m.cards.duplicate()
+			candidate.append(c)
+			if Rules.is_valid_meld(candidate):
+				var single: Array[Card] = [c]
+				return {"cards": single, "dest": m, "text": "lays off %s" % c.label()}
 	# Well over target with no clean shed (no complete meld, no floater with a
 	# home): lay off any card that fits, so his hand can't drown even through a dry
 	# stretch — better a broken partial than a bloated hand he can't play out.
@@ -203,8 +206,11 @@ func plan_strategy_move(gm: GameManager) -> Dictionary:
 			for m in gm.board.melds:
 				if not GreedyAI._plain_meld(m):
 					continue
-				if Rules.is_valid_meld(m.cards + [c]):
-					return {"cards": [c], "dest": m, "text": "lays off %s" % c.label()}
+				var candidate: Array[Card] = m.cards.duplicate()
+				candidate.append(c)
+				if Rules.is_valid_meld(candidate):
+					var single: Array[Card] = [c]
+					return {"cards": single, "dest": m, "text": "lays off %s" % c.label()}
 	return {}
 
 ## True when this card has no partner in the hand — no other card it could form
