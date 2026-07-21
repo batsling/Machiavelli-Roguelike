@@ -160,6 +160,9 @@ var seat_right: VBoxContainer
 var round_label: Label
 var stock_label: Label
 var stock_top_slot: HBoxContainer
+## The face-up discard pile beside the stock: a count plus the most recent
+## discards shown face up (currently the Billionaire's Riichi discards).
+var discard_slot: HBoxContainer
 var status_label: Label
 var log_box: RichTextLabel
 ## The freeform felt: a plain canvas whose children (group panels) are each
@@ -333,6 +336,11 @@ func _build_layout() -> void:
 	stock_box.add_child(stock_label)
 	stock_top_slot = HBoxContainer.new()
 	stock_box.add_child(stock_top_slot)
+	# The face-up discard pile sits just after the stock, appearing only once a
+	# card has been discarded (the Billionaire's Riichi).
+	discard_slot = HBoxContainer.new()
+	discard_slot.add_theme_constant_override("separation", 6)
+	stock_box.add_child(discard_slot)
 
 	# Middle row: left seat, the felt, right seat (hidden until a 4th player).
 	var mid_row := HBoxContainer.new()
@@ -1483,6 +1491,16 @@ func _run_ai_turns() -> void:
 		await get_tree().create_timer(AI_THINK_DELAY).timeout
 		if gen != game_generation:
 			return
+		# A designed enemy may drive its whole turn (the Billionaire's Riichi
+		# draw): it stages and advances the turn itself; we just narrate it.
+		if enemy_def != null and enemy_def.wants_control(gm):
+			var res := enemy_def.run_controlled_turn(gm)
+			_log("%s %s." % [enemy.display_name, res.get("text", "acts")])
+			_refresh()
+			await get_tree().create_timer(AI_MOVE_DELAY).timeout
+			if gen != game_generation:
+				return
+			continue
 		while true:
 			var move: Dictionary = GreedyAI.plan_move(gm, profile, enemy_def)
 			if move.is_empty():

@@ -12,6 +12,11 @@ const SUITS: Array[String] = ["hearts", "diamonds", "clubs", "spades"]
 const JOKER_COUNT := 4
 
 var cards: Array[Card] = []
+## The face-up discard pile: cards played out of the game (currently only the
+## Sadistic Billionaire's Riichi auto-discards). Out of play until the stock
+## runs dry, at which point it is shuffled to become the new stock (see draw()).
+## A general facility other mechanics can reuse.
+var discards: Array[Card] = []
 var rng := RandomNumberGenerator.new()
 
 func _init(seed_value: int = -1) -> void:
@@ -51,10 +56,27 @@ func shuffle() -> void:
 		cards[i] = cards[j]
 		cards[j] = tmp
 
+## Draw the top card. When the stock is empty the discard pile is reshuffled
+## into a fresh stock first (so a game with active discards keeps cycling);
+## returns null only when both the stock and the discards are empty.
 func draw() -> Card:
 	if cards.is_empty():
-		return null
+		if discards.is_empty():
+			return null
+		reshuffle_discards()
 	return cards.pop_back()
+
+## Send a card to the face-up discard pile — out of play until the stock is
+## exhausted and the pile is reshuffled back in.
+func discard(card: Card) -> void:
+	discards.append(card)
+
+## Fold the discard pile back into the stock and shuffle it. Called
+## automatically by draw() when the stock empties; safe to call directly.
+func reshuffle_discards() -> void:
+	cards.append_array(discards)
+	discards.clear()
+	shuffle()
 
 ## Remove and return a specific natural card from the stock, or null when no
 ## copy is left in it. The stock is shuffled, so which copy leaves carries no
@@ -76,8 +98,14 @@ func peek() -> Card:
 		return null
 	return cards[-1]
 
+## True only when there is truly nothing left to draw — both the stock and the
+## discard pile are empty (draw() recycles the discards, so a non-empty pile is
+## still drawable). In a game with no discards this equals cards.is_empty(), so
+## existing behavior is unchanged.
 func is_empty() -> bool:
-	return cards.is_empty()
+	return cards.is_empty() and discards.is_empty()
 
+## The number of cards left in the stock proper (not counting the face-up
+## discard pile, which is shown separately and only recycled once the stock dries).
 func size() -> int:
 	return cards.size()

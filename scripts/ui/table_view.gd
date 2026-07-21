@@ -43,6 +43,29 @@ func refresh_seats() -> void:
 	_ui.stock_label.text = "Stock: %d" % gm.deck.size()
 	_ui.round_label.text = "Round %d" % gm.round_number
 	_refresh_stock_top()
+	_refresh_discards()
+
+## The face-up discard pile beside the stock: a count and the most recent few
+## discards shown face up (out of play until the stock recycles them). Hidden
+## entirely until something has been discarded.
+func _refresh_discards() -> void:
+	_ui._clear_children(_ui.discard_slot)
+	var pile := _ui.gm.deck.discards
+	if pile.is_empty():
+		return
+	var lbl := Label.new()
+	lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	lbl.text = "Discard: %d" % pile.size()
+	lbl.tooltip_text = "Face-up discard pile — out of play until the stock runs " \
+		+ "dry and the pile is shuffled back in."
+	_ui.discard_slot.add_child(lbl)
+	# Show up to the last three discards face up, newest last (a discard is public,
+	# so it always shows its face — glass or not).
+	var start := maxi(0, pile.size() - 3)
+	for i in range(start, pile.size()):
+		var face := CardRenderer.make_card_face(pile[i])
+		face.tooltip_text = "Discarded — out of play until the stock recycles."
+		_ui.discard_slot.add_child(face)
 
 ## Show the top card of the stock beside the count when its status is public: a
 ## glass top shows its face (everyone sees the next draw), and a slimed top shows
@@ -87,6 +110,17 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	if is_current:
 		lbl.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	row.add_child(lbl)
+	# A declared Riichi is public: badge the seat so the table knows his hand is
+	# frozen and he is drawing for the win.
+	if p.declared_riichi:
+		var badge := Label.new()
+		badge.text = "RIICHI"
+		badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		badge.add_theme_font_size_override("font_size", 12)
+		badge.add_theme_color_override("font_color", Color(1, 0.35, 0.35))
+		badge.tooltip_text = "Hand frozen — drawing for the win, and claiming any " \
+			+ "card played that lets him go out."
+		row.add_child(badge)
 	# "Info" button beside the name tag: the opponent's mechanic and AI brain.
 	var info_btn := Button.new()
 	info_btn.text = "Info"

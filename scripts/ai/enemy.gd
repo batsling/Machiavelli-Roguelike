@@ -63,6 +63,26 @@ func all_dealt_cards(gm: GameManager) -> Array[Card]:
 func plan_strategy_move(_gm: GameManager) -> Dictionary:
 	return {}
 
+## True when this enemy fully drives its own turn this time, bypassing GreedyAI's
+## ordinary play-or-draw entirely (the Billionaire declaring or being in Riichi).
+## Checked at the start of the enemy's turn by both the UI and headless drivers.
+func wants_control(_gm: GameManager) -> bool:
+	return false
+
+## Drive one complete turn for this enemy (only called when wants_control is
+## true): the enemy stages/draws/advances the turn itself through GameManager and
+## returns a small descriptor {"text": String, ...} for the log. The base enemy
+## never claims control, so this is a stub.
+func run_controlled_turn(_gm: GameManager) -> Dictionary:
+	return {}
+
+## Interceptor hook (see GameManager.play_interceptor): called right after any
+## OTHER player commits a hand to the table, so a mechanic can claim that play
+## and win outright. Returns true iff it ended the game (the Billionaire's ron).
+## The base enemy never intercepts.
+func on_opponent_commit(_gm: GameManager, _committer: PlayerState) -> bool:
+	return false
+
 ## Every designed enemy, in ladder order. The rogue mode draws from this pool.
 static func roster() -> Array[Enemy]:
 	var out: Array[Enemy] = []

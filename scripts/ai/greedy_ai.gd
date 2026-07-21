@@ -68,6 +68,11 @@ const MAX_PLAN_NODES := 600
 
 static func take_turn(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> void:
+	# A designed enemy may drive its whole turn itself (the Billionaire's Riichi
+	# draw), bypassing ordinary play entirely.
+	if enemy != null and enemy.wants_control(gm):
+		enemy.run_controlled_turn(gm)
+		return
 	while true:
 		var move := plan_move(gm, profile, enemy)
 		if move.is_empty():
@@ -100,10 +105,80 @@ static func plan_move(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> Dictionary:
 	var move := _plan_normal_move(gm, profile)
 	if not move.is_empty():
+		# Defense: if an opponent has declared Riichi, don't hand them the card
+		# they are waiting on. Cards already played safely this turn stand; the
+		# player just stops short of feeding (folds to a draw if nothing is safe).
+		# A move that empties our own hand wins first, so it is always taken.
+		if _feeds_riichi(gm, move):
+			return {}
 		return move
 	if enemy != null and gm.current_player_is_open():
 		return enemy.plan_strategy_move(gm)
 	return {}
+
+## True when this move would tip a Riichi opponent into being able to go out —
+## the see-through feed the defender wants to avoid. Under the full-rearrangement
+## rules, going out means the opponent's hand plus the WHOLE table re-melds with
+## nothing left over, so a feed is a play after which (their visible hand + the
+## table + our newly played cards) becomes tileable when it wasn't before. Read
+## from public information only — their glass-visible cards — so opaque waits
+## still leak, but the obvious feeds are dodged. A move that empties our own hand
+## wins first and is never held back.
+static func _feeds_riichi(gm: GameManager, move: Dictionary) -> bool:
+	if not _has_riichi_opponent(gm):
+		return false
+	if _move_goes_out(gm, move):
+		return false
+	var hand := gm.current_player().hand
+	var played: Array[Card] = []
+	for c: Card in move["cards"]:
+		# Only a card leaving our hand for the table adds new material; a pure
+		# table rearrangement feeds nothing the opponent could not already use.
+		if hand.has(c):
+			played.append(c)
+	if played.is_empty():
+		return false
+	var base := _riichi_visible_pool(gm)
+	if Tiling.can_partition(base):
+		return false  # they could already go out; our play is not the cause
+	var full := base.duplicate()
+	full.append_array(played)
+	return Tiling.can_partition(full)
+
+## True when some opponent (not the current player) has declared Riichi.
+static func _has_riichi_opponent(gm: GameManager) -> bool:
+	for p in gm.players:
+		if p != gm.current_player() and p.declared_riichi:
+			return true
+	return false
+
+## The public pile a Riichi opponent could go out over: their glass-visible hand
+## cards plus every plain table card (only the first Riichi opponent — just one
+## enemy is designed to declare).
+static func _riichi_visible_pool(gm: GameManager) -> Array[Card]:
+	var out: Array[Card] = []
+	for p in gm.players:
+		if p == gm.current_player() or not p.declared_riichi:
+			continue
+		for c in p.hand:
+			if c.is_glass():
+				out.append(c)
+		break
+	for m in gm.board.melds:
+		if _plain_meld(m):
+			for c in m.cards:
+				out.append(c)
+	return out
+
+## True when this move plays every card left in the current player's hand — it
+## empties the hand, so it wins outright and outranks any Riichi-feed caution.
+static func _move_goes_out(gm: GameManager, move: Dictionary) -> bool:
+	var hand := gm.current_player().hand
+	var from_hand := 0
+	for c: Card in move["cards"]:
+		if hand.has(c):
+			from_hand += 1
+	return from_hand > 0 and from_hand == hand.size()
 
 ## The AI's ordinary move search (complete melds, lay-offs, rearrangements),
 ## independent of any enemy strategy. See plan_move for the return shape.
