@@ -37,37 +37,41 @@ extends Enemy
 ## her joker wildcards only as a last resort) and from table groups that can
 ## legally spare it: the cards left behind in every donor group must still be
 ## a valid group, or nothing at all. The picture is a shape group
-## (CardSet.set_shape) — valid as one connected patch — and because every card
-## in it is slimed it moves only as a single lump nothing else on the table
-## can legally absorb: the cards are sealed out of reach. Building it counts
-## as playing the hand cards it swallowed; spending the ultimate resets her
-## meter to zero. Templates are grid cells, row by row:
+## (CardSet.set_shape) — valid as one connected patch — and its cards are
+## sealed out of reach (only a joker can still leave, swapped out by the exact
+## card it stands for). Sealing is a mechanic, not a play: the hand cards the
+## picture swallows never count as her play for the turn, so she still draws
+## (or plays a real card) to end it. Spending the ultimate resets her meter
+## to zero. The pictures are hollow outlines, not filled blocks — every cell
+## still shares an edge with the next, so each stays one connected patch.
+## Templates are grid cells, row by row:
 ##
-##   heart (16)    ladybug (12)    flower (9)
-##   . X . X .      . X X .         . X .
-##   X X X X X      X X X X         X X X
-##   X X X X X      X X X X         . X .
-##   . X X X .      . X X .         X X .
-##   . . X . .                      . X X
+##   heart (17)    ladybug (12)    flower (9)
+##   . X . X .      X X X X         X X X
+##   X X X X X      X . . X         X . X
+##   X . . . X      X . . X         X X X
+##   X X . X X      X X X X         . X .
+##   . X X X .
+##   . . X . .
 const ULT_HEART: Array[Vector2i] = [
 	Vector2i(1, 0), Vector2i(3, 0),
 	Vector2i(0, 1), Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1), Vector2i(4, 1),
-	Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2), Vector2i(3, 2), Vector2i(4, 2),
-	Vector2i(1, 3), Vector2i(2, 3), Vector2i(3, 3),
-	Vector2i(2, 4),
+	Vector2i(0, 2), Vector2i(4, 2),
+	Vector2i(0, 3), Vector2i(1, 3), Vector2i(3, 3), Vector2i(4, 3),
+	Vector2i(1, 4), Vector2i(2, 4), Vector2i(3, 4),
+	Vector2i(2, 5),
 ]
 const ULT_LADYBUG: Array[Vector2i] = [
-	Vector2i(1, 0), Vector2i(2, 0),
-	Vector2i(0, 1), Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1),
-	Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2), Vector2i(3, 2),
-	Vector2i(1, 3), Vector2i(2, 3),
+	Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0),
+	Vector2i(0, 1), Vector2i(3, 1),
+	Vector2i(0, 2), Vector2i(3, 2),
+	Vector2i(0, 3), Vector2i(1, 3), Vector2i(2, 3), Vector2i(3, 3),
 ]
 const ULT_FLOWER: Array[Vector2i] = [
-	Vector2i(1, 0),
-	Vector2i(0, 1), Vector2i(1, 1), Vector2i(2, 1),
-	Vector2i(1, 2),
-	Vector2i(0, 3), Vector2i(1, 3),
-	Vector2i(1, 4), Vector2i(2, 4),
+	Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0),
+	Vector2i(0, 1), Vector2i(2, 1),
+	Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2),
+	Vector2i(1, 3),
 ]
 
 ## The three picture templates, grandest first — the ultimate builds the
@@ -106,8 +110,9 @@ func mechanic_intro() -> String:
 		+ "dragging one drags them all. She oozes freely and combines her slime " \
 		+ "to guard her most valuable cards (jokers, then the versatile 4-8s) " \
 		+ "out of your reach. Once her ultimate meter fills she squeezes every " \
-		+ "slimed card she can gather into a picture on the felt, sealed away " \
-		+ "for good."
+		+ "slimed card she can gather into a hollow picture on the felt, sealed " \
+		+ "away — only a joker can leave it, swapped out by the exact card it " \
+		+ "stands for."
 
 ## Slime every card that came from her own deck, wherever they sit right after
 ## the deal (the stock and every player's hand). Only her copies carry slime —
@@ -196,10 +201,11 @@ const ULT_REPAIR_BUDGET := 12
 ## template can be filled legally. She prefers pulling slime OFF THE TABLE
 ## (sealing the most valuable cards — jokers, then the versatile 4-8s — away
 ## from the player), topping the picture up from her own hand: naturals first,
-## her wildcard jokers only if nothing else reaches the count. Hand cards
-## respect the play cap. GreedyAI.apply_move realizes the move through
-## GameManager.move_cards_to_new_shape (plus the leftover repair) and resets
-## her meter.
+## her wildcard jokers only if nothing else reaches the count. Hand top-ups
+## stay within the play cap's leftover budget, even though sealing never
+## counts as playing (see GameManager.move_cards_to_new_shape) — so an ult-only
+## turn still ends in a draw. GreedyAI.apply_move realizes the move through
+## move_cards_to_new_shape (plus the leftover repair) and resets her meter.
 func _plan_ultimate(gm: GameManager) -> Dictionary:
 	var me := gm.current_player()
 	if gm.meter_max <= 0 or me.meter < gm.meter_max:

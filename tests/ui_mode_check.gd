@@ -21,7 +21,7 @@ func _init() -> void:
 		printerr("rogue rules wrong: draw %d, plays %d, hand cap %d"
 			% [ui.gm.draw_per_turn, ui.gm.max_plays_per_turn, ui.gm.max_hand_size])
 		ok = false
-	if ui.gm.meter_max != 30 or ui.gm.meter_gain != 1 or not ui.gm.meter_per_card:
+	if ui.gm.meter_max != 25 or ui.gm.meter_gain != 1 or not ui.gm.meter_per_card:
 		printerr("rogue meter defaults wrong: max %d gain %d per_card %s"
 			% [ui.gm.meter_max, ui.gm.meter_gain, ui.gm.meter_per_card])
 		ok = false
@@ -49,8 +49,8 @@ func _init() -> void:
 	for m in ui.gm.board.melds:
 		all_cards.append_array(m.cards)
 	if ui.current_enemy is CuteSlime:
-		# She marks her own seat immune and slimes the hearts, diamonds and jokers
-		# of her own deck only (one copy of each).
+		# She marks her own seat immune and slimes every card of her own deck
+		# only (one copy of each, so exactly half the cards in play).
 		if not ui.gm.players[1].ignores_sticky:
 			printerr("the slime's seat should ignore sticky")
 			ok = false
@@ -58,8 +58,8 @@ func _init() -> void:
 		for c in all_cards:
 			if c.is_sticky():
 				slimed += 1
-		if slimed != 28:  # 13 hearts + 13 diamonds + 2 jokers, all from her deck
-			printerr("expected 28 slimed cards at combat start, got %d" % slimed)
+		if slimed != 54:  # her 52 naturals + her 2 jokers, all from her deck
+			printerr("expected 54 slimed cards at combat start, got %d" % slimed)
 			ok = false
 	elif ui.current_enemy is SadisticBillionaire:
 		# He glasses his own deck only: all 52 naturals + his 2 jokers = 54 of 108.
@@ -132,7 +132,7 @@ func _init() -> void:
 			or ui.gm.draw_per_turn != 1:
 		printerr("sandbox game should use sandbox settings")
 		ok = false
-	if ui.gm.meter_gain != 2 or not ui.gm.meter_per_card or ui.gm.meter_max != 30:
+	if ui.gm.meter_gain != 2 or not ui.gm.meter_per_card or ui.gm.meter_max != 25:
 		printerr("sandbox game should use sandbox meter settings: max %d gain %d per_card %s"
 			% [ui.gm.meter_max, ui.gm.meter_gain, ui.gm.meter_per_card])
 		ok = false

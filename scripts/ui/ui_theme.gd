@@ -14,8 +14,8 @@ const RED_SUITS := ["hearts", "diamonds"]
 # --- Card and seat sizing -----------------------------------------------------
 const CARD_SIZE := Vector2(78, 108)  # hand cards
 const CARD_FONT_SIZE := 28
-const BOARD_CARD_SIZE := Vector2(62, 86)  # table cards are smaller, so more groups fit
-const BOARD_CARD_FONT_SIZE := 22
+const BOARD_CARD_SIZE := Vector2(54, 76)  # table cards are smaller, so more groups fit
+const BOARD_CARD_FONT_SIZE := 19
 const NEW_GROUP_SIZE := Vector2(136, 102)
 const UI_FONT_SIZE := 17
 const GROUP_HANDLE_HEIGHT := 14  # the grip strip atop each group, grabbed to drag it

@@ -34,6 +34,7 @@ func _init() -> void:
 	_test_ult_in_driven_games()
 	_test_grid_line_rules()
 	_test_play_off_picture()
+	_test_picture_joker_swap()
 	await _test_rendering()
 	await _test_picture_ghost_cells()
 	if ok:
@@ -156,12 +157,17 @@ func _test_shape_groups() -> void:
 		return
 	if not heart.is_valid():
 		_fail("the heart picture should be a well-formed (connected) shape")
-	# The heart's widest rows are 5 cards; line_through reads them off.
+	# The heart is a hollow outline: its brow row is still 5 cards wide, but
+	# below it only the walls and the bottom tip carry cards.
 	var row_card := heart.card_at(Vector2i(0, 1))
 	if heart.line_through(row_card, true).size() != 5:
 		_fail("the heart's second row should be a 5-card line")
-	if heart.line_through(heart.card_at(Vector2i(2, 4)), false).size() != 4:
-		_fail("the heart's spine should be a 4-card vertical line")
+	if heart.line_through(heart.card_at(Vector2i(0, 2)), false).size() != 3:
+		_fail("the heart's left wall should be a 3-card vertical line")
+	if heart.line_through(heart.card_at(Vector2i(2, 5)), false).size() != 2:
+		_fail("the heart's tip should hang off a 2-card vertical line")
+	if heart.card_at(Vector2i(2, 2)) != null or heart.card_at(Vector2i(2, 3)) != null:
+		_fail("the heart's middle should be hollow — outline only")
 	# A disconnected picture is not a valid shape.
 	var torn := CardSet.new()
 	torn.set_shape({_card(2, "clubs"): Vector2i(0, 0), _card(3, "clubs"): Vector2i(1, 0),
@@ -278,8 +284,19 @@ func _test_slime_ultimate() -> void:
 	# The picture is one sticky lump: lifting any card drags the whole picture.
 	if picture.sticky_cluster(picture.cards[0]).size() != 9:
 		_fail("the picture should move as one 9-card lump")
-	if gm.commit_turn() != "":
-		_fail("the turn ending on the ultimate should commit")
+	# Sealing is a mechanic, not a play: the swallowed hand cards never count,
+	# so an ult-only turn can't commit — she draws, keeping the picture.
+	if gm.cards_played_this_turn() != 0:
+		_fail("the ultimate must not count as playing cards, counted %d"
+			% gm.cards_played_this_turn())
+	if gm.commit_turn() == "":
+		_fail("an ult-only turn has played nothing and must not commit")
+	var stock := gm.deck.size()
+	gm.draw_and_end_turn()
+	if gm.deck.size() != stock - 1:
+		_fail("the ultimate turn should still end in a draw")
+	if gm.board.melds[-1] != picture or not picture.is_shape():
+		_fail("the drawn turn should keep the picture on the felt")
 	# Her planner never unpicks the picture on later turns.
 	if not GreedyAI._immovable_cards(gm).has(picture.cards[0]):
 		_fail("picture cards should be immovable to every planner")
@@ -383,18 +400,39 @@ func _test_grid_line_rules() -> void:
 	var set_line: Array[Card] = [_card(7, "hearts"), _card(7, "spades"), _card(7, "clubs")]
 	if not Rules.is_valid_grid_line(set_line):
 		_fail("three sevens should read as a grid set in any order")
+	# Vertical straights read lower rank on top: ranks must rise going down
+	# the felt. Sets and horizontal lines carry no direction.
+	var up_pair: Array[Card] = [_card(7, "hearts"), _card(8, "hearts")]
+	if Rules.line_direction_ok(up_pair, Vector2i.UP):
+		_fail("8H above 7H puts the higher rank on top")
+	if not Rules.line_direction_ok(up_pair, Vector2i.DOWN):
+		_fail("8H below 7H reads low-on-top")
+	var down_pair: Array[Card] = [_card(7, "hearts"), _card(6, "hearts")]
+	if not Rules.line_direction_ok(down_pair, Vector2i.UP):
+		_fail("6H above 7H reads low-on-top")
+	var set_pair: Array[Card] = [_card(7, "hearts"), _card(7, "spades")]
+	if not Rules.line_direction_ok(set_pair, Vector2i.UP):
+		_fail("a set line has no direction to it")
+	if not Rules.line_direction_ok(up_pair, Vector2i.RIGHT):
+		_fail("horizontal lines have no direction rule")
+	var ace_pair: Array[Card] = [_card(13, "spades"), _card(1, "spades")]
+	if not Rules.line_direction_ok(ace_pair, Vector2i.DOWN):
+		_fail("an ace under a king plays high — low-on-top holds")
+	if Rules.line_direction_ok(ace_pair, Vector2i.UP):
+		_fail("an ace above a king would put the high ace on top")
 
 ## A picture on the felt with the player open: the flower's cards are known,
 ## so plays off its cards are deterministic. Template order maps card i to
-## cell i — index 0 is the top petal at (1,0), index 1 the left petal at (0,1).
+## cell i — index 1 is the blossom's top-middle at (1,0), index 3 the left
+## wall at (0,1), index 8 the stem at (1,3).
 func _picture_gm() -> Dictionary:
 	var flower_cards: Array[Card] = []
 	for i in CuteSlime.ULT_FLOWER.size():
 		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
 	var top := _slimed(7, "hearts")
 	var left := _slimed(5, "diamonds")
-	flower_cards[0] = top
-	flower_cards[1] = left
+	flower_cards[1] = top
+	flower_cards[3] = left
 	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
 	var gm := GameManager.new()
 	gm.setup(["You", "Foe"], 5, 7)
@@ -408,62 +446,123 @@ func _give_hand(gm: GameManager, hand: Array[Card]) -> void:
 	gm._undo_stack.clear()
 
 ## Scrabble-style plays off a picture: growable pair, extension to a full
-## run, the outward-only and one-line-per-axis rules, whole-line tear-down,
-## sealed picture cards, no jokers, and a clean commit.
+## run, the lower-rank-on-top rule for vertical straights, the outward-only
+## and one-line-per-axis rules, loose line cards (they come off one at a
+## time), sealed picture cards, no jokers, and a clean commit.
 func _test_play_off_picture() -> void:
 	var setup := _picture_gm()
 	var gm: GameManager = setup["gm"]
 	var top: Card = setup["top"]      # 7H at (1,0)
 	var left: Card = setup["left"]    # 5D at (0,1)
+	var six := _card(6, "hearts")
+	var five := _card(5, "hearts")
 	var eight := _card(8, "hearts")
-	var nine := _card(9, "hearts")
+	var queen := _card(12, "diamonds")
+	var king := _card(13, "diamonds")
+	var two := _card(2, "clubs")
 	var joker := Card.new()
 	joker.is_joker = true
 	joker.suit = "joker"
-	_give_hand(gm, [eight, nine, joker, _card(2, "clubs")] as Array[Card])
+	_give_hand(gm, [six, five, eight, queen, king, two, joker] as Array[Card])
 
-	# A single 8H up from the 7H petal: a growable pair, legal to stage.
-	var err := gm.play_off_picture(top, Vector2i.UP, [eight] as Array[Card])
+	# Vertical straights read lower rank on top: an 8H above the 7H would put
+	# the higher rank on top, so upward plays off the 7H must descend.
+	if gm.play_off_picture(top, Vector2i.UP, [eight] as Array[Card]) == "":
+		_fail("8H above the 7H puts the higher rank on top — must be refused")
+	# A single 6H up from the 7H petal: a growable pair, lower rank on top.
+	var err := gm.play_off_picture(top, Vector2i.UP, [six] as Array[Card])
 	if err != "":
-		_fail("8H off the 7H petal should stage as a growable pair, got: %s" % err)
+		_fail("6H off the 7H petal should stage as a growable pair, got: %s" % err)
 		return
 	var line: CardSet = gm.board.melds[-1]
 	if not line.is_attached() or line.attach_anchor != top or not line.is_valid():
 		_fail("the pair should live in a valid attached line off the 7H")
-	# Extending the line with 9H completes the run 7-8-9 reading outward.
-	if gm.add_cards_to_meld([nine] as Array[Card], line) != "":
-		_fail("9H should extend the line into 7-8-9")
-	if line.cards != ([eight, nine] as Array[Card]):
-		_fail("the line should hold 8H then 9H outward")
+	# Extending the line with 5H completes the run 7-6-5 reading outward — on
+	# screen that is 5 on top, 7 at the picture: lower rank on top.
+	if gm.add_cards_to_meld([five] as Array[Card], line) != "":
+		_fail("5H should extend the line into 7-6-5")
+	if line.cards != ([six, five] as Array[Card]):
+		_fail("the line should hold 6H then 5H outward")
 	# The other way on the same axis is that line's, not a second one's.
-	if gm.play_off_picture(top, Vector2i.DOWN, [_card(6, "hearts")] as Array[Card]) == "":
+	if gm.play_off_picture(top, Vector2i.DOWN, [eight] as Array[Card]) == "":
 		_fail("the 7H already carries its vertical line — no second one")
 	# A dead pair never sticks; neither do jokers; picture cards are sealed.
-	if gm.play_off_picture(left, Vector2i.LEFT, [_card(2, "clubs")] as Array[Card]) == "":
+	if gm.play_off_picture(left, Vector2i.LEFT, [two] as Array[Card]) == "":
 		_fail("2C off the 5D petal is a dead pair and must be refused")
 	if gm.play_off_picture(left, Vector2i.LEFT, [joker] as Array[Card]) == "":
 		_fail("jokers don't stick to pictures")
 	if gm.move_cards_to_new_meld([top] as Array[Card]) == "":
 		_fail("picture cards are sealed in place")
-	# Outward only: up from the left petal hugs the top petal diagonally' —
-	# the cell (0,0) touches the picture at (1,0) — so it is refused.
-	if gm.play_off_picture(left, Vector2i.UP, [_card(6, "diamonds")] as Array[Card]) == "":
+	# Outward only: left from the stem could grow (JD then QD reads as a run),
+	# but the cell (0,3) hugs the picture's bottom wall at (0,2) — refused.
+	var stem: Card = (setup["picture"] as CardSet).card_at(Vector2i(1, 3))
+	if gm.play_off_picture(stem, Vector2i.LEFT, [queen] as Array[Card]) == "":
 		_fail("a line hugging the picture must be refused (outward only)")
-	# Whole line or nothing: a lone card can't leave the line, the pair can.
-	if gm.move_cards_to_new_meld([eight] as Array[Card]) == "":
-		_fail("a single card must not tear out of an extension line")
-	if gm.return_cards_to_hand([nine] as Array[Card]) == "":
-		_fail("a take-back must also honor whole-line-or-nothing")
-	if gm.return_cards_to_hand([eight, nine] as Array[Card]) != "":
-		_fail("taking the whole line back to hand should be allowed")
-		return
+	# Line cards stay loose: the outer card comes back on its own...
+	if gm.return_cards_to_hand([five] as Array[Card]) != "":
+		_fail("taking the outer line card back alone should be allowed")
+	if line.cards != ([six] as Array[Card]) or not line.is_valid():
+		_fail("the line should shrink back to the growable 7-6 pair")
+	# ...and so can the inner one, the rest sliding in toward the anchor: 5H
+	# alone then reads 7-5, broken until the turn is cleaned up.
+	if gm.add_cards_to_meld([five] as Array[Card], line) != "":
+		_fail("5H should re-extend the line")
+	if gm.return_cards_to_hand([six] as Array[Card]) != "":
+		_fail("the inner line card should be free to leave mid-turn")
+	if line.is_valid():
+		_fail("7H then 5H does not read — the broken line must show invalid")
+	if gm.commit_turn() == "":
+		_fail("a turn ending on a broken line must not commit")
+	if gm.return_cards_to_hand([five] as Array[Card]) != "":
+		_fail("clearing the broken line should be allowed")
 	if gm.board.melds.size() != 1:
 		_fail("the emptied line should dissolve, leaving just the picture")
-	# Re-play the run and commit the turn.
-	if gm.play_off_picture(top, Vector2i.UP, [eight, nine] as Array[Card]) != "":
-		_fail("re-playing 8H 9H together should stage the run")
+	# A downward straight ascends instead (again lower rank on top): Q K
+	# hanging below the J stem, then the turn commits.
+	if gm.play_off_picture(stem, Vector2i.DOWN, [queen, king] as Array[Card]) != "":
+		_fail("Q K downward off the J stem should stage the run")
 	if gm.commit_turn() != "":
 		_fail("a turn ending on a legal extension line should commit")
+	gm.free()
+
+## A joker sealed inside a picture can still be claimed the usual way: drop
+## the exact card it stands for and the joker comes back to the hand, the real
+## card taking over the joker's cell.
+func _test_picture_joker_swap() -> void:
+	var flower_cards: Array[Card] = []
+	for i in CuteSlime.ULT_FLOWER.size():
+		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
+	var joker := Card.new()
+	joker.is_joker = true
+	joker.suit = "joker"
+	joker.joker_lock_rank = 9
+	joker.joker_lock_suit = "hearts"
+	flower_cards[4] = joker  # the right wall cell (2,1)
+	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
+	var gm := GameManager.new()
+	gm.setup(["You", "Foe"], 5, 7)
+	gm.board.melds.assign([picture] as Array[CardSet])
+	gm.players[0].has_opened = true
+	var nine := _card(9, "hearts")
+	_give_hand(gm, [nine] as Array[Card])
+	Rules.assign_jokers(picture.cards)
+	var cell := picture.cell_of(joker)
+	if gm.swap_joker(nine, joker, picture) != "":
+		_fail("a locked joker in a picture should swap for its exact card")
+		gm.free()
+		return
+	if picture.cell_of(nine) != cell or picture.cards.has(joker):
+		_fail("the swap should seat the real card in the joker's cell")
+	if not gm.players[0].hand.has(joker) or joker.joker_lock_rank != 0:
+		_fail("the joker should return to the hand as a free wildcard")
+	if not picture.is_valid():
+		_fail("the picture must stay a well-formed shape after the swap")
+	# The swapped-in card is sealed like any picture card, and the swap itself
+	# counts as the turn's play, so the turn commits.
+	if gm.move_cards_to_new_meld([nine] as Array[Card]) == "":
+		_fail("the swapped-in card is sealed inside the picture")
+	if gm.commit_turn() != "":
+		_fail("a turn ending on the picture swap should commit")
 	gm.free()
 
 ## Rendering: a vertical group lays its cards out in a column, and a cross
@@ -518,20 +617,21 @@ func _test_picture_ghost_cells() -> void:
 	for i in CuteSlime.ULT_FLOWER.size():
 		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
 	var top := _slimed(7, "hearts")
-	flower_cards[0] = top
+	flower_cards[1] = top  # the blossom's top-middle cell (1,0)
 	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
 	ui.gm.board.melds.assign([picture] as Array[CardSet])
 	ui.gm.players[0].has_opened = true
-	var eight := _card(8, "hearts")
-	ui.gm.players[0].hand = [eight] as Array[Card]
+	# A 6H above the 7H petal: descending upward, so the lower rank is on top.
+	var six := _card(6, "hearts")
+	ui.gm.players[0].hand = [six] as Array[Card]
 	ui.gm._hand_snapshot = ui.gm.players[0].hand.duplicate()
 	ui._refresh()
 	await process_frame
 	if _count_ghosts(ui) == 0:
 		_fail("a picture on your turn should show ghost play cells")
-	ui._play_line_start(top, Vector2i.UP, [eight] as Array[Card])
+	ui._play_line_start(top, Vector2i.UP, [six] as Array[Card])
 	await process_frame
-	var btn: Button = ui.card_nodes.get(eight)
+	var btn: Button = ui.card_nodes.get(six)
 	if btn == null or not (btn.get_parent() is GridContainer):
 		_fail("the played line should render inside the picture's grid")
 	ui.queue_free()

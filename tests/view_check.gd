@@ -92,6 +92,36 @@ func _init() -> void:
 		printerr("board should render 3 card buttons for the staged meld, got %d" % board_cards)
 		ok = false
 
+	# --- A group that grows gives up a spot it no longer fits: every panel on
+	#     the felt stays whole and un-overlapped -------------------------------
+	ui.gm.board.melds.clear()
+	var grow := _meld([_card(7, "hearts"), _card(8, "hearts"), _card(9, "hearts")])
+	var neighbor := _meld([_card(11, "clubs"), _card(11, "diamonds"), _card(11, "spades")])
+	ui.gm.board.melds.assign([grow, neighbor] as Array[CardSet])
+	ui._refresh()
+	await process_frame
+	# The set sits just right of the run; lay-offs widening the run would run
+	# straight into it if the remembered spots were kept blindly.
+	for r in range(10, 14):
+		grow.cards.append(_card(r, "hearts"))
+	ui._refresh()
+	await process_frame
+	var rects: Array[Rect2] = []
+	for panel in ui.board_flow.get_children():
+		if panel is PanelContainer:
+			rects.append(Rect2(panel.position, panel.size))
+	if rects.size() != 2:
+		printerr("expected 2 group panels after the grow, got %d" % rects.size())
+		ok = false
+	elif rects[0].intersects(rects[1]):
+		printerr("a grown group must not overlap its neighbour: %s vs %s"
+			% [rects[0], rects[1]])
+		ok = false
+	for r in rects:
+		if r.position.x + r.size.x > ui.board_flow.size.x:
+			printerr("a group spilled past the felt's right edge: %s" % r)
+			ok = false
+
 	if ok:
 		print("view_check: PASS")
 		quit(0)
