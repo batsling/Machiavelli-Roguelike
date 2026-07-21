@@ -6,6 +6,18 @@ extends SceneTree
 ## and adjacency math, and the cluster/vertical rendering paths. Run:
 ##   godot --headless --path . --script res://tests/layout_check.gd
 
+## A small known-geometry picture used by the play-off-picture tests below. It
+## is a local fixture (the enemy's own ult templates are exercised separately),
+## so those generic-mechanic tests don't move when the ult roster changes. A
+## 9-cell flower: top row (indices 0-2), side walls (3-4), bottom row (5-7),
+## stem (8).
+const TEST_PICTURE: Array[Vector2i] = [
+	Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0),
+	Vector2i(0, 1), Vector2i(2, 1),
+	Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2),
+	Vector2i(1, 3),
+]
+
 func _card(rank: int, suit: String) -> Card:
 	var c := Card.new()
 	c.suit = suit
@@ -29,8 +41,11 @@ func _init() -> void:
 	_test_cross_meld_undo_and_removal()
 	_test_shape_groups()
 	_test_board_grid()
+	_test_projected_meter()
 	_test_slime_ultimate()
 	_test_slime_ultimate_gates()
+	_test_ult_fills_this_turn()
+	_test_picture_seal_this_turn()
 	_test_ult_in_driven_games()
 	_test_grid_line_rules()
 	_test_play_off_picture()
@@ -242,34 +257,64 @@ func _slime_gm(hand: Array[Card], melds: Array[CardSet]) -> GameManager:
 	gm._begin_turn()
 	return gm
 
+## The meter builds live: the current player's bar previews the charge this
+## turn's staged plays will bank, so it fills as cards are played and drops back
+## on undo. Everyone else shows only their banked charge.
+func _test_projected_meter() -> void:
+	var gm := GameManager.new()
+	gm.setup(["You", "Foe"], 5, 7)
+	gm.meter_max = 10
+	gm.meter_gain = 1
+	gm.meter_per_card = true
+	gm.players[0].has_opened = true
+	var trips: Array[Card] = [_card(9, "hearts"), _card(9, "spades"), _card(9, "clubs")]
+	gm.players[0].hand = trips.duplicate()
+	gm._hand_snapshot = trips.duplicate()
+	gm._undo_stack.clear()
+	if gm.projected_meter(gm.players[0]) != 0:
+		_fail("an untouched meter should read its banked value")
+	gm.move_cards_to_new_meld(trips)
+	if gm.projected_meter(gm.players[0]) != 3:
+		_fail("the meter should build live as cards are played, got %d"
+			% gm.projected_meter(gm.players[0]))
+	if gm.projected_meter(gm.players[1]) != 0:
+		_fail("only the current player's bar previews this turn's charge")
+	gm.undo_action()
+	if gm.projected_meter(gm.players[0]) != 0:
+		_fail("undoing the play should drop the live charge back")
+	gm.free()
+
 ## The ultimate: a full meter plus enough gatherable slime builds the biggest
 ## picture that fits, seals it as one lump, and resets the meter.
 func _test_slime_ultimate() -> void:
 	var slime := CuteSlime.new()
-	# Table slime she can take legally: a fully slimed 5-card run (whole group
-	# may leave) and a slimed 8 in a set of four (the leftover trio stays
-	# valid). The clean set of jacks must not be touched.
+	# Table slime she can take legally: two fully slimed 5-card runs (each whole
+	# group may leave) and a slimed 8 in a set of four (the leftover trio stays
+	# valid) — 11 table cards. The clean set of jacks must not be touched.
 	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
 		_slimed(6, "hearts"), _slimed(7, "hearts")])
+	var run2 := _meld([_slimed(3, "spades"), _slimed(4, "spades"), _slimed(5, "spades"),
+		_slimed(6, "spades"), _slimed(7, "spades")])
 	var eights := _meld([_slimed(8, "diamonds"), _card(8, "clubs"), _card(8, "spades"),
 		_card(8, "hearts")])
 	var jacks := _meld([_card(11, "hearts"), _card(11, "clubs"), _card(11, "spades")])
-	# Three slimed naturals in hand: 5 + 1 + 3 = 9 — exactly the flower.
+	# Six slimed naturals in hand: 11 gathered + 6 = 17 — exactly the heart.
 	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
-		_slimed(12, "hearts"), _card(2, "clubs")]
-	var gm := _slime_gm(hand, [run, eights, jacks] as Array[CardSet])
+		_slimed(12, "hearts"), _slimed(13, "hearts"), _slimed(2, "diamonds"),
+		_slimed(9, "clubs"), _card(2, "clubs")]
+	var gm := _slime_gm(hand, [run, run2, eights, jacks] as Array[CardSet])
 	var move := slime.plan_strategy_move(gm)
 	if not move.get("ult", false):
-		_fail("a full meter with 9 gatherable slimed cards should fire the ultimate")
+		_fail("a full meter with 17 gatherable slimed cards should fire the ultimate")
 		gm.free()
 		return
-	if (move["cards"] as Array).size() != 9:
-		_fail("the ultimate should fill the 9-card flower, got %d cards"
+	if (move["cards"] as Array).size() != 17:
+		_fail("the ultimate should fill the 17-card heart, got %d cards"
 			% (move["cards"] as Array).size())
 	GreedyAI.apply_move(gm, move)
 	var picture: CardSet = gm.board.melds[-1]
-	if not picture.is_shape() or picture.cards.size() != 9 or not picture.is_valid():
-		_fail("the ultimate should leave a valid 9-card picture on the table")
+	if not picture.is_shape() or picture.cards.size() != 17 or not picture.is_valid():
+		_fail("the ultimate should leave a valid 17-card picture on the table")
 	if gm.players[1].meter != 0:
 		_fail("spending the ultimate should reset her meter, got %d" % gm.players[1].meter)
 	if gm.board.meld_of(hand[0]) != picture:
@@ -282,8 +327,8 @@ func _test_slime_ultimate() -> void:
 	if eights.cards.size() != 3:
 		_fail("the slimed eight should leave its set of four (leftover trio valid)")
 	# The picture is one sticky lump: lifting any card drags the whole picture.
-	if picture.sticky_cluster(picture.cards[0]).size() != 9:
-		_fail("the picture should move as one 9-card lump")
+	if picture.sticky_cluster(picture.cards[0]).size() != 17:
+		_fail("the picture should move as one 17-card lump")
 	# Sealing is a mechanic, not a play: the swallowed hand cards never count,
 	# so an ult-only turn can't commit — she draws, keeping the picture.
 	if gm.cards_played_this_turn() != 0:
@@ -306,19 +351,23 @@ func _test_slime_ultimate() -> void:
 ## offer can legally fill a template.
 func _test_slime_ultimate_gates() -> void:
 	var slime := CuteSlime.new()
-	# Enough slime, but the meter isn't full.
+	# Enough slime for the heart (two whole-leaving runs + hand top-up = 17), but
+	# the meter isn't full — so only the meter gate can be holding the ult back.
 	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
 		_slimed(6, "hearts"), _slimed(7, "hearts")])
+	var run2 := _meld([_slimed(3, "spades"), _slimed(4, "spades"), _slimed(5, "spades"),
+		_slimed(6, "spades"), _slimed(7, "spades")])
 	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
-		_slimed(12, "hearts"), _slimed(2, "hearts")]
-	var gm := _slime_gm(hand, [run] as Array[CardSet])
+		_slimed(12, "hearts"), _slimed(13, "hearts"), _slimed(2, "diamonds"),
+		_slimed(9, "clubs"), _slimed(2, "hearts")]
+	var gm := _slime_gm(hand, [run, run2] as Array[CardSet])
 	gm.players[1].meter = gm.meter_max - 1
 	if slime.plan_strategy_move(gm).get("ult", false):
 		_fail("the ultimate must wait for a full meter")
 	gm.free()
 	# Full meter, but the only table slime is locked into its group: a set of
 	# three with one slimed card can't spare it (leftover pair invalid), and
-	# 3 hand cards alone can't fill the 9-card flower.
+	# 3 hand cards alone can't fill the 17-card heart.
 	var trio := _meld([_slimed(6, "diamonds"), _card(6, "clubs"), _card(6, "spades")])
 	var gm2 := _slime_gm([_slimed(9, "diamonds"), _slimed(10, "diamonds"),
 		_slimed(12, "hearts")] as Array[Card], [trio] as Array[CardSet])
@@ -328,6 +377,75 @@ func _test_slime_ultimate_gates() -> void:
 	if trio.cards.size() != 3:
 		_fail("planning alone must not touch the table")
 	gm2.free()
+
+## A meter that fills from THIS turn's plays fires the ultimate the same turn,
+## not a turn later: the play that tops the bar off lets the ult go at once.
+func _test_ult_fills_this_turn() -> void:
+	var slime := CuteSlime.new()
+	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
+		_slimed(6, "hearts"), _slimed(7, "hearts")])
+	var run2 := _meld([_slimed(3, "spades"), _slimed(4, "spades"), _slimed(5, "spades"),
+		_slimed(6, "spades"), _slimed(7, "spades")])
+	var eights := _meld([_slimed(8, "diamonds"), _card(8, "clubs"), _card(8, "spades"),
+		_card(8, "hearts")])
+	var jacks := _meld([_card(11, "hearts"), _card(11, "clubs"), _card(11, "spades")])
+	# Six slimed naturals for the heart top-up, plus a clean set of 2s to play
+	# (a real, valid play so the leftover table stays sound).
+	var twos: Array[Card] = [_card(2, "clubs"), _card(2, "spades"), _card(2, "hearts")]
+	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
+		_slimed(12, "hearts"), _slimed(13, "hearts"), _slimed(2, "diamonds"),
+		_slimed(9, "clubs")]
+	hand.append_array(twos)
+	var gm := _slime_gm(hand, [run, run2, eights, jacks] as Array[CardSet])
+	gm.players[1].meter = gm.meter_max - 1  # one short of full
+	if slime.plan_strategy_move(gm).get("ult", false):
+		_fail("a meter one short with no play yet this turn must not fire")
+	# Play the clean set from hand: the live charge tops the bar off, and the
+	# ultimate is available immediately — this same turn.
+	if gm.move_cards_to_new_meld(twos) != "":
+		_fail("staging the throwaway play failed")
+	if gm.projected_meter(gm.players[1]) != gm.meter_max:
+		_fail("this turn's play should top the meter off, got %d"
+			% gm.projected_meter(gm.players[1]))
+	if not slime.plan_strategy_move(gm).get("ult", false):
+		_fail("the ult should fire the turn its meter completes, not a turn later")
+	gm.free()
+
+## A slimed picture card can be lifted back off the turn it is sealed in (like
+## anything you played this turn), but is sealed for good from the next turn on.
+func _test_picture_seal_this_turn() -> void:
+	var slime := CuteSlime.new()
+	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
+		_slimed(6, "hearts"), _slimed(7, "hearts")])
+	var run2 := _meld([_slimed(3, "spades"), _slimed(4, "spades"), _slimed(5, "spades"),
+		_slimed(6, "spades"), _slimed(7, "spades")])
+	var eights := _meld([_slimed(8, "diamonds"), _card(8, "clubs"), _card(8, "spades"),
+		_card(8, "hearts")])
+	var jacks := _meld([_card(11, "hearts"), _card(11, "clubs"), _card(11, "spades")])
+	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
+		_slimed(12, "hearts"), _slimed(13, "hearts"), _slimed(2, "diamonds"),
+		_slimed(9, "clubs"), _card(2, "clubs")]
+	var gm := _slime_gm(hand, [run, run2, eights, jacks] as Array[CardSet])
+	GreedyAI.apply_move(gm, slime.plan_strategy_move(gm))
+	var sealed_card: Card = gm.board.melds[-1].cards[0]
+	if not gm.board.meld_of(sealed_card).is_shape():
+		_fail("the ultimate should have sealed the card into a picture")
+		gm.free()
+		return
+	# Same turn: the card she just squeezed in can still be lifted back off.
+	if gm.move_cards_to_new_meld([sealed_card] as Array[Card]) != "":
+		_fail("a picture card placed this turn should still be movable off it")
+	gm.undo_action()  # put the picture back before ending her turn
+	if not gm.board.meld_of(sealed_card).is_shape():
+		_fail("undo should restore the card into the picture")
+	# End her turn (an ult-only turn draws, keeping the picture), then the next
+	# player finds the picture sealed shut.
+	gm.draw_and_end_turn()
+	if not gm.board.meld_of(sealed_card).is_shape():
+		_fail("the picture should survive into the next turn")
+	if gm.move_cards_to_new_meld([sealed_card] as Array[Card]) == "":
+		_fail("a picture card is sealed once its turn has ended")
+	gm.free()
 
 ## The ultimate fires inside real driven games: seeded 1v1s against the slime
 ## with a tiny per-card meter so it charges fast. Core invariants (valid
@@ -427,13 +545,13 @@ func _test_grid_line_rules() -> void:
 ## wall at (0,1), index 8 the stem at (1,3).
 func _picture_gm() -> Dictionary:
 	var flower_cards: Array[Card] = []
-	for i in CuteSlime.ULT_FLOWER.size():
+	for i in TEST_PICTURE.size():
 		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
 	var top := _slimed(7, "hearts")
 	var left := _slimed(5, "diamonds")
 	flower_cards[1] = top
 	flower_cards[3] = left
-	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
+	var picture := CuteSlime.build_shape_meld(TEST_PICTURE, flower_cards)
 	var gm := GameManager.new()
 	gm.setup(["You", "Foe"], 5, 7)
 	gm.board.melds.assign([picture] as Array[CardSet])
@@ -530,7 +648,7 @@ func _test_play_off_picture() -> void:
 ## card taking over the joker's cell.
 func _test_picture_joker_swap() -> void:
 	var flower_cards: Array[Card] = []
-	for i in CuteSlime.ULT_FLOWER.size():
+	for i in TEST_PICTURE.size():
 		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
 	var joker := Card.new()
 	joker.is_joker = true
@@ -538,7 +656,7 @@ func _test_picture_joker_swap() -> void:
 	joker.joker_lock_rank = 9
 	joker.joker_lock_suit = "hearts"
 	flower_cards[4] = joker  # the right wall cell (2,1)
-	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
+	var picture := CuteSlime.build_shape_meld(TEST_PICTURE, flower_cards)
 	var gm := GameManager.new()
 	gm.setup(["You", "Foe"], 5, 7)
 	gm.board.melds.assign([picture] as Array[CardSet])
@@ -614,11 +732,11 @@ func _test_picture_ghost_cells() -> void:
 	ui._on_play_vanilla_pressed()
 	await process_frame
 	var flower_cards: Array[Card] = []
-	for i in CuteSlime.ULT_FLOWER.size():
+	for i in TEST_PICTURE.size():
 		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
 	var top := _slimed(7, "hearts")
 	flower_cards[1] = top  # the blossom's top-middle cell (1,0)
-	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
+	var picture := CuteSlime.build_shape_meld(TEST_PICTURE, flower_cards)
 	ui.gm.board.melds.assign([picture] as Array[CardSet])
 	ui.gm.players[0].has_opened = true
 	# A 6H above the 7H petal: descending upward, so the lower rank is on top.

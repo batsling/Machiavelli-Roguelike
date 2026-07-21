@@ -84,6 +84,15 @@ var _hand_snapshot: Array[Card] = []
 # One {hand, board, snapshot} state per staged move, so moves can be undone.
 var _undo_stack: Array[Dictionary] = []
 var _consecutive_passes := 0
+# True once the current player has spent their ultimate this turn (built a
+# picture): the meter drained to zero and this turn's plays neither recharge it
+# nor fire it again. Cleared at the start of every turn.
+var _meter_spent_this_turn := false
+# Cards the current player has sealed into a picture this turn. A picture card
+# stays movable the turn it is placed (so a just-built shape can still be
+# reworked or undone); once the turn ends it is sealed for good. Cleared at the
+# start of every turn.
+var _shaped_this_turn: Array[Card] = []
 
 func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: int = -1,
 		include_jokers := false) -> void:
@@ -371,6 +380,12 @@ func move_cards_to_new_shape(cards_to_move: Array[Card], cells: Dictionary) -> S
 	# also stop being returnable to the hand — sealed is sealed.
 	for c in from_hand:
 		_hand_snapshot.erase(c)
+	# Remember the picture's cards as placed this turn: a just-built shape can
+	# still be reworked or picked apart until the turn ends, but is sealed from
+	# the next turn on (see _stage_error's picture seal).
+	for c in cards_to_move:
+		if not _shaped_this_turn.has(c):
+			_shaped_this_turn.append(c)
 	board_changed.emit()
 	return ""
 
@@ -596,14 +611,16 @@ func _staged_open_meld_exists() -> bool:
 ## borders exactly as they were.
 func _stage_error(cards_to_move: Array[Card], dest: CardSet) -> String:
 	var p := current_player()
-	# Picture cards are sealed in place.
+	# Picture cards are sealed in place — except the ones sealed in this very
+	# turn, which can still be moved back off (or picked apart) until the turn
+	# ends, like anything else you played this turn.
 	var batch := {}
 	for c in cards_to_move:
 		batch[c] = true
 	for m in board.melds:
 		if m.is_shape():
 			for c in m.cards:
-				if batch.has(c):
+				if batch.has(c) and not _shaped_this_turn.has(c):
 					return "That card is sealed inside a picture."
 	if max_plays_per_turn > 0:
 		var from_hand := 0
@@ -650,17 +667,45 @@ func commit_turn() -> String:
 ## Charge a player's ultimate meter for the hand they just committed:
 ## meter_gain points, times the cards played when meter_per_card is on, capped
 ## at meter_max (where it holds). A max of 0 disables the meter. Emits
-## meter_charged with how much it actually rose and whether this filled it.
+## meter_charged with how much it actually rose and whether this filled it. A
+## turn whose ultimate already fired banks nothing — those plays were spent.
 func _charge_meter(p: PlayerState, cards_played: int) -> void:
-	if meter_max <= 0:
+	if _meter_spent_this_turn:
 		return
-	var gain := meter_gain * cards_played if meter_per_card else meter_gain
+	var gain := _pending_meter_gain(cards_played)
 	if gain <= 0:
 		return
 	var before := p.meter
 	p.meter = mini(meter_max, p.meter + gain)
 	if p.meter != before:
 		meter_charged.emit(p, p.meter - before, p.meter >= meter_max and before < meter_max)
+
+## The meter charge this turn's plays are worth, matching _charge_meter's rule:
+## meter_gain per card played when meter_per_card is on, else a flat meter_gain
+## once any card has been played. 0 when the meter is off or nothing was played.
+func _pending_meter_gain(cards_played: int) -> int:
+	if meter_max <= 0 or cards_played <= 0:
+		return 0
+	var gain := meter_gain * cards_played if meter_per_card else meter_gain
+	return maxi(gain, 0)
+
+## The charge a player's meter shows right now. The current player's bar
+## includes the charge their staged-but-uncommitted plays will bank at
+## commit, so it fills live as they play and an ultimate can fire the very turn
+## the bar completes. Everyone else shows their banked charge. Once the current
+## player has spent their ultimate this turn the bar reads empty again — the
+## plays that filled it are gone.
+func projected_meter(p: PlayerState) -> int:
+	if p != current_player() or _meter_spent_this_turn:
+		return p.meter
+	return mini(meter_max, p.meter + _pending_meter_gain(cards_played_this_turn()))
+
+## Spend the current player's ultimate meter — an ultimate fired this turn.
+## Drain it to zero and mark it spent, so this turn's plays neither recharge it
+## nor let it fire again; charging resumes fresh next turn.
+func spend_meter() -> void:
+	current_player().meter = 0
+	_meter_spent_this_turn = true
 
 ## Why the current turn can't be committed, or "" if it is legal. Split out so
 ## commit_turn keeps a single success path (the guard clauses live here).
@@ -808,6 +853,8 @@ func _begin_turn() -> void:
 	var p := current_player()
 	_hand_snapshot = p.hand.duplicate()
 	_undo_stack.clear()
+	_meter_spent_this_turn = false
+	_shaped_this_turn.clear()
 	turn_started.emit(p)
 
 func _advance() -> void:

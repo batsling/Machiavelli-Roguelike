@@ -192,12 +192,15 @@ The **Vanilla sandbox** tab holds:
   from the stock onto the table, which counts as their opening meld — nobody
   starts locked out of the table on a hand that can't lay a group.
 - **Ultimate meter** — every player (you and the enemies) carries a meter that
-  charges as they play hands and holds once full, shown as a bar under each
-  opponent's name and beside your hand. **Meter max** (0 disables it, default
-  30) is how much it holds; **Charge per play** (default 1) is how much each
-  committed hand adds; **Charge per card played from hand** switches that from
-  once per hand to once per card leaving the hand that turn. Applies from the
-  next new game (the meter max also applies live).
+  charges as they play cards and holds once full, shown as a bar under each
+  opponent's name and beside your hand. The bar builds **live** as cards are
+  played this turn — the current player's bar previews the charge their staged
+  plays will bank — so an ultimate can fire the very turn its meter completes,
+  not a turn later. **Meter max** (0 disables it, default 30) is how much it
+  holds; **Charge per play** (default 1) is how much each committed hand adds;
+  **Charge per card played from hand** switches that from once per hand to once
+  per card leaving the hand that turn. Applies from the next new game (the
+  meter max also applies live).
 
 The **Roguelike run** tab holds the run's own copies of the same rules —
 cards drawn per turn (default 2), starting hand size (default 13), max hand
@@ -307,8 +310,8 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   valid with no leftover cards; she alone moves slimed cards freely. Once her
   ultimate meter fills, she gathers every slimed card she can legally take —
   her hand's, the table's free donations, and cards whose broken groups the
-  repair engine can mend — into a picture group (heart 16 / ladybug 12 /
-  flower 9, grandest that fits) sealed on the felt, and her meter resets
+  repair engine can mend — into a heart picture group (17 cards) sealed on the
+  felt, and her meter resets
 - `scripts/ai/sadistic_billionaire.gd` — `SadisticBillionaire`: the second designed
   enemy (strong, conservative, attentive). At combat start he turns every card in
   his own deck — all 52 naturals and his 2 jokers — to glass (the Clear effect):
@@ -370,13 +373,16 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   the slime's ultimate: orientation and shape cells surviving snapshots,
   crossing groups (staging, validity, extending either group, undo, commit,
   shared-card removal), shape groups (the heart template, connectivity,
-  line-through), BoardGrid cluster and adjacency math, the ultimate (fires on
-  a full meter with gatherable slime, seals a valid picture, resets the
-  meter, holds when short, and fires inside full seeded AI-vs-AI games with
-  every invariant intact), the Scrabble-style plays off pictures (grid-line
-  and could-grow-pair readings, growable pair → run extension, outward-only
-  and one-line-per-axis rules, whole-line tear-down, sealed picture cards,
-  no jokers, commit, and the ghost play cells rendering), and the
+  line-through), BoardGrid cluster and adjacency math, the meter building live
+  as cards are played, the ultimate (fires on a full meter with gatherable
+  slime — including the turn the meter completes from that turn's own plays —
+  seals a valid heart picture, resets the meter, holds when short, and fires
+  inside full seeded AI-vs-AI games with every invariant intact), a picture
+  card being movable the turn it is sealed but sealed shut thereafter, the
+  Scrabble-style plays off pictures (grid-line and could-grow-pair readings,
+  growable pair → run extension, outward-only and one-line-per-axis rules,
+  whole-line tear-down, sealed picture cards, no jokers, commit, and the ghost
+  play cells rendering), and the
   vertical/grid rendering paths
 
 ## Headless smoke test
@@ -426,9 +432,12 @@ mechanics that will use it still to come:
   combinations at the same time.
 - **Shape ("picture") groups** — a group can place its cards on a small grid
   instead of in a line (`CardSet.set_shape`), valid when the picture is one
-  connected patch. This is what the Cute Slime's ultimate builds (her heart /
-  ladybug / flower templates live on `CuteSlime.ULT_HEART` / `ULT_LADYBUG` /
-  `ULT_FLOWER`; the engine move is `GameManager.move_cards_to_new_shape`).
+  connected patch. This is what the Cute Slime's ultimate builds (her heart
+  template lives on `CuteSlime.ULT_HEART` — `ult_templates()` still walks a
+  list so more shapes can be added back later; the engine move is
+  `GameManager.move_cards_to_new_shape`). A picture's cards are sealed in
+  place — except the turn they are sealed in, when they can still be lifted
+  back off like anything else played that turn.
 - **Scrabble-style plays off pictures** — any picture card can be played off
   in one direction, horizontal or vertical (`GameManager.play_off_picture`):
   the cards land in a straight line outward from that card, and together
@@ -484,15 +493,18 @@ smart AI understands the slime and never plans a move that would drag a
 cluster it didn't mean to.
 
 Her **ultimate** rides the ultimate meter: when it fills and enough slimed
-cards can be legally gathered, she squeezes them into a picture on the felt —
-a heart (16 cards), a ladybug (12) or a flower (9), the grandest that fits —
-and the meter resets. The slime comes from her own hand (naturals first, her
-wildcard jokers last) and from the table: free donations whose groups stay
+cards can be legally gathered, she squeezes them into a heart picture on the
+felt (17 cards) and the meter resets. Because the meter builds live as she
+plays, the ultimate can fire the very turn her plays complete the bar — and
+she keeps acting afterward (guarding her slime) since the ult is a mechanic,
+not the end of her turn. The slime comes from her own hand (naturals first,
+her wildcard jokers last) and from the table: free donations whose groups stay
 valid without them, plus cards whose broken groups the repair engine can
 legally rearrange — mending the leftovers is part of the ultimate, so the
 table is whole again when she is done. The picture is all slimed, so it moves
-only as one lump nothing can legally absorb: those cards are sealed, and no
-planner (not even hers) ever unpicks a picture. Until a picture fits, she
+only as one lump nothing can legally absorb: those cards are sealed (only the
+turn she squeezes them in can they still be lifted back off), and no planner
+(not even hers) ever unpicks a settled picture. Until a picture fits, she
 holds the full meter.
 
 A sealed picture isn't dead felt, though — you can play off it,
