@@ -18,6 +18,9 @@ func setup(ui: MainUI) -> void:
 ## left, players[3] on the right. Unused seats collapse.
 func refresh_seats() -> void:
 	var gm := _ui.gm
+	# Rebuilding the seats frees the card backs any open hand reveal was tied to,
+	# so drop the reveal; re-entering a seat brings it back.
+	_ui._hide_opponent_hand()
 	_ui.opponent_backs.clear()
 	var seats: Array = [_ui.seat_top, _ui.seat_left, _ui.seat_right]
 	var seated_players := mini(gm.players.size(), MainUI.MAX_PLAYERS)
@@ -33,7 +36,7 @@ func refresh_seats() -> void:
 		var chip := _make_player_chip(p, player_index)
 		chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seat.add_child(chip)
-		var backs := _make_card_backs(p.hand, i == 0)
+		var backs := _make_card_backs(p, player_index, i == 0)
 		backs.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seat.add_child(backs)
 		_ui.opponent_backs[p.player_id] = backs
@@ -41,17 +44,24 @@ func refresh_seats() -> void:
 	_ui.round_label.text = "Round %d" % gm.round_number
 	_refresh_stock_top()
 
-## Show the top card of the stock beside the count when it is glass: the next
-## draw is public knowledge, for the player exactly as for the AI.
+## Show the top card of the stock beside the count when its status is public: a
+## glass top shows its face (everyone sees the next draw), and a slimed top shows
+## a back with the splotch (everyone sees the next draw is stuck, but not what it
+## is). A plain top stays hidden.
 func _refresh_stock_top() -> void:
 	_ui._clear_children(_ui.stock_top_slot)
 	var top := _ui.gm.deck.peek()
-	if top == null or not top.is_glass():
+	if top == null:
 		return
-	var face := CardRenderer.make_glass_face(top, UITheme.BACK_SIZE_TOP)
-	face.tooltip_text = "Top of the stock is glass — everyone can see " \
-		+ "the next card drawn."
-	_ui.stock_top_slot.add_child(face)
+	if top.is_glass():
+		var face := CardRenderer.make_glass_face(top, UITheme.BACK_SIZE_TOP)
+		face.tooltip_text = "Top of the stock is glass — everyone can see " \
+			+ "the next card drawn."
+		_ui.stock_top_slot.add_child(face)
+	elif top.is_sticky():
+		var back := CardRenderer.make_card_back(UITheme.BACK_SIZE_TOP, top)
+		back.tooltip_text = "Top of the stock is slimed — the next card drawn is stuck."
+		_ui.stock_top_slot.add_child(back)
 
 func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	var gm := _ui.gm
@@ -93,9 +103,14 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 
 ## A row (top seat) or column (side seats) of an opponent's cards, seen from
 ## the back. Glass cards are see-through, so they show their face right in the
-## row; everything else is a plain card back. The overlap tightens as the hand
-## grows so the seat never exceeds a fixed footprint.
-func _make_card_backs(hand: Array[Card], horizontal: bool) -> BoxContainer:
+## row; a slimed card shows its green splotch on the back; everything else is a
+## plain card back. The overlap tightens as the hand grows so the seat never
+## exceeds a fixed footprint. When the opponent holds a visibly-statused card (a
+## glass card or a slimed one), hovering the row pops an enlarged reveal of the
+## same cards, so the player can read them at a bigger size than the crowded seat
+## allows.
+func _make_card_backs(p: PlayerState, player_index: int, horizontal: bool) -> BoxContainer:
+	var hand := p.hand
 	var box: BoxContainer
 	var back_size: Vector2
 	var max_len: float
@@ -111,15 +126,31 @@ func _make_card_backs(hand: Array[Card], horizontal: bool) -> BoxContainer:
 	if hand.size() > 1:
 		var step := minf(card_len * 0.55, (max_len - card_len) / (hand.size() - 1))
 		box.add_theme_constant_override("separation", int(step - card_len))
+	var reveal := _ui._hand_has_visible_card(hand)
 	for c in hand:
 		if c.is_glass():
 			var face := CardRenderer.make_glass_face(c, back_size)
 			face.tooltip_text = "Glass — you can see this card through the back."
+			# With the reveal wired to the row, let hover fall through to the row so
+			# the enlarged screen stays up while the mouse crosses the cards.
+			if reveal:
+				face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			box.add_child(face)
 			# Registered so enemy-move animations start from the visible card.
 			_ui.card_nodes[c] = face
 		else:
-			box.add_child(CardRenderer.make_card_back(back_size))
+			var back := CardRenderer.make_card_back(back_size, c)
+			if reveal:
+				back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			box.add_child(back)
+	if reveal:
+		# The cards fall through (set IGNORE above), so the row itself catches the
+		# hover across its whole footprint and drives the enlarged reveal.
+		box.mouse_filter = Control.MOUSE_FILTER_STOP
+		box.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		box.tooltip_text = "Hover to see %s's hand enlarged." % p.display_name
+		box.mouse_entered.connect(_ui._show_opponent_hand.bind(player_index))
+		box.mouse_exited.connect(_ui._hide_opponent_hand)
 	return box
 
 ## The felt is a freeform canvas: one draggable panel per cluster (see
@@ -647,6 +678,13 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 
 	if c.is_sticky():
 		CardRenderer.add_slime_blob(b)
+	# A hand card you can play right now (with no rearranging) is capped with a
+	# green strip; hovering it lights its destination group the same green.
+	if not on_board and _ui._card_is_playable_now(c):
+		CardRenderer.add_play_marker(b)
+		var note := "Playable now — drop it straight onto its group (or lay it as " \
+			+ "a new one) with no rearranging."
+		b.tooltip_text = note if b.tooltip_text == "" else b.tooltip_text + "\n" + note
 	if filter_active and not filter_match:
 		b.modulate = Color(1, 1, 1, UITheme.FILTER_DIM_ALPHA)
 

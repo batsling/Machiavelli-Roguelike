@@ -42,7 +42,11 @@ static func hover_variant(sb: StyleBoxFlat) -> StyleBoxFlat:
 	out.border_color = Color(1, 1, 1, 0.6)
 	return out
 
-static func make_card_back(back_size: Vector2) -> Panel:
+## A plain face-down card back. A slimed card shows its green splotch even from
+## the back (pass the card): the slime is a status the player can read off an
+## opponent's hand and the top of the stock, just as glass is — it never reveals
+## the card's face, only that it is stuck. `card` may be null for a generic back.
+static func make_card_back(back_size: Vector2, card: Card = null) -> Panel:
 	var back := Panel.new()
 	back.custom_minimum_size = back_size
 	var sb := StyleBoxFlat.new()
@@ -51,6 +55,8 @@ static func make_card_back(back_size: Vector2) -> Panel:
 	sb.set_border_width_all(2)
 	sb.set_corner_radius_all(6)
 	back.add_theme_stylebox_override("panel", sb)
+	if card != null and card.is_sticky():
+		add_slime_blob(back)
 	return back
 
 ## A small face-up rendering of a glass card in a card-back footprint: the
@@ -105,6 +111,29 @@ static func add_slime_blob(parent: Control) -> void:
 	blob.add_theme_stylebox_override("panel", sb)
 	blob.tooltip_text = "Slimed — sticks to adjacent slimed cards; moving one drags the lump."
 	parent.add_child(blob)
+
+## A slim green strip pinned across the top of a hand card, marking a card that
+## can be played right now with no rearranging — laid off onto an existing group
+## or completing a fresh group with other cards in hand. Same green as the group
+## it would drop onto lights up on hover (UITheme.COL_HINT_EDGE), so the card and
+## its destination read as a matched pair. Non-interactive so it never steals the
+## card's clicks or drags.
+static func add_play_marker(parent: Control) -> void:
+	var bar := Panel.new()
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.anchor_left = 0.0
+	bar.anchor_right = 1.0
+	bar.anchor_top = 0.0
+	bar.anchor_bottom = 0.0
+	bar.offset_left = 4
+	bar.offset_right = -4
+	bar.offset_top = 2
+	bar.offset_bottom = 2 + UITheme.PLAY_MARKER_HEIGHT
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UITheme.COL_HINT_EDGE
+	sb.set_corner_radius_all(3)
+	bar.add_theme_stylebox_override("panel", sb)
+	parent.add_child(bar)
 
 ## An ultimate-meter bar: a dark track with an amber fill (bright gold once
 ## full) proportional to value/maximum, and a small "value/max" caption. The

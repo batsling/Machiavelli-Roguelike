@@ -68,8 +68,9 @@ func take_card(rank: int, suit: String) -> Card:
 	return null
 
 ## The card the next draw() will return (the top of the stock), or null when
-## the stock is empty. Callers must only act on it when the card is glass —
-## a glass top is public information, anything else is still face down.
+## the stock is empty. Its face is public only when the card is glass; a slimed
+## top reveals only its slimed status (a splotch on the back), and anything else
+## is still face down. Callers must respect which of these applies.
 func peek() -> Card:
 	if cards.is_empty():
 		return null

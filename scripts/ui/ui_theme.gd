@@ -54,6 +54,8 @@ const FILTER_DIM_ALPHA := 0.28   # the other suits fade this low while a suit is
 const COL_HINT_EDGE := Color(0.34, 0.86, 0.46)    # play-hint spotlight on a group you can play into
 const COL_HINT_BG := Color(0.34, 0.86, 0.46, 0.12)  # faint green fill behind a hinted group
 const COL_GROUP_HANDLE := Color(1, 1, 1, 0.10)     # the grip strip atop each group on the felt
+const PLAY_MARKER_HEIGHT := 5     # the green strip capping a hand card that can be played right now
+const COL_OPP_HAND_BG := Color(0.06, 0.14, 0.10, 0.96)  # backing of the enlarged opponent-hand reveal
 
 # --- Ultimate meter -----------------------------------------------------------
 const COL_METER_TRACK := Color(0, 0, 0, 0.38)      # empty channel behind the fill
