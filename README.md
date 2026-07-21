@@ -318,7 +318,7 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   valid with no leftover cards; she alone moves slimed cards freely. Once her
   ultimate meter fills, she gathers every slimed card she can legally take —
   her hand's, the table's free donations, and cards whose broken groups the
-  repair engine can mend — into a heart picture group (17 cards) sealed on the
+  repair engine can mend — into a heart picture group (12 cards) sealed on the
   felt, and her meter resets
 - `scripts/ai/sadistic_billionaire.gd` — `SadisticBillionaire`: the second designed
   enemy (strong, conservative, attentive). At combat start he turns every card in
@@ -529,7 +529,7 @@ cluster it didn't mean to.
 
 Her **ultimate** rides the ultimate meter: when it fills and enough slimed
 cards can be legally gathered, she squeezes them into a heart picture on the
-felt (17 cards) and the meter resets. Because the meter builds live as she
+felt (12 cards) and the meter resets. Because the meter builds live as she
 plays, the ultimate can fire the very turn her plays complete the bar — and
 she keeps acting afterward (guarding her slime) since the ult is a mechanic,
 not the end of her turn. The slime comes from her own hand (naturals first,

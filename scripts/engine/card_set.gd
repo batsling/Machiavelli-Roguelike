@@ -43,7 +43,8 @@ const UNPLACED := Vector2(-1, -1)
 @export var board_pos := UNPLACED
 ## Card -> Vector2i local grid cell. Empty for ordinary line groups; non-empty
 ## makes this a shape (picture) group, valid when its cells form one
-## edge-connected patch covering exactly its cards.
+## connected patch (cells touching at an edge OR a corner) covering exactly
+## its cards.
 @export var shape_cells := {}
 ## Attached extension line (a Scrabble-style play off a picture): the picture
 ## card the line reads from — it stays in its own group — and the outward
@@ -99,7 +100,9 @@ func set_shape(cells: Dictionary) -> void:
 
 ## A shape group is valid by construction — the mechanic that builds it is the
 ## legality gate — but it must be well-formed: one cell per card, every card
-## placed, no two cards sharing a cell, and the whole picture edge-connected.
+## placed, no two cards sharing a cell, and the whole picture connected. A
+## picture is an image, so cells count as joined when they touch at an edge OR
+## a corner (8-connectivity) — a diagonal step keeps the outline in one piece.
 func _shape_is_valid() -> bool:
 	if cards.size() < Rules.MIN_MELD_SIZE or shape_cells.size() != cards.size():
 		return false
@@ -111,7 +114,9 @@ func _shape_is_valid() -> bool:
 		if used.has(cell):
 			return false
 		used[cell] = c
-	# Flood-fill from any cell; a picture in one piece reaches every cell.
+	# Flood-fill from any cell; a picture in one piece reaches every cell. Steps
+	# span all eight neighbours (orthogonal AND diagonal), so cells that only
+	# meet at a corner still count as one connected image.
 	var seen := {}
 	var frontier: Array[Vector2i] = [shape_cells[cards[0]]]
 	while not frontier.is_empty():
@@ -119,7 +124,8 @@ func _shape_is_valid() -> bool:
 		if seen.has(cell) or not used.has(cell):
 			continue
 		seen[cell] = true
-		for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+		for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN,
+				Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
 			frontier.append(cell + step)
 	return seen.size() == used.size()
 
@@ -218,7 +224,8 @@ func sticky_cluster(start_card: Card) -> Array[Card]:
 	return cluster
 
 ## Flood the shape's grid from start_card over slimed cards touching edge to
-## edge — the picture-group reading of the sticky bond.
+## edge OR corner to corner — the picture-group reading of the sticky bond, so
+## a diagonally-linked outline still drags as one lump (matches _shape_is_valid).
 func _shape_sticky_cluster(start_card: Card) -> Array[Card]:
 	var cluster: Array[Card] = []
 	var frontier: Array[Card] = [start_card]
@@ -230,7 +237,8 @@ func _shape_sticky_cluster(start_card: Card) -> Array[Card]:
 		seen[c] = true
 		cluster.append(c)
 		var cell: Vector2i = shape_cells[c]
-		for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+		for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN,
+				Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
 			var n := card_at(cell + step)
 			if n != null and n.is_sticky() and not seen.has(n):
 				frontier.append(n)
