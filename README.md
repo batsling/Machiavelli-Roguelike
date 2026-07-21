@@ -237,12 +237,12 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   (`Card.deck_owner`), seeded Fisher-Yates shuffle, stock, and a face-up
   discard pile that recycles into the stock when it runs dry (the
   Billionaire's Riichi discards feed it)
-- `scripts/engine/tiling.gd` — `Tiling`: the exact "can this whole pile be laid
-  down into valid melds with none left over?" solver (a memoized, in-place
-  depth-first search over sets and runs, ace low/high, joker-aware). Answers
-  the full-rearrangement going-out test three ways for the Billionaire's
-  Riichi — the wait set (`wait_cards`), the tsumo/ron go-out (`can_partition`),
-  and a cheap one-wildcard tenpai gate (`can_partition_with_wild`)
+- `scripts/engine/tiling.gd` — `Tiling`: the exact "can this pile be laid down
+  into valid melds with none left over?" solver (a memoized, in-place
+  depth-first search over sets and runs, ace low/high, joker-aware). Run over the
+  Billionaire's hand for his Riichi three ways — the wait set (`wait_cards`), the
+  tsumo/ron go-out (`can_partition`), and a cheap one-wildcard tenpai gate
+  (`can_partition_with_wild`)
 - `scripts/engine/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
   future Trigger/Sticky effects), plus the layout state: an orientation
   (a line group can lie flat or stand upright on the felt), shape cells
@@ -327,15 +327,16 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   back, visible in any player's hand and on top of the stock, rendered
   transparent. The information cuts both ways — the player reads his hand off his
   card backs, and the smart brain counts every glass card in its planning. His
-  ultimate is the **Riichi**: with a full meter and a hand one card from going
-  out (the `Tiling` solver over his hand plus the whole rearrangeable table), he
-  weighs the wait — counting winnable copies and, with his glass vision,
-  refusing to declare into a wait whose copies are all visible in an opponent's
-  hand — then freezes his hand, drains his meter, and every turn draws one card:
-  a tsumo win if it lets him go out, else a face-up discard. An opponent's play
-  that lets his frozen hand go out is claimed on the spot (ron), through
-  `GameManager.play_interceptor`. Other AI opponents read that danger off his
-  glass cards and fold rather than feed it (`GreedyAI._feeds_riichi`)
+  ultimate is the **Riichi**: with a full meter and a hand one card from laying
+  itself down as its own melds (the `Tiling` solver over his hand alone — a
+  self-contained wait the table can't disturb), he weighs the wait — counting
+  winnable copies and, with his glass vision, refusing to declare into a wait
+  whose copies are all visible in an opponent's hand — then freezes his hand,
+  drains his meter, and every turn draws one card: a tsumo win if it completes
+  his hand, else a face-up discard. An opponent who plays one of his wait cards
+  onto the table hands him the win (ron), through `GameManager.play_interceptor`.
+  Other AI opponents read those waits off his glass cards and fold rather than
+  feed them (`GreedyAI._feeds_riichi`)
 
 ### UI — `scripts/ui/` + `scenes/`
 
@@ -561,24 +562,26 @@ known upcoming draw is held. Glass is pure information — it never restricts
 movement — so a card can be both glass and slimed.
 
 His **ultimate** is the **Riichi**, borrowed from mahjong. When his meter fills
-and his hand is *tenpai* — one card away from laying everything down and going
-out, computed by the `Tiling` solver over his hand plus the whole rearrangeable
-table (Machiavelli lets you re-meld the entire felt, so "one away" is a real
-full-board question, not just a hand shape) — he may declare. First he weighs
+and his hand is *tenpai* — one card away from laying his whole hand down as its
+own valid melds, computed by the `Tiling` solver over his hand alone — he may
+declare. The wait is **self-contained in his hand**: the winning card completes
+his own melds, so nobody rearranging the shared felt can change or break it (a
+board-dependent wait would be unstable, and un-mahjong-like). First he weighs
 whether it is worth it: he enumerates his waits and counts how many live copies
 of each are still winnable, and, reading his own glass passive Washizu-style, he
 **won't declare into a dead wait** — one whose only remaining copies he can see
 locked in an opponent's hand, where he could neither draw it nor expect a smart
 rival to feed it. On declaring, his hand **freezes** and his meter drains. From
-then on every turn is a single draw: if it lets him go out he wins by **tsumo**;
-otherwise he **discards it face up**, out of play until the stock runs dry and
-the discard pile is shuffled back in. And if any opponent commits a play that
-lets his frozen hand go out, he claims it and wins on the spot — his **ron**.
+then on every turn is a single draw: if it completes his hand he wins by
+**tsumo**; otherwise he **discards it face up**, out of play until the stock runs
+dry and the discard pile is shuffled back in. And if any opponent plays one of
+his wait cards onto the table, he claims it and wins on the spot — his **ron**.
 Because ron is fed by what opponents lay on the shared table, other AI opponents
-play around it: reading the same public glass information, a rival **folds**
-rather than lay a card that would let him go out (it still plays freely
-otherwise, and always takes its own winning turn over folding), so in a
-multi-opponent game the ron isn't handed over for free.
+play around it: reading his waits off his glass cards, a rival **folds** rather
+than lay one (it still plays freely otherwise, and always takes its own winning
+turn over folding), so in a multi-opponent game the ron isn't handed over for
+free. Because his hand must be structured into near-complete melds, Riichi is —
+as in mahjong — a special situation, not something he reaches every game.
 
 Still kept as data stubs so the vanilla engine stays clean: the other card
 effect flags on `Card` (Spiked, Brittle, Bomb, Clone, Trigger, Mirrored),
