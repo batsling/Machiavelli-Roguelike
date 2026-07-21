@@ -12,17 +12,19 @@ extends Enemy
 ## player reads his glass cards, and the smart AI counts every glass card too.
 ##
 ## ULTIMATE — Riichi (from mahjong). Once his meter is full and his hand is
-## "tenpai" — one card away from being able to lay everything down and go out
-## (Tiling.can_partition over his hand plus the whole rearrangeable table) — he
-## may declare Riichi. He weighs it first (see _should_declare): using his glass
-## vision he counts how many live, winnable copies of his waits remain, and he
-## refuses to declare into a dead wait — one whose only remaining copies are
-## visibly locked in opponents' hands (the Washizu-mahjong reading of his own
-## Clear passive). On declaring, his hand freezes and his meter drains. From then
-## on every turn he simply draws one card: if it lets him go out he wins by
-## "tsumo"; otherwise he discards it face up (out of play until the stock
-## recycles). And if any opponent's committed play makes his frozen hand able to
-## go out, he claims it and wins on the spot — his "ron" (see on_opponent_commit,
+## "tenpai" — one card away from laying his WHOLE HAND down as its own valid melds
+## (Tiling.can_partition over his hand alone) — he may declare Riichi. The wait is
+## self-contained in his hand, not the table: the winning card completes his own
+## melds, so no one rearranging the felt can disturb it. He weighs it first (see
+## _should_declare): using his glass vision he counts how many live, winnable
+## copies of his waits remain, and he refuses to declare into a dead wait — one
+## whose only remaining copies are visibly locked in opponents' hands (the
+## Washizu-mahjong reading of his own Clear passive). On declaring, his hand
+## freezes and his meter drains. From then on every turn he simply draws one card:
+## if it completes his hand he wins by "tsumo"; otherwise he discards it face up
+## (out of play until the stock recycles). And if any opponent plays one of his
+## wait cards onto the table, he claims it and wins on the spot — his "ron" (see
+## on_opponent_commit,
 ## wired through GameManager.play_interceptor).
 ##
 ## Glass is pure information — it never restricts how a card moves — so a card
@@ -98,17 +100,19 @@ func run_controlled_turn(gm: GameManager) -> Dictionary:
 	gm.advance_after_action()
 	return {"text": lead + "draws and discards %s face up" % card.label()}
 
-## Interceptor: right after an opponent commits a hand, if his frozen Riichi hand
-## can now go out over the table, he claims it and wins — his ron.
+## Interceptor: right after an opponent commits a hand, if any card they just
+## played is one of his wait cards (it completes his frozen hand), he claims it
+## and wins — his ron.
 func on_opponent_commit(gm: GameManager, committer: PlayerState) -> bool:
 	if not riichi:
 		return false
 	var me := _my_state(gm)
 	if me == null or committer == me:
 		return false
-	if _can_go_out(gm):
-		gm.win_now([me])
-		return true
+	for c in gm.cards_placed_this_turn():
+		if _can_go_out(gm, c):
+			gm.win_now([me])
+			return true
 	return false
 
 # --- Riichi: the declaration decision -----------------------------------------
@@ -215,24 +219,14 @@ func _live_jokers(gm: GameManager) -> int:
 
 # --- Riichi: the go-out test --------------------------------------------------
 
-## The pile he re-melds when he goes out: his hand plus every card in a plain
-## line group on the table (pictures and their extension lines are sealed and
-## stay as they are). Deduplicated, since a shared pivot card can sit in two
-## crossing groups.
+## The pile he lays down when he goes out: his hand alone. The wait is
+## self-contained — the winning card completes his own melds — so the table
+## (which anyone may rearrange) can never disturb it.
 func _go_out_pool(gm: GameManager) -> Array[Card]:
-	var out: Array[Card] = _my_state(gm).hand.duplicate()
-	var seen := {}
-	for m in gm.board.melds:
-		if not GreedyAI._plain_meld(m):
-			continue
-		for c in m.cards:
-			if not seen.has(c):
-				seen[c] = true
-				out.append(c)
-	return out
+	return _my_state(gm).hand.duplicate()
 
-## True when his hand plus the rearrangeable table (optionally with one more
-## drawn card) can all be laid down into valid melds — i.e. he can go out.
+## True when his hand (optionally with one more card — a draw or an opponent's
+## just-played wait) lays down entirely into its own valid melds — he can go out.
 func _can_go_out(gm: GameManager, extra: Card = null) -> bool:
 	var pool := _go_out_pool(gm)
 	if extra != null:

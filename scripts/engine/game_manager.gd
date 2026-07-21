@@ -474,6 +474,17 @@ func reset_turn() -> void:
 func cards_played_this_turn() -> int:
 	return _hand_snapshot.size() - current_player().hand.size()
 
+## The cards the current player has moved from their hand onto the table this
+## turn (in the turn-start snapshot but no longer in hand). Read by a mechanic
+## interceptor to see exactly what an opponent just played (the Billionaire's
+## ron checks these against his waits).
+func cards_placed_this_turn() -> Array[Card]:
+	var out: Array[Card] = []
+	for c in _hand_snapshot:
+		if not current_player().hand.has(c):
+			out.append(c)
+	return out
+
 ## True when every given card is one the current player laid down from hand
 ## this turn (still in the turn-start snapshot but no longer in the hand) —
 ## i.e. the whole batch may legally go back into the hand.

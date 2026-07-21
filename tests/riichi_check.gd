@@ -4,7 +4,7 @@ extends SceneTree
 ## discard-pile plumbing it rides on. Run:
 ##   godot --headless --path . --script res://tests/riichi_check.gd
 
-const MAX_TURNS := 1500
+const MAX_TURNS := 3000
 
 var ok := true
 
@@ -162,7 +162,8 @@ func _test_ron_via_commit() -> void:
 	var b: SadisticBillionaire = f["b"]
 	b.riichi = true
 	gm.players[1].declared_riichi = true
-	# His hand 7s,8s absorbs into the opponent's 9s-10s-J run for a 5-long run.
+	# His hand 7s,8s waits on 6s/9s; the opponent's play includes 9s, completing
+	# his own 7-8-9 run.
 	gm.players[1].hand = [_card(7, "spades"), _card(8, "spades")]
 	gm.players[0].hand = [_card(9, "spades"), _card(10, "spades"), _card(11, "spades"),
 		_card(2, "diamonds")]
@@ -180,25 +181,25 @@ func _test_ron_via_commit() -> void:
 	elif winners.size() != 1 or winners[0] != gm.players[1]:
 		_fail("ron: the Billionaire should be the sole winner")
 
-## A GreedyAI rival won't lay a run that lets the Riichi player's visible hand go
-## out, but plays freely when its play leaves that hand short.
+## A GreedyAI rival won't lay a card it can see completes the Riichi player's
+## hand (a wait read off his glass cards), but plays freely otherwise.
 func _test_defender_folds() -> void:
 	var gm := GameManager.new()
 	gm.setup(["You", "The Sadistic Billionaire", "Rival"], 5, 1, false)
 	gm.board.melds.clear()
-	# Bill (seat 1) has declared, showing glass 7s,8s. A 9s-10s-J run on the
-	# table lets 7-8-9-10-J tile as one run — a feed.
+	# Bill (seat 1) has declared, showing glass 7s,8s — so 6s/9s read as waits.
 	gm.players[1].declared_riichi = true
 	gm.players[1].hand = [_glass(_card(7, "spades")), _glass(_card(8, "spades"))]
-	# Rival (seat 2) can lay exactly that run, plus a spare so laying it does not
-	# empty the hand (which would win and override caution).
+	# Rival (seat 2) can lay a 9s-10s-J run — but the 9s is a wait, so laying it
+	# feeds the ron. The spare means laying it does not empty the hand (which
+	# would win and override caution).
 	gm.players[2].hand = [_card(9, "spades"), _card(10, "spades"), _card(11, "spades"),
 		_card(2, "diamonds")]
 	_begin_turn_for(gm, 2)
 	var move := GreedyAI.plan_move(gm, null, null)
 	if not move.is_empty():
-		_fail("defender: should fold rather than lay the run that lets Riichi go out")
-	# A run that leaves the visible 7s,8s stranded is safe to play.
+		_fail("defender: should fold rather than lay the 9s that completes his hand")
+	# A run with no wait card in it is safe to play.
 	gm.players[2].hand = [_card(2, "clubs"), _card(3, "clubs"), _card(4, "clubs"),
 		_card(2, "diamonds")]
 	_begin_turn_for(gm, 2)
@@ -210,7 +211,7 @@ func _test_defender_folds() -> void:
 ## every meld valid, and conserve all 108 cards (stock + discards + table + hands).
 func _test_full_game_invariants() -> void:
 	var declared_any := false
-	for seed_value in range(1, 4):
+	for seed_value in range(1, 6):
 		var gm := GameManager.new()
 		gm.setup(["You", "The Sadistic Billionaire"], 7, seed_value, true)
 		gm.draw_per_turn = 2

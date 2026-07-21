@@ -116,58 +116,40 @@ static func plan_move(gm: GameManager, profile: AIProfile = null,
 		return enemy.plan_strategy_move(gm)
 	return {}
 
-## True when this move would tip a Riichi opponent into being able to go out —
-## the see-through feed the defender wants to avoid. Under the full-rearrangement
-## rules, going out means the opponent's hand plus the WHOLE table re-melds with
-## nothing left over, so a feed is a play after which (their visible hand + the
-## table + our newly played cards) becomes tileable when it wasn't before. Read
-## from public information only — their glass-visible cards — so opaque waits
-## still leak, but the obvious feeds are dodged. A move that empties our own hand
-## wins first and is never held back.
+## True when this move would lay one of a Riichi opponent's wait cards onto the
+## table (feeding their ron) without itself going out. The wait is self-contained
+## in their hand, so the danger set is read from what we can see of that hand —
+## their glass-visible cards — meaning opaque waits still leak, but the obvious
+## see-through feeds are avoided. A move that empties our own hand wins first, so
+## it is never held back.
 static func _feeds_riichi(gm: GameManager, move: Dictionary) -> bool:
-	if not _has_riichi_opponent(gm):
+	var danger := _riichi_danger(gm)
+	if danger.is_empty():
 		return false
 	if _move_goes_out(gm, move):
 		return false
 	var hand := gm.current_player().hand
-	var played: Array[Card] = []
 	for c: Card in move["cards"]:
-		# Only a card leaving our hand for the table adds new material; a pure
-		# table rearrangement feeds nothing the opponent could not already use.
-		if hand.has(c):
-			played.append(c)
-	if played.is_empty():
-		return false
-	var base := _riichi_visible_pool(gm)
-	if Tiling.can_partition(base):
-		return false  # they could already go out; our play is not the cause
-	var full := base.duplicate()
-	full.append_array(played)
-	return Tiling.can_partition(full)
-
-## True when some opponent (not the current player) has declared Riichi.
-static func _has_riichi_opponent(gm: GameManager) -> bool:
-	for p in gm.players:
-		if p != gm.current_player() and p.declared_riichi:
+		# Only a card leaving our hand for the table can feed; a pure table
+		# rearrangement plays no new card.
+		if hand.has(c) and not c.is_joker and danger.has("%d,%s" % [c.rank, c.suit]):
 			return true
 	return false
 
-## The public pile a Riichi opponent could go out over: their glass-visible hand
-## cards plus every plain table card (only the first Riichi opponent — just one
-## enemy is designed to declare).
-static func _riichi_visible_pool(gm: GameManager) -> Array[Card]:
-	var out: Array[Card] = []
+## The wait cards ("rank,suit" keys) a Riichi opponent could be waiting on, read
+## from their glass-visible hand cards (their wait is self-contained in hand).
+## Empty (and cheap) whenever no opponent has declared Riichi.
+static func _riichi_danger(gm: GameManager) -> Dictionary:
+	var out := {}
 	for p in gm.players:
 		if p == gm.current_player() or not p.declared_riichi:
 			continue
+		var pool: Array[Card] = []
 		for c in p.hand:
 			if c.is_glass():
-				out.append(c)
-		break
-	for m in gm.board.melds:
-		if _plain_meld(m):
-			for c in m.cards:
-				out.append(c)
+				pool.append(c)
+		for w in Tiling.wait_cards(pool):
+			out["%d,%s" % [w["rank"], w["suit"]]] = true
 	return out
 
 ## True when this move plays every card left in the current player's hand — it
