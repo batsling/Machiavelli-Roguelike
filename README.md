@@ -234,7 +234,15 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   alternative stand-ins a joker could take, display ordering
 - `scripts/engine/deck.gd` — `Deck`: the players' single decks combined into one
   double deck (optional jokers), each card tagged with its origin deck
-  (`Card.deck_owner`), seeded Fisher-Yates shuffle, stock
+  (`Card.deck_owner`), seeded Fisher-Yates shuffle, stock, and a face-up
+  discard pile that recycles into the stock when it runs dry (the
+  Billionaire's Riichi discards feed it)
+- `scripts/engine/tiling.gd` — `Tiling`: the exact "can this whole pile be laid
+  down into valid melds with none left over?" solver (a memoized, in-place
+  depth-first search over sets and runs, ace low/high, joker-aware). Answers
+  the full-rearrangement going-out test three ways for the Billionaire's
+  Riichi — the wait set (`wait_cards`), the tsumo/ron go-out (`can_partition`),
+  and a cheap one-wildcard tenpai gate (`can_partition_with_wild`)
 - `scripts/engine/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
   future Trigger/Sticky effects), plus the layout state: an orientation
   (a line group can lie flat or stand upright on the felt), shape cells
@@ -318,7 +326,16 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   one copy of each, so exactly half the cards in play go see-through from the
   back, visible in any player's hand and on top of the stock, rendered
   transparent. The information cuts both ways — the player reads his hand off his
-  card backs, and the smart brain counts every glass card in its planning
+  card backs, and the smart brain counts every glass card in its planning. His
+  ultimate is the **Riichi**: with a full meter and a hand one card from going
+  out (the `Tiling` solver over his hand plus the whole rearrangeable table), he
+  weighs the wait — counting winnable copies and, with his glass vision,
+  refusing to declare into a wait whose copies are all visible in an opponent's
+  hand — then freezes his hand, drains his meter, and every turn draws one card:
+  a tsumo win if it lets him go out, else a face-up discard. An opponent's play
+  that lets his frozen hand go out is claimed on the spot (ron), through
+  `GameManager.play_interceptor`. Other AI opponents read that danger off his
+  glass cards and fold rather than feed it (`GreedyAI._feeds_riichi`)
 
 ### UI — `scripts/ui/` + `scenes/`
 
@@ -355,6 +372,15 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   counting (visible copies, obtainable copies, glass feed threats, glass-aware
   holding and joker stand-ins) — including full slimed, glass, and
   glass-plus-slimed AI-vs-AI games
+- `tests/tiling_check.gd` — headless check of the `Tiling` go-out solver: sets,
+  runs (ace low, high and the no-wrap rule), joker fills, multi-meld piles, and
+  the wait-set enumeration
+- `tests/riichi_check.gd` — headless check of the Billionaire's Riichi: the
+  discard-pile reshuffle, the declaration gate (full meter + a live wait, not an
+  already-complete hand), dead-wait avoidance off glass information, the tsumo
+  win, the face-up draw-and-discard turn, the ron via the commit interceptor, a
+  rival folding rather than feeding the ron, and invariant-checked (validity,
+  108-card conservation, termination) AI-vs-AI games
 - `tests/ui_mode_check.gd` — headless check of the menu modes, the settings
   model, and the roguelike ladder (rules apply from the next round, win/loss
   buttons, starting combos)
@@ -369,6 +395,8 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   registration and a new-group drop
 - `tests/anim_check.gd` — headless check that an enemy turn drives to
   completion through `EnemyMoveAnimator` with no leaked flying-card proxies
+- `tests/riichi_view_check.gd` — headless check that the Riichi UI renders: the
+  face-up discard pile beside the stock and the RIICHI seat badge
 - `tests/layout_check.gd` — headless check of the board-layout groundwork and
   the slime's ultimate: orientation and shape cells surviving snapshots,
   crossing groups (staging, validity, extending either group, undo, commit,
@@ -396,6 +424,9 @@ godot --headless --path . --script res://tests/play_hint_check.gd  # hover-to-pl
 godot --headless --path . --script res://tests/view_check.gd       # table rendering + drag/drop
 godot --headless --path . --script res://tests/anim_check.gd       # enemy-turn animation
 godot --headless --path . --script res://tests/layout_check.gd     # board-layout groundwork
+godot --headless --path . --script res://tests/tiling_check.gd     # go-out / wait solver
+godot --headless --path . --script res://tests/riichi_check.gd     # the Billionaire's Riichi
+godot --headless --path . --script res://tests/riichi_view_check.gd # Riichi UI (discard pile, badge)
 ```
 
 ## Headless balance stats
@@ -528,6 +559,26 @@ opponent visibly holds are feeds it avoids, joker stand-ins whose swap card
 an opponent visibly holds are never picked, and a card that pairs with a
 known upcoming draw is held. Glass is pure information — it never restricts
 movement — so a card can be both glass and slimed.
+
+His **ultimate** is the **Riichi**, borrowed from mahjong. When his meter fills
+and his hand is *tenpai* — one card away from laying everything down and going
+out, computed by the `Tiling` solver over his hand plus the whole rearrangeable
+table (Machiavelli lets you re-meld the entire felt, so "one away" is a real
+full-board question, not just a hand shape) — he may declare. First he weighs
+whether it is worth it: he enumerates his waits and counts how many live copies
+of each are still winnable, and, reading his own glass passive Washizu-style, he
+**won't declare into a dead wait** — one whose only remaining copies he can see
+locked in an opponent's hand, where he could neither draw it nor expect a smart
+rival to feed it. On declaring, his hand **freezes** and his meter drains. From
+then on every turn is a single draw: if it lets him go out he wins by **tsumo**;
+otherwise he **discards it face up**, out of play until the stock runs dry and
+the discard pile is shuffled back in. And if any opponent commits a play that
+lets his frozen hand go out, he claims it and wins on the spot — his **ron**.
+Because ron is fed by what opponents lay on the shared table, other AI opponents
+play around it: reading the same public glass information, a rival **folds**
+rather than lay a card that would let him go out (it still plays freely
+otherwise, and always takes its own winning turn over folding), so in a
+multi-opponent game the ron isn't handed over for free.
 
 Still kept as data stubs so the vanilla engine stays clean: the other card
 effect flags on `Card` (Spiked, Brittle, Bomb, Clone, Trigger, Mirrored),
