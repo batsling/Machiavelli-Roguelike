@@ -83,6 +83,14 @@ func run_controlled_turn(_gm: GameManager) -> Dictionary:
 func on_opponent_commit(_gm: GameManager, _committer: PlayerState) -> bool:
 	return false
 
+## Strategy veto on the AI's own ordinary plays: GreedyAI's smart brain drops
+## any candidate move this returns true for (unless the AI is racing to finish),
+## so a designed enemy can refuse to make plays that work against its plan — the
+## Billionaire holding a developing hand together as he builds toward a Riichi
+## tenpai. The base enemy vetoes nothing.
+func avoids_play(_gm: GameManager, _move: Dictionary) -> bool:
+	return false
+
 ## Every designed enemy, in ladder order. The rogue mode draws from this pool.
 static func roster() -> Array[Enemy]:
 	var out: Array[Enemy] = []

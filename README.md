@@ -242,7 +242,8 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   depth-first search over sets and runs, ace low/high, joker-aware). Run over the
   Billionaire's hand for his Riichi three ways — the wait set (`wait_cards`), the
   tsumo/ron go-out (`can_partition`), and a cheap one-wildcard tenpai gate
-  (`can_partition_with_wild`)
+  (`can_partition_with_wild`) — plus a distance-to-going-out measure
+  (`min_extra_to_tile`) his hand-shaping strategy reads
 - `scripts/engine/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
   future Trigger/Sticky effects), plus the layout state: an orientation
   (a line group can lie flat or stand upright on the felt), shape cells
@@ -336,7 +337,10 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   his hand, else a face-up discard. An opponent who plays one of his wait cards
   onto the table hands him the win (ron), through `GameManager.play_interceptor`.
   Other AI opponents read those waits off his glass cards and fold rather than
-  feed them (`GreedyAI._feeds_riichi`)
+  feed them (`GreedyAI._feeds_riichi`). To reach a tenpai hand at all he plays a
+  hand-shaping strategy (`avoids_play`, consulted by the smart brain): he holds
+  his developing melds and partials together, shedding only complete groups and
+  floaters, rather than dumping his hand like the baseline AI
 
 ### UI — `scripts/ui/` + `scenes/`
 
@@ -566,8 +570,13 @@ and his hand is *tenpai* — one card away from laying his whole hand down as it
 own valid melds, computed by the `Tiling` solver over his hand alone — he may
 declare. The wait is **self-contained in his hand**: the winning card completes
 his own melds, so nobody rearranging the shared felt can change or break it (a
-board-dependent wait would be unstable, and un-mahjong-like). First he weighs
-whether it is worth it: he enumerates his waits and counts how many live copies
+board-dependent wait would be unstable, and un-mahjong-like). To get there he
+**plays for tenpai** instead of racing to empty out like the baseline AI: his
+hand-shaping strategy (`GreedyAI.avoids_play`) holds his developing melds and
+partials together — refusing any play that would leave his hand further from
+going out (`Tiling.min_extra_to_tile`) — while still shedding complete groups
+and useless floaters, so a structured chunk survives and grows toward a good
+wait. First he weighs whether declaring is worth it: he enumerates his waits and counts how many live copies
 of each are still winnable, and, reading his own glass passive Washizu-style, he
 **won't declare into a dead wait** — one whose only remaining copies he can see
 locked in an opponent's hand, where he could neither draw it nor expect a smart

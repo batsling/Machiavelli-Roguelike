@@ -53,6 +53,18 @@ static func can_partition_with_wild(cards: Array[Card]) -> bool:
 	var built := _counts(cards)
 	return _solve(built["cnt"], built["jokers"] + 1, {}, [NODE_BUDGET])
 
+## How many extra cards the pile is from going out — its "shanten"-like distance:
+## the fewest wildcards that, added in, let it tile. 0 means it already tiles, 1
+## is tenpai (one card away), and so on. Capped at `cap`; a pile further than that
+## returns cap + 1. Lets a strategy compare how a play changes its distance to a
+## win without caring about the exact large value.
+static func min_extra_to_tile(cards: Array[Card], cap: int = 4) -> int:
+	var built := _counts(cards)
+	for k in range(cap + 1):
+		if _solve(built["cnt"], built["jokers"] + k, {}, [NODE_BUDGET]):
+			return k
+	return cap + 1
+
 ## Every natural card (rank+suit) that, added to `cards` as one more copy, makes
 ## the whole pile go out — the wait set. Returned as {"rank": int, "suit": String}
 ## entries (ace reported as rank 1). Does not judge whether a live copy of the

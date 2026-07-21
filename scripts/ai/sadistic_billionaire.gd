@@ -23,7 +23,12 @@ extends Enemy
 ## freezes and his meter drains. From then on every turn he simply draws one card:
 ## if it completes his hand he wins by "tsumo"; otherwise he discards it face up
 ## (out of play until the stock recycles). And if any opponent plays one of his
-## wait cards onto the table, he claims it and wins on the spot — his "ron" (see
+## wait cards onto the table, he claims it and wins on the spot — his "ron".
+##
+## STRATEGY — playing for tenpai. To reach that hand he does not just dump cards
+## like the baseline AI: he holds his developing melds and partials together and
+## only sheds complete combinations and useless floaters, shaping his hand toward
+## a good tenpai (avoids_play, consulted by GreedyAI's smart brain). See
 ## on_opponent_commit,
 ## wired through GameManager.play_interceptor).
 ##
@@ -46,7 +51,9 @@ func mechanic_intro() -> String:
 	return "[b]%s[/b] turns every card in his own deck to glass (transparent) " \
 		% display_name \
 		+ "— one copy of each, so only his half is see-through, visible in any " \
-		+ "hand and on the stock. His ultimate is [b]Riichi[/b]: with a full " \
+		+ "hand and on the stock. He plays for [b]tenpai[/b] — holding his " \
+		+ "developing melds together and shedding only complete groups and junk. " \
+		+ "His ultimate is [b]Riichi[/b]: with a full " \
 		+ "meter and a hand one card from going out, he freezes his hand and only " \
 		+ "draws — winning by [i]tsumo[/i] if he draws his card, or claiming it " \
 		+ "([i]ron[/i]) the instant an opponent plays it. He won't declare into a " \
@@ -114,6 +121,57 @@ func on_opponent_commit(gm: GameManager, committer: PlayerState) -> bool:
 			gm.win_now([me])
 			return true
 	return false
+
+# --- Riichi: shaping the hand toward tenpai -----------------------------------
+
+## How far from going out he bothers to distinguish; beyond this a hand is just
+## "far" and shedding within that range is unconstrained.
+const AWAY_CAP := 3
+
+## Cache of his current hand's distance-to-going-out, reused across the many
+## candidate plays the smart brain scores in one turn (the hand is fixed then).
+var _away_sig := -1
+var _away_val := 0
+
+## His hand-shaping strategy, consulted by GreedyAI's smart brain (avoids_play):
+## veto any ordinary play that works against building a Riichi hand. He holds his
+## developing melds and partials together — he never sheds a card whose loss
+## pushes his hand further from going out — but freely lays down complete
+## combinations and pure floaters (which don't hurt, and keep his meter charging).
+## A play that empties his hand wins outright and is never vetoed; with the meter
+## off there is no Riichi to build toward, so the strategy stands down. GreedyAI
+## ignores the veto when racing to finish, so a tight endgame still overrides it.
+func avoids_play(gm: GameManager, move: Dictionary) -> bool:
+	if riichi or gm.meter_max <= 0:
+		return false
+	var me := _my_state(gm)
+	if me == null:
+		return false
+	var from_hand: Array[Card] = []
+	for c: Card in move["cards"]:
+		if me.hand.has(c):
+			from_hand.append(c)
+	if from_hand.is_empty():
+		return false  # a table-only rearrangement sheds nothing from his hand
+	var new_hand: Array[Card] = me.hand.duplicate()
+	for c in from_hand:
+		new_hand.erase(c)
+	if new_hand.is_empty():
+		return false  # this play goes out — always take the win
+	# Hold the play back only if it would leave his hand further from going out —
+	# i.e. it breaks up a developing meld or partial he is building his wait on.
+	return Tiling.min_extra_to_tile(new_hand, AWAY_CAP) > _hand_away(me.hand)
+
+## His current hand's distance to going out, cached for the run of candidate
+## plays the smart brain scores against one fixed hand this turn.
+func _hand_away(hand: Array[Card]) -> int:
+	var sig := hand.size()
+	for c in hand:
+		sig = sig * 31 + (100 if c.is_joker else c.rank * 4 + Deck.SUITS.find(c.suit))
+	if sig != _away_sig:
+		_away_sig = sig
+		_away_val = Tiling.min_extra_to_tile(hand, AWAY_CAP)
+	return _away_val
 
 # --- Riichi: the declaration decision -----------------------------------------
 

@@ -4,7 +4,7 @@ extends SceneTree
 ## discard-pile plumbing it rides on. Run:
 ##   godot --headless --path . --script res://tests/riichi_check.gd
 
-const MAX_TURNS := 3000
+const MAX_TURNS := 1500
 
 var ok := true
 
@@ -213,10 +213,10 @@ func _test_full_game_invariants() -> void:
 	var declared_any := false
 	for seed_value in range(1, 6):
 		var gm := GameManager.new()
-		gm.setup(["You", "The Sadistic Billionaire"], 7, seed_value, true)
+		gm.setup(["You", "The Sadistic Billionaire"], 13, seed_value, true)
 		gm.draw_per_turn = 2
 		gm.max_plays_per_turn = 13
-		gm.meter_max = 3
+		gm.meter_max = 30
 		gm.meter_per_card = true
 		var b := SadisticBillionaire.new()
 		b.on_combat_start(gm)

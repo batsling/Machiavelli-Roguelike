@@ -103,7 +103,7 @@ static func take_turn(gm: GameManager, profile: AIProfile = null,
 ## rearrangement on the felt (see draw_and_end_turn) rather than rolling it back.
 static func plan_move(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> Dictionary:
-	var move := _plan_normal_move(gm, profile)
+	var move := _plan_normal_move(gm, profile, enemy)
 	if not move.is_empty():
 		# Defense: if an opponent has declared Riichi, don't hand them the card
 		# they are waiting on. Cards already played safely this turn stand; the
@@ -163,10 +163,13 @@ static func _move_goes_out(gm: GameManager, move: Dictionary) -> bool:
 	return from_hand > 0 and from_hand == hand.size()
 
 ## The AI's ordinary move search (complete melds, lay-offs, rearrangements),
-## independent of any enemy strategy. See plan_move for the return shape.
-static func _plan_normal_move(gm: GameManager, profile: AIProfile = null) -> Dictionary:
+## independent of any enemy strategy. See plan_move for the return shape. A
+## designed enemy (when given) may veto individual candidates via avoids_play —
+## the Billionaire holding his developing tenpai together.
+static func _plan_normal_move(gm: GameManager, profile: AIProfile = null,
+		enemy: Enemy = null) -> Dictionary:
 	if profile != null and profile.uses_smart_brain():
-		return _plan_smart_move(gm, profile)
+		return _plan_smart_move(gm, profile, enemy)
 	# Cards still playable under the play cap this turn (-1 = unlimited).
 	# Every planned move stays within it, or staging would reject the move.
 	var budget := -1
@@ -268,7 +271,8 @@ static func _plan_normal_move(gm: GameManager, profile: AIProfile = null) -> Dic
 ## the best (or {} to hold and draw when nothing scores positive). Mirrors
 ## plan_move's move families and rules (opening gate, play cap) but compares
 ## candidates instead of taking the first.
-static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
+static func _plan_smart_move(gm: GameManager, profile: AIProfile,
+		enemy: Enemy = null) -> Dictionary:
 	var budget := -1
 	if gm.max_plays_per_turn > 0:
 		budget = gm.max_plays_per_turn - gm.cards_played_this_turn()
@@ -383,6 +387,11 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile) -> Dictionary:
 	var best: Dictionary = {}
 	var best_score := 0.0  # hold and draw rather than play a net-negative move
 	for cand in candidates:
+		# A designed enemy's strategy may veto a candidate outright — the
+		# Billionaire refusing to break up the hand he is shaping toward a Riichi
+		# tenpai. Racing to finish overrides the strategy (endgame is endgame).
+		if enemy != null and not race and enemy.avoids_play(gm, cand):
+			continue
 		var score := _score_move(gm, cand, hand, race)
 		if score > best_score:
 			best_score = score
