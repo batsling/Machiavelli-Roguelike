@@ -572,10 +572,11 @@ func _give_hand(gm: GameManager, hand: Array[Card]) -> void:
 	gm._hand_snapshot = hand.duplicate()
 	gm._undo_stack.clear()
 
-## Scrabble-style plays off a picture: growable pair, extension to a full
-## run, the lower-rank-on-top rule for vertical straights, the outward-only
-## and one-line-per-axis rules, loose line cards (they come off one at a
-## time), sealed picture cards, no jokers, and a clean commit.
+## Scrabble-style plays off a picture: the three-card minimum (a lone card is
+## refused), the lower-rank-on-top rule for vertical straights, the outward-only
+## and one-line-per-axis rules, loose line cards (they come off one at a time,
+## which can leave the line too short), sealed picture cards, no jokers, and a
+## clean commit.
 func _test_play_off_picture() -> void:
 	var setup := _picture_gm()
 	var gm: GameManager = setup["gm"]
@@ -596,52 +597,56 @@ func _test_play_off_picture() -> void:
 	# the higher rank on top, so upward plays off the 7H must descend.
 	if gm.play_off_picture(top, Vector2i.UP, [eight] as Array[Card]) == "":
 		_fail("8H above the 7H puts the higher rank on top — must be refused")
-	# A single 6H up from the 7H petal: a growable pair, lower rank on top.
-	var err := gm.play_off_picture(top, Vector2i.UP, [six] as Array[Card])
+	# A single 6H off the 7H petal is only a pair counting the anchor — too
+	# short. A line off a picture needs at least two cards (three with the
+	# anchor), so the lone card is refused and nothing is staged.
+	if gm.play_off_picture(top, Vector2i.UP, [six] as Array[Card]) == "":
+		_fail("a single card off a picture must be refused — a line needs three")
+	if gm.board.melds.size() != 1:
+		_fail("a refused single-card line must not leave a stub on the table")
+	# Two cards at once do read: 6H then 5H up from the 7H completes 7-6-5, on
+	# screen 5 on top and 7 at the picture (lower rank on top).
+	var err := gm.play_off_picture(top, Vector2i.UP, [six, five] as Array[Card])
 	if err != "":
-		_fail("6H off the 7H petal should stage as a growable pair, got: %s" % err)
+		_fail("6H 5H up off the 7H petal should stage the run 7-6-5, got: %s" % err)
 		return
 	var line: CardSet = gm.board.melds[-1]
 	if not line.is_attached() or line.attach_anchor != top or not line.is_valid():
-		_fail("the pair should live in a valid attached line off the 7H")
-	# Extending the line with 5H completes the run 7-6-5 reading outward — on
-	# screen that is 5 on top, 7 at the picture: lower rank on top.
-	if gm.add_cards_to_meld([five] as Array[Card], line) != "":
-		_fail("5H should extend the line into 7-6-5")
+		_fail("the run should live in a valid attached line off the 7H")
 	if line.cards != ([six, five] as Array[Card]):
 		_fail("the line should hold 6H then 5H outward")
 	# The other way on the same axis is that line's, not a second one's.
 	if gm.play_off_picture(top, Vector2i.DOWN, [eight] as Array[Card]) == "":
 		_fail("the 7H already carries its vertical line — no second one")
-	# A dead pair never sticks; neither do jokers; picture cards are sealed.
+	# A line that doesn't read is refused; a lone card is too short; jokers
+	# never stick; picture cards are sealed.
+	if gm.play_off_picture(left, Vector2i.LEFT, [two, king] as Array[Card]) == "":
+		_fail("2C KD off the 5D petal don't read as a set or run — refused")
 	if gm.play_off_picture(left, Vector2i.LEFT, [two] as Array[Card]) == "":
-		_fail("2C off the 5D petal is a dead pair and must be refused")
+		_fail("a single card off the 5D petal is too short — refused")
 	if gm.play_off_picture(left, Vector2i.LEFT, [joker] as Array[Card]) == "":
 		_fail("jokers don't stick to pictures")
 	if gm.move_cards_to_new_meld([top] as Array[Card]) == "":
 		_fail("picture cards are sealed in place")
-	# Outward only: left from the stem could grow (JD then QD reads as a run),
-	# but the cell (0,3) hugs the picture's bottom wall at (0,2) — refused.
+	# Outward only: left from the stem, JD QD KD reads as a run, but the first
+	# cell (0,3) hugs the picture's bottom wall at (0,2) — refused.
 	var stem: Card = (setup["picture"] as CardSet).card_at(Vector2i(1, 3))
-	if gm.play_off_picture(stem, Vector2i.LEFT, [queen] as Array[Card]) == "":
+	if gm.play_off_picture(stem, Vector2i.LEFT, [queen, king] as Array[Card]) == "":
 		_fail("a line hugging the picture must be refused (outward only)")
-	# Line cards stay loose: the outer card comes back on its own...
+	# Line cards stay loose: the outer card comes back on its own, but pulling
+	# it leaves a lone card off the picture — too short for a legal line, so it
+	# shows invalid and blocks the commit until the turn is cleaned up.
 	if gm.return_cards_to_hand([five] as Array[Card]) != "":
 		_fail("taking the outer line card back alone should be allowed")
-	if line.cards != ([six] as Array[Card]) or not line.is_valid():
-		_fail("the line should shrink back to the growable 7-6 pair")
-	# ...and so can the inner one, the rest sliding in toward the anchor: 5H
-	# alone then reads 7-5, broken until the turn is cleaned up.
-	if gm.add_cards_to_meld([five] as Array[Card], line) != "":
-		_fail("5H should re-extend the line")
-	if gm.return_cards_to_hand([six] as Array[Card]) != "":
-		_fail("the inner line card should be free to leave mid-turn")
+	if line.cards != ([six] as Array[Card]):
+		_fail("the line should shrink back toward the anchor, holding just 6H")
 	if line.is_valid():
-		_fail("7H then 5H does not read — the broken line must show invalid")
+		_fail("a lone 6H off the 7H is too short — the shrunk line must show invalid")
 	if gm.commit_turn() == "":
-		_fail("a turn ending on a broken line must not commit")
-	if gm.return_cards_to_hand([five] as Array[Card]) != "":
-		_fail("clearing the broken line should be allowed")
+		_fail("a turn ending on a too-short line must not commit")
+	# Clearing the stub is allowed, and the emptied line dissolves.
+	if gm.return_cards_to_hand([six] as Array[Card]) != "":
+		_fail("clearing the too-short line should be allowed")
 	if gm.board.melds.size() != 1:
 		_fail("the emptied line should dissolve, leaving just the picture")
 	# A downward straight ascends instead (again lower rank on top): Q K
@@ -748,15 +753,17 @@ func _test_picture_ghost_cells() -> void:
 	var picture := CuteSlime.build_shape_meld(TEST_PICTURE, flower_cards)
 	ui.gm.board.melds.assign([picture] as Array[CardSet])
 	ui.gm.players[0].has_opened = true
-	# A 6H above the 7H petal: descending upward, so the lower rank is on top.
+	# 6H then 5H above the 7H petal: descending upward, so the lower rank is on
+	# top — a full three-card line counting the anchor.
 	var six := _card(6, "hearts")
-	ui.gm.players[0].hand = [six] as Array[Card]
+	var five := _card(5, "hearts")
+	ui.gm.players[0].hand = [six, five] as Array[Card]
 	ui.gm._hand_snapshot = ui.gm.players[0].hand.duplicate()
 	ui._refresh()
 	await process_frame
 	if _count_ghosts(ui) == 0:
 		_fail("a picture on your turn should show ghost play cells")
-	ui._play_line_start(top, Vector2i.UP, [six] as Array[Card])
+	ui._play_line_start(top, Vector2i.UP, [six, five] as Array[Card])
 	await process_frame
 	var btn: Button = ui.card_nodes.get(six)
 	if btn == null or not (btn.get_parent() is GridContainer):

@@ -249,7 +249,7 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   (a "picture" group placing its cards on a small grid, with line-through
   helpers), and the attachment of an extension line — the picture card it
   reads from and its outward direction, its validity being the grid-line
-  (or growable-pair) reading with that anchor counted in
+  reading (at least three cards, that anchor counted in)
 - `scripts/engine/board.gd` — `Board`: the melds on the table, with snapshot/restore so a
   whole turn's rearrangement can be rolled back (snapshots keep each group's
   orientation and shape). A card may sit in more than one meld at once — an
@@ -411,10 +411,10 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   seals a valid heart picture, resets the meter, holds when short, and fires
   inside full seeded AI-vs-AI games with every invariant intact), a picture
   card being movable the turn it is sealed but sealed shut thereafter, the
-  Scrabble-style plays off pictures (grid-line and could-grow-pair readings,
-  growable pair → run extension, outward-only and one-line-per-axis rules,
-  whole-line tear-down, sealed picture cards, no jokers, commit, and the ghost
-  play cells rendering), and the
+  Scrabble-style plays off pictures (the grid-line reading and its three-card
+  minimum — a lone card is refused, run extension, outward-only and
+  one-line-per-axis rules, whole-line tear-down, sealed picture cards, no
+  jokers, commit, and the ghost play cells rendering), and the
   vertical/grid rendering paths
 
 ## Headless smoke test
@@ -477,9 +477,9 @@ mechanics that will use it still to come:
   in one direction, horizontal or vertical (`GameManager.play_off_picture`):
   the cards land in a straight line outward from that card, and together
   with it must read as a legal set or run on the grid — spatial order
-  matters for runs (`Rules.is_valid_grid_line`) — or, while only one card
-  long, as a pair that could still grow (`Rules.could_pair`: same rank in
-  different suits, or same suit in neighbouring ranks). Lines extend outward
+  matters for runs (`Rules.is_valid_grid_line`), and counting the anchor a
+  line is at least three cards, so a single card off a picture is refused
+  (you play at least two at once). Lines extend outward
   only (they never hug the silhouette, so the picture always reads as
   drawn), take one line per picture card per axis, hold no jokers, brush a
   neighbouring line only where the touching pair could grow, and tear off
@@ -544,8 +544,9 @@ holds the full meter.
 
 A sealed picture isn't dead felt, though — you can play off it,
 Scrabble-style: any picture card takes a line of cards outward in one
-direction, reading as a legal set or run together with it (or a growable
-pair while one card long). The faint "+" cells around the picture are the
+direction, reading as a legal set or run together with it — at least three
+cards counting that picture card, so you play at least two at once and a
+lone card is refused. The faint "+" cells around the picture are the
 targets; lines extend outward only and come off whole or not at all. See
 "Board layout groundwork" for the exact rules.
 

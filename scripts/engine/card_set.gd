@@ -50,12 +50,13 @@ const UNPLACED := Vector2(-1, -1)
 ## card the line reads from — it stays in its own group — and the outward
 ## direction. cards[i] sits at the anchor's cell + attach_step * (i + 1), so
 ## the array order IS the spatial order. Valid when the anchor plus the line
-## reads as a legal grid line (Rules.is_valid_grid_line), or is still a
-## growable pair while one card long (Rules.could_pair); a vertical straight
-## must also read with the lower rank on top (Rules.line_direction_ok). Line
-## cards stay loose: any of them can be picked back up or moved on its own —
-## only the picture itself is sealed — with the cards left behind sliding in
-## toward the anchor.
+## reads as a legal grid line (Rules.is_valid_grid_line) — so, counting the
+## anchor, at least three cards: a lone card hanging off a picture is not a
+## play. A vertical straight must also read with the lower rank on top
+## (Rules.line_direction_ok). Line cards stay loose: any of them can be picked
+## back up or moved on its own — only the picture itself is sealed — with the
+## cards left behind sliding in toward the anchor (which can leave the line
+## briefly too short to be legal until the turn is cleaned up).
 var attach_anchor: Card = null
 @export var attach_step := Vector2i.ZERO
 
@@ -81,8 +82,9 @@ func _attached_line_valid() -> bool:
 	# Vertical straights keep the lower rank on top (Rules.line_direction_ok).
 	if not Rules.line_direction_ok(line, attach_step):
 		return false
-	if line.size() == 2:
-		return Rules.could_pair(line[0], line[1])
+	# Counting the anchor, the line must be a full group of three or more
+	# (is_valid_grid_line enforces MIN_MELD_SIZE) — a single card off a picture
+	# is not a legal play.
 	return Rules.is_valid_grid_line(line)
 
 # --- Shape (picture) groups — groundwork -------------------------------------
