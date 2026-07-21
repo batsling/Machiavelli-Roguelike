@@ -19,6 +19,11 @@ func _glass(rank: int, suit: String) -> Card:
 	c.effects.append(Card.Effect.CLEAR)
 	return c
 
+func _slimed(rank: int, suit: String) -> Card:
+	var c := _card(rank, suit)
+	c.effects.append(Card.Effect.STICKY)
+	return c
+
 func _meld(cards: Array[Card]) -> CardSet:
 	var m := CardSet.new()
 	m.cards = cards
@@ -30,6 +35,15 @@ func _has_play_marker(b: Button) -> bool:
 		if child is Panel:
 			var sb: StyleBoxFlat = (child as Panel).get_theme_stylebox("panel")
 			if sb != null and sb.bg_color == UITheme.COL_HINT_EDGE:
+				return true
+	return false
+
+## Does `node` carry a slime splotch (a child Panel filled COL_SLIME)?
+func _has_slime_blob(node: Node) -> bool:
+	for child in node.get_children():
+		if child is Panel:
+			var sb: StyleBoxFlat = (child as Panel).get_theme_stylebox("panel")
+			if sb != null and sb.bg_color == UITheme.COL_SLIME:
 				return true
 	return false
 
@@ -89,6 +103,57 @@ func _init() -> void:
 	ui._hide_opponent_hand()
 	if ui.opponent_hand_overlay.visible:
 		printerr("leaving the seat should hide the reveal")
+		ok = false
+
+	# --- 1b. Slime shows from the back too, and unlocks the reveal on its own ----
+	# A slimed card (no glass) still unlocks the reveal — the splotch is readable.
+	var slime_hand: Array[Card] = [_card(3, "clubs"), _slimed(9, "hearts")]
+	if not ui._hand_has_visible_card(slime_hand):
+		printerr("a hand with a slimed card should unlock the reveal")
+		ok = false
+	ui.gm.players[1].hand = slime_hand.duplicate()
+	ui._refresh()
+	await process_frame
+	ui._show_opponent_hand(1)
+	await process_frame
+	# Both cards are plain backs (no glass), but the slimed one carries the blob.
+	var slimed_backs := 0
+	var plain_backs := 0
+	for node in ui.opponent_hand_body.get_children():
+		if _has_slime_blob(node):
+			slimed_backs += 1
+		else:
+			plain_backs += 1
+	if slimed_backs != 1 or plain_backs != 1:
+		printerr("reveal should show 1 slimed back and 1 plain back, got %d / %d"
+			% [slimed_backs, plain_backs])
+		ok = false
+	ui._hide_opponent_hand()
+
+	# The slimed status also shows on the seat's own card backs.
+	var seat_backs: BoxContainer = ui.opponent_backs.get(ui.gm.players[1].player_id)
+	var seat_slimed := 0
+	if seat_backs != null:
+		for node in seat_backs.get_children():
+			if _has_slime_blob(node):
+				seat_slimed += 1
+	if seat_slimed != 1:
+		printerr("the slimed card should show its splotch on the seat back, got %d" % seat_slimed)
+		ok = false
+
+	# --- 1c. A slimed top of the stock shows a back with the splotch -------------
+	ui.gm.deck.cards.append(_slimed(4, "diamonds"))
+	ui._table.refresh_seats()
+	await process_frame
+	if ui.stock_top_slot.get_child_count() != 1 or not _has_slime_blob(ui.stock_top_slot.get_child(0)):
+		printerr("a slimed top of the stock should render a splotched back")
+		ok = false
+	# A plain top shows nothing.
+	ui.gm.deck.cards.append(_card(7, "clubs"))
+	ui._table.refresh_seats()
+	await process_frame
+	if ui.stock_top_slot.get_child_count() != 0:
+		printerr("a plain top of the stock should stay hidden")
 		ok = false
 
 	# --- 2. The green play marker on immediately-playable hand cards -------------

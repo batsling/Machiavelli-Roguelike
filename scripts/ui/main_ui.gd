@@ -29,10 +29,11 @@ extends Control
 ## the backs of their cards. The first enemy sits directly opposite you at the
 ## top, the second on the left, and a fourth player (when one exists) sits on
 ## the right — at most 4 seats in total. Backs overlap more as a hand grows so
-## every seat always fits on screen. When an opponent holds a card whose status
-## is visible through its back — a glass card, so the whole Sadistic Billionaire —
-## hovering their crowded seat pops an enlarged reveal of that hand (glass cards
-## face-up, the rest plain backs), so his see-through hand is easy to read.
+## every seat always fits on screen. A card whose status shows through its back —
+## a glass card (see-through, shown face-up) or a slimed one (its green splotch
+## on the back) — is readable right in the seat and on top of the stock; when an
+## opponent holds any, hovering their crowded seat pops an enlarged reveal of
+## that hand, so those statuses are easy to read at a bigger size.
 ##
 ## How to play: on your turn, drag cards — from your hand AND from any group
 ## on the table (rearranging the table is the heart of the game). Drop them
@@ -690,17 +691,26 @@ func _show_opponent_hand(player_index: int) -> void:
 	var p := gm.players[player_index]
 	_clear_children(opponent_hand_body)
 	var glass := 0
+	var slimed := 0
 	for c in p.hand:
 		var node: Control
 		if c.is_glass():
 			node = CardRenderer.make_glass_face(c, UITheme.CARD_SIZE)
 			glass += 1
 		else:
-			node = CardRenderer.make_card_back(UITheme.CARD_SIZE)
+			node = CardRenderer.make_card_back(UITheme.CARD_SIZE, c)
+		if c.is_sticky():
+			slimed += 1
 		node.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		opponent_hand_body.add_child(node)
-	opponent_hand_title.text = "%s's hand (%d) — %d glass card%s shown face-up" \
-		% [p.display_name, p.hand.size(), glass, "" if glass == 1 else "s"]
+	# Name what is readable through the backs (a card can be both glass and slimed).
+	var notes := PackedStringArray()
+	if glass > 0:
+		notes.append("%d glass shown face-up" % glass)
+	if slimed > 0:
+		notes.append("%d slimed" % slimed)
+	var suffix := "" if notes.is_empty() else " — " + ", ".join(notes)
+	opponent_hand_title.text = "%s's hand (%d)%s" % [p.display_name, p.hand.size(), suffix]
 	opponent_hand_overlay.move_to_front()
 	opponent_hand_overlay.visible = true
 
@@ -862,12 +872,13 @@ func _card_is_playable_now(c: Card) -> bool:
 	return false
 
 ## True when an opponent's hand holds at least one card whose status is visible
-## through its back — today that means a glass card (the Sadistic Billionaire's
-## whole deck). Gates the enlarged hand reveal so a plain opponent (nothing to
-## see) never sprouts the hover screen.
+## through its back — a glass card (the Sadistic Billionaire's whole deck) or a
+## slimed one (the Cute Slime's splotch shows from the back too). Gates the
+## enlarged hand reveal so a plain opponent (nothing to see) never sprouts the
+## hover screen.
 func _hand_has_visible_card(hand: Array[Card]) -> bool:
 	for c in hand:
-		if c.is_glass():
+		if c.is_glass() or c.is_sticky():
 			return true
 	return false
 

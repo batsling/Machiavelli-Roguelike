@@ -44,17 +44,24 @@ func refresh_seats() -> void:
 	_ui.round_label.text = "Round %d" % gm.round_number
 	_refresh_stock_top()
 
-## Show the top card of the stock beside the count when it is glass: the next
-## draw is public knowledge, for the player exactly as for the AI.
+## Show the top card of the stock beside the count when its status is public: a
+## glass top shows its face (everyone sees the next draw), and a slimed top shows
+## a back with the splotch (everyone sees the next draw is stuck, but not what it
+## is). A plain top stays hidden.
 func _refresh_stock_top() -> void:
 	_ui._clear_children(_ui.stock_top_slot)
 	var top := _ui.gm.deck.peek()
-	if top == null or not top.is_glass():
+	if top == null:
 		return
-	var face := CardRenderer.make_glass_face(top, UITheme.BACK_SIZE_TOP)
-	face.tooltip_text = "Top of the stock is glass — everyone can see " \
-		+ "the next card drawn."
-	_ui.stock_top_slot.add_child(face)
+	if top.is_glass():
+		var face := CardRenderer.make_glass_face(top, UITheme.BACK_SIZE_TOP)
+		face.tooltip_text = "Top of the stock is glass — everyone can see " \
+			+ "the next card drawn."
+		_ui.stock_top_slot.add_child(face)
+	elif top.is_sticky():
+		var back := CardRenderer.make_card_back(UITheme.BACK_SIZE_TOP, top)
+		back.tooltip_text = "Top of the stock is slimed — the next card drawn is stuck."
+		_ui.stock_top_slot.add_child(back)
 
 func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	var gm := _ui.gm
@@ -96,11 +103,12 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 
 ## A row (top seat) or column (side seats) of an opponent's cards, seen from
 ## the back. Glass cards are see-through, so they show their face right in the
-## row; everything else is a plain card back. The overlap tightens as the hand
-## grows so the seat never exceeds a fixed footprint. When the opponent holds a
-## visibly-statused card (a glass card, the Sadistic Billionaire's whole deck),
-## hovering the row pops an enlarged reveal of the same cards, so the player can
-## read them at a bigger size than the crowded seat allows.
+## row; a slimed card shows its green splotch on the back; everything else is a
+## plain card back. The overlap tightens as the hand grows so the seat never
+## exceeds a fixed footprint. When the opponent holds a visibly-statused card (a
+## glass card or a slimed one), hovering the row pops an enlarged reveal of the
+## same cards, so the player can read them at a bigger size than the crowded seat
+## allows.
 func _make_card_backs(p: PlayerState, player_index: int, horizontal: bool) -> BoxContainer:
 	var hand := p.hand
 	var box: BoxContainer
@@ -131,7 +139,7 @@ func _make_card_backs(p: PlayerState, player_index: int, horizontal: bool) -> Bo
 			# Registered so enemy-move animations start from the visible card.
 			_ui.card_nodes[c] = face
 		else:
-			var back := CardRenderer.make_card_back(back_size)
+			var back := CardRenderer.make_card_back(back_size, c)
 			if reveal:
 				back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			box.add_child(back)

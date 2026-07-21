@@ -42,7 +42,11 @@ static func hover_variant(sb: StyleBoxFlat) -> StyleBoxFlat:
 	out.border_color = Color(1, 1, 1, 0.6)
 	return out
 
-static func make_card_back(back_size: Vector2) -> Panel:
+## A plain face-down card back. A slimed card shows its green splotch even from
+## the back (pass the card): the slime is a status the player can read off an
+## opponent's hand and the top of the stock, just as glass is — it never reveals
+## the card's face, only that it is stuck. `card` may be null for a generic back.
+static func make_card_back(back_size: Vector2, card: Card = null) -> Panel:
 	var back := Panel.new()
 	back.custom_minimum_size = back_size
 	var sb := StyleBoxFlat.new()
@@ -51,6 +55,8 @@ static func make_card_back(back_size: Vector2) -> Panel:
 	sb.set_border_width_all(2)
 	sb.set_corner_radius_all(6)
 	back.add_theme_stylebox_override("panel", sb)
+	if card != null and card.is_sticky():
+		add_slime_blob(back)
 	return back
 
 ## A small face-up rendering of a glass card in a card-back footprint: the
