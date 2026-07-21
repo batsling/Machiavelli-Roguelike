@@ -29,7 +29,10 @@ extends Control
 ## the backs of their cards. The first enemy sits directly opposite you at the
 ## top, the second on the left, and a fourth player (when one exists) sits on
 ## the right — at most 4 seats in total. Backs overlap more as a hand grows so
-## every seat always fits on screen.
+## every seat always fits on screen. When an opponent holds a card whose status
+## is visible through its back — a glass card, so the whole Sadistic Billionaire —
+## hovering their crowded seat pops an enlarged reveal of that hand (glass cards
+## face-up, the rest plain backs), so his see-through hand is easy to read.
 ##
 ## How to play: on your turn, drag cards — from your hand AND from any group
 ## on the table (rearranging the table is the heart of the game). Drop them
@@ -62,10 +65,11 @@ extends Control
 ## Your hand works like Balatro's: it keeps whatever order you give it. Drag
 ## a card onto another hand card to move it there (left half = before, right
 ## half = after), drag to the hand's empty space to send it to the end, or use
-## the "Sort: rank" / "Sort: suit" buttons in the hand header. Hovering a
-## hand card spotlights every board spot it could play into right now with no
-## rearranging — the groups it lays off onto, and a "New group" cue when it
-## completes a fresh group with other cards in your hand.
+## the "Sort: rank" / "Sort: suit" buttons in the hand header. A card you can
+## play this instant with no rearranging is capped with a green strip; hovering
+## it then spotlights every board spot it plays into in that same green — the
+## groups it lays off onto, and a "New group" cue when it completes a fresh group
+## with other cards in your hand.
 ##
 ## The table header carries "Sort" and "Randomize" (reorder the groups on the
 ## felt) plus a suit highlighter (♥ ♦ ♣ ♠): hover a suit to outline every card
@@ -181,6 +185,13 @@ var enemy_info_dialog: AcceptDialog
 var enemy_info_body: RichTextLabel
 var anim_layer: Control
 var animator: EnemyMoveAnimator
+# Enlarged reveal of an opponent's hand, shown while their card backs are hovered
+# (only for an opponent holding a visibly-statused card, e.g. glass): a
+# full-screen centering layer holding a panel of enlarged card backs, with glass
+# cards shown face-up. Built once, kept hidden until a seat is hovered.
+var opponent_hand_overlay: CenterContainer
+var opponent_hand_title: Label
+var opponent_hand_body: HFlowContainer
 # Renders the seats, board and hand into the containers above.
 var _table := TableView.new()
 ## The in-progress freeform group drag, or {} when nothing is being dragged. Set
@@ -525,6 +536,8 @@ func _build_layout() -> void:
 	add_child(animator)
 	animator.setup(anim_layer, self)
 
+	_build_opponent_hand_overlay()
+
 	# The menu sits above everything (including in-flight card animations).
 	_build_menu()
 	_build_settings_dialog()
@@ -633,6 +646,67 @@ func _make_seat() -> VBoxContainer:
 	seat.alignment = BoxContainer.ALIGNMENT_CENTER
 	seat.add_theme_constant_override("separation", 6)
 	return seat
+
+## The enlarged opponent-hand reveal: a full-screen centering layer (so it always
+## lands in the middle whatever the hand's size) holding a titled panel of
+## enlarged card backs. Non-interactive throughout — it only reveals, never
+## catches the mouse — and hidden until _show_opponent_hand fills and shows it.
+func _build_opponent_hand_overlay() -> void:
+	opponent_hand_overlay = CenterContainer.new()
+	opponent_hand_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	opponent_hand_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opponent_hand_overlay.visible = false
+	add_child(opponent_hand_overlay)
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := CardRenderer.panel_style(UITheme.COL_OPP_HAND_BG, 12)
+	sb.border_color = UITheme.COL_GLASS_EDGE
+	sb.set_border_width_all(2)
+	panel.add_theme_stylebox_override("panel", sb)
+	opponent_hand_overlay.add_child(panel)
+	var col := VBoxContainer.new()
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_theme_constant_override("separation", 8)
+	panel.add_child(col)
+	opponent_hand_title = Label.new()
+	opponent_hand_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opponent_hand_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	opponent_hand_title.add_theme_font_size_override("font_size", 15)
+	opponent_hand_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.85))
+	col.add_child(opponent_hand_title)
+	opponent_hand_body = HFlowContainer.new()
+	opponent_hand_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opponent_hand_body.add_theme_constant_override("h_separation", 6)
+	opponent_hand_body.add_theme_constant_override("v_separation", 6)
+	col.add_child(opponent_hand_body)
+
+## Fill and show the enlarged reveal for the opponent in `player_index`: each
+## card enlarged to a hand-card footprint, shown as a plain back unless it is
+## glass, in which case its face shows through exactly as it does on their seat —
+## just bigger and easier to read. Called from a seat's card backs on hover.
+func _show_opponent_hand(player_index: int) -> void:
+	if player_index < 0 or player_index >= gm.players.size():
+		return
+	var p := gm.players[player_index]
+	_clear_children(opponent_hand_body)
+	var glass := 0
+	for c in p.hand:
+		var node: Control
+		if c.is_glass():
+			node = CardRenderer.make_glass_face(c, UITheme.CARD_SIZE)
+			glass += 1
+		else:
+			node = CardRenderer.make_card_back(UITheme.CARD_SIZE)
+		node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		opponent_hand_body.add_child(node)
+	opponent_hand_title.text = "%s's hand (%d) — %d glass card%s shown face-up" \
+		% [p.display_name, p.hand.size(), glass, "" if glass == 1 else "s"]
+	opponent_hand_overlay.move_to_front()
+	opponent_hand_overlay.visible = true
+
+func _hide_opponent_hand() -> void:
+	if opponent_hand_overlay != null:
+		opponent_hand_overlay.visible = false
 
 # --- Refresh ------------------------------------------------------------------
 
@@ -751,19 +825,51 @@ func _on_hand_card_hover_exit(c: Card) -> void:
 func _compute_play_hints(c: Card) -> void:
 	var open := gm.current_player_is_open()
 	for meld in gm.board.melds:
-		# Pictures and their extension lines play by grid rules; the plain
-		# lay-off hint doesn't read them (the ghost cells are their guide).
-		if meld.is_shape() or meld.is_attached():
-			continue
-		if not meld.is_valid():
-			continue
-		if not open and not gm.is_own_staged_meld(meld):
-			continue
-		var candidate: Array[Card] = meld.cards.duplicate()
-		candidate.append(c)
-		if Rules.is_valid_meld(candidate):
+		if _lays_off_onto(c, meld, open):
 			hint_meld_targets[meld] = true
 	hint_new_group = _hand_forms_new_group(c)
+
+## True when hand card `c` drops straight onto `meld` as-is (no rearranging):
+## the group is a plain valid set/run this card extends, and — before you have
+## opened — only your own just-laid groups qualify. Pictures and extension lines
+## play by grid rules, so the plain lay-off hint skips them (their ghost cells
+## are the guide instead). Shared by the hover hints and the always-on playable
+## marker so both read the board the same way.
+func _lays_off_onto(c: Card, meld: CardSet, open: bool) -> bool:
+	if meld.is_shape() or meld.is_attached():
+		return false
+	if not meld.is_valid():
+		return false
+	if not open and not gm.is_own_staged_meld(meld):
+		return false
+	var candidate: Array[Card] = meld.cards.duplicate()
+	candidate.append(c)
+	return Rules.is_valid_meld(candidate)
+
+## True when hand card `c` can be played this instant with no rearranging: it
+## lays off onto some existing group, or completes a brand-new group with other
+## naturals already in your hand. Only ever true on your own turn. Drives the
+## green cap the hand paints on immediately-playable cards.
+func _card_is_playable_now(c: Card) -> bool:
+	if not _is_human_turn():
+		return false
+	if _hand_forms_new_group(c):
+		return true
+	var open := gm.current_player_is_open()
+	for meld in gm.board.melds:
+		if _lays_off_onto(c, meld, open):
+			return true
+	return false
+
+## True when an opponent's hand holds at least one card whose status is visible
+## through its back — today that means a glass card (the Sadistic Billionaire's
+## whole deck). Gates the enlarged hand reveal so a plain opponent (nothing to
+## see) never sprouts the hover screen.
+func _hand_has_visible_card(hand: Array[Card]) -> bool:
+	for c in hand:
+		if c.is_glass():
+			return true
+	return false
 
 ## True when the hovered card plus other naturals already in the hand make a
 ## valid new group — a set of its rank across distinct suits, or a run of its
