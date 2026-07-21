@@ -394,10 +394,10 @@ func _test_slime_free_move() -> bool:
 		print("slime free move test OK")
 	return ok
 
-## The Cute Slime coats every heart, diamond and joker in HER OWN deck at combat
-## start — one copy of each, since the combined stock holds one copy per player.
-## So of the 26 hearts and 26 diamonds exactly the 13 from her deck are slimed,
-## only her 2 of the 4 jokers, no clubs/spades, and nothing from the player's deck.
+## The Cute Slime coats every card in HER OWN deck at combat start — one copy of
+## each, since the combined stock holds one copy per player. So every card she
+## owns is slimed (all four suits, and her 2 of the 4 jokers), and nothing from
+## the player's deck is.
 func _test_slime_setup() -> bool:
 	var gm := GameManager.new()
 	var ok := true
@@ -407,37 +407,28 @@ func _test_slime_setup() -> bool:
 	var all_cards: Array[Card] = gm.deck.cards.duplicate()
 	for p in gm.players:
 		all_cards.append_array(p.hand)
-	var slimed_hearts := 0
-	var slimed_diamonds := 0
-	var sticky_jokers := 0
-	var total_jokers := 0
-	var stray := 0        # slimed cards that shouldn't be (wrong suit or wrong deck)
+	var slimed_hers := 0     # her own cards that carry slime (should be all of them)
+	var her_cards := 0       # every card from her deck
+	var stray := 0           # slimed cards from someone else's deck (should be none)
 	for c in all_cards:
-		if c.is_joker:
-			total_jokers += 1
+		if c.deck_owner == own:
+			her_cards += 1
 			if c.is_sticky():
-				sticky_jokers += 1
-				if c.deck_owner != own:
-					stray += 1
-			continue
-		if not c.is_sticky():
-			continue
-		if c.deck_owner != own or (c.suit != "hearts" and c.suit != "diamonds"):
+				slimed_hers += 1
+		elif c.is_sticky():
 			stray += 1
-		elif c.suit == "hearts":
-			slimed_hearts += 1
-		else:
-			slimed_diamonds += 1
-	if slimed_hearts != 13 or slimed_diamonds != 13:
-		printerr("slime setup: expected all 13 of her hearts and 13 diamonds slimed, got %d / %d"
-			% [slimed_hearts, slimed_diamonds])
+	if slimed_hers != her_cards:
+		printerr("slime setup: expected all %d of her cards slimed, got %d"
+			% [her_cards, slimed_hers])
 		ok = false
-	if sticky_jokers != 2 or total_jokers != Deck.JOKER_COUNT:
-		printerr("slime setup: expected only her 2 of %d jokers slimed, got %d"
-			% [Deck.JOKER_COUNT, sticky_jokers])
+	# One full deck per player: 52 naturals + her half of the jokers.
+	var expected := 52 + Deck.JOKER_COUNT / 2
+	if her_cards != expected:
+		printerr("slime setup: expected %d cards from her deck, got %d"
+			% [expected, her_cards])
 		ok = false
 	if stray != 0:
-		printerr("slime setup: %d cards were slimed that shouldn't be (wrong suit or wrong deck)"
+		printerr("slime setup: %d cards were slimed that shouldn't be (not from her deck)"
 			% stray)
 		ok = false
 	# She marks her own seat immune so she moves slimed cards freely.

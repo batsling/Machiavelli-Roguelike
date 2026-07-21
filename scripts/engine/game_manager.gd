@@ -31,7 +31,10 @@ extends Node
 
 signal turn_started(player: PlayerState)
 signal board_changed
-signal card_drawn(player: PlayerState, card: Card)
+## Fired once per draw action with every card that player drew this turn (one to
+## draw_per_turn cards). Batched so the UI can announce a multi-card draw as a
+## single line ("… drew 2 cards, X and Y") instead of one line per card.
+signal cards_drawn(player: PlayerState, cards: Array[Card])
 signal turn_committed(player: PlayerState, cards_played: int)
 signal player_passed(player: PlayerState)
 signal game_over(winners: Array)
@@ -689,7 +692,7 @@ func draw_and_end_turn() -> void:
 		_lock_table_jokers()
 		_undo_stack.clear()
 	var p := current_player()
-	var drew := 0
+	var drawn: Array[Card] = []
 	for _i in draw_per_turn:
 		if max_hand_size > 0 and p.hand.size() >= max_hand_size:
 			break
@@ -697,9 +700,9 @@ func draw_and_end_turn() -> void:
 		if card == null:
 			break
 		p.hand.append(card)
-		drew += 1
-		card_drawn.emit(p, card)
-	if drew > 0:
+		drawn.append(card)
+	if not drawn.is_empty():
+		cards_drawn.emit(p, drawn)
 		_consecutive_passes = 0
 	else:
 		_consecutive_passes += 1

@@ -65,7 +65,8 @@ func _init() -> void:
 	await process_frame
 	var run_card: Button = ui.card_nodes.get(run.cards[0])
 	if run_card != null:
-		var panel := run_card.get_parent().get_parent() as PanelContainer
+		# card -> its box -> the panel's handle+content column -> the group panel.
+		var panel := run_card.get_parent().get_parent().get_parent() as PanelContainer
 		var sb: StyleBoxFlat = panel.get_theme_stylebox("panel")
 		if sb.border_color != UITheme.COL_HINT_EDGE:
 			printerr("the hinted run panel should carry the play-hint border")

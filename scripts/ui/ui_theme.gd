@@ -18,6 +18,8 @@ const BOARD_CARD_SIZE := Vector2(62, 86)  # table cards are smaller, so more gro
 const BOARD_CARD_FONT_SIZE := 22
 const NEW_GROUP_SIZE := Vector2(136, 102)
 const UI_FONT_SIZE := 17
+const GROUP_HANDLE_HEIGHT := 14  # the grip strip atop each group, grabbed to drag it
+const BOARD_PAD := 10            # gap kept between freely-placed groups on the felt
 const BACK_SIZE_TOP := Vector2(46, 64)  # portrait backs for the seat opposite you
 const BACK_SIZE_SIDE := Vector2(64, 46)  # landscape backs for the left/right seats
 const BACKS_MAX_LEN_TOP := 560.0
@@ -51,6 +53,7 @@ const COL_FILTER_EDGE := Color(0.15, 0.78, 0.80)  # outline on the suit being ho
 const FILTER_DIM_ALPHA := 0.28   # the other suits fade this low while a suit is hovered
 const COL_HINT_EDGE := Color(0.34, 0.86, 0.46)    # play-hint spotlight on a group you can play into
 const COL_HINT_BG := Color(0.34, 0.86, 0.46, 0.12)  # faint green fill behind a hinted group
+const COL_GROUP_HANDLE := Color(1, 1, 1, 0.10)     # the grip strip atop each group on the felt
 
 # --- Ultimate meter -----------------------------------------------------------
 const COL_METER_TRACK := Color(0, 0, 0, 0.38)      # empty channel behind the fill
