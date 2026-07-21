@@ -157,6 +157,9 @@ func plan_strategy_move(gm: GameManager) -> Dictionary:
 	var best_gain := 0
 	for i in melds.size():
 		var m1: CardSet = melds[i]
+		# Pictures and their extension lines are off-limits to the guard too.
+		if not GreedyAI._plain_meld(m1):
+			continue
 		for c in m1.cards:
 			# Jokers are what she guards, not what she shuffles; she oozes the
 			# other slimed cards (hearts, diamonds) around them as bodyguards.
@@ -171,6 +174,8 @@ func plan_strategy_move(gm: GameManager) -> Dictionary:
 				if j == i:
 					continue
 				var m2: CardSet = melds[j]
+				if not GreedyAI._plain_meld(m2):
+					continue
 				var grown: Array[Card] = m2.cards.duplicate()
 				grown.append(c)
 				if not Rules.is_valid_meld(grown):
@@ -218,7 +223,7 @@ func _plan_ultimate(gm: GameManager) -> Dictionary:
 	# are skipped before any repair work is spent.
 	var table_slimed := 0
 	for m in gm.board.melds:
-		if m.is_shape():
+		if not GreedyAI._plain_meld(m):
 			continue
 		for c in m.cards:
 			if c.is_sticky():
@@ -262,7 +267,7 @@ func _gather_table_slime(gm: GameManager, want: int, min_take: int) -> Dictionar
 	# Phase 1: the best free donations, at most one batch per group.
 	var donations: Array = []
 	for m in gm.board.melds:
-		if m.is_shape():
+		if not GreedyAI._plain_meld(m):
 			continue
 		var options := _donation_options(m)
 		if not options.is_empty():
@@ -290,7 +295,7 @@ func _gather_table_slime(gm: GameManager, want: int, min_take: int) -> Dictionar
 	# The leftover board as a model the repair engine understands.
 	var model: Array = []
 	for m in gm.board.melds:
-		if m.is_shape():
+		if not GreedyAI._plain_meld(m):
 			continue
 		var arr: Array[Card] = m.cards.duplicate()
 		for c in taken:

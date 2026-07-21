@@ -32,7 +32,10 @@ func _init() -> void:
 	_test_slime_ultimate()
 	_test_slime_ultimate_gates()
 	_test_ult_in_driven_games()
+	_test_grid_line_rules()
+	_test_play_off_picture()
 	await _test_rendering()
+	await _test_picture_ghost_cells()
 	if ok:
 		print("layout_check: PASS")
 		quit(0)
@@ -354,6 +357,115 @@ func _test_ult_in_driven_games() -> void:
 	if pictures == 0:
 		_fail("no seeded ult game ever built a picture — the ultimate never fired")
 
+## The Scrabble-style line reading: could-grow pairs and ordered grid lines.
+func _test_grid_line_rules() -> void:
+	if not Rules.could_pair(_card(7, "hearts"), _card(8, "hearts")):
+		_fail("7H beside 8H could grow into a run")
+	if not Rules.could_pair(_card(1, "spades"), _card(13, "spades")):
+		_fail("an ace beside a king could grow ace-high")
+	if not Rules.could_pair(_card(7, "hearts"), _card(7, "spades")):
+		_fail("two sevens of different suits could grow into a set")
+	if Rules.could_pair(_card(7, "hearts"), _card(7, "hearts")):
+		_fail("two copies of the same card can never share a group")
+	if Rules.could_pair(_card(2, "clubs"), _card(9, "diamonds")):
+		_fail("2C beside 9D is a dead pair")
+	if Rules.could_pair(_card(5, "hearts"), _card(7, "hearts")):
+		_fail("a one-rank gap is dead on the grid — there is no room for the 6")
+	var run_line: Array[Card] = [_card(7, "hearts"), _card(8, "hearts"), _card(9, "hearts")]
+	if not Rules.is_valid_grid_line(run_line):
+		_fail("7-8-9 of hearts should read as a grid run")
+	var scrambled: Array[Card] = [_card(8, "hearts"), _card(7, "hearts"), _card(9, "hearts")]
+	if Rules.is_valid_grid_line(scrambled):
+		_fail("8-7-9 is out of spatial order — not a grid run")
+	var down_line: Array[Card] = [_card(9, "hearts"), _card(8, "hearts"), _card(7, "hearts")]
+	if not Rules.is_valid_grid_line(down_line):
+		_fail("a grid run reads descending too")
+	var set_line: Array[Card] = [_card(7, "hearts"), _card(7, "spades"), _card(7, "clubs")]
+	if not Rules.is_valid_grid_line(set_line):
+		_fail("three sevens should read as a grid set in any order")
+
+## A picture on the felt with the player open: the flower's cards are known,
+## so plays off its cards are deterministic. Template order maps card i to
+## cell i — index 0 is the top petal at (1,0), index 1 the left petal at (0,1).
+func _picture_gm() -> Dictionary:
+	var flower_cards: Array[Card] = []
+	for i in CuteSlime.ULT_FLOWER.size():
+		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
+	var top := _slimed(7, "hearts")
+	var left := _slimed(5, "diamonds")
+	flower_cards[0] = top
+	flower_cards[1] = left
+	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
+	var gm := GameManager.new()
+	gm.setup(["You", "Foe"], 5, 7)
+	gm.board.melds.assign([picture] as Array[CardSet])
+	gm.players[0].has_opened = true
+	return {"gm": gm, "picture": picture, "top": top, "left": left}
+
+func _give_hand(gm: GameManager, hand: Array[Card]) -> void:
+	gm.players[0].hand = hand.duplicate()
+	gm._hand_snapshot = hand.duplicate()
+	gm._undo_stack.clear()
+
+## Scrabble-style plays off a picture: growable pair, extension to a full
+## run, the outward-only and one-line-per-axis rules, whole-line tear-down,
+## sealed picture cards, no jokers, and a clean commit.
+func _test_play_off_picture() -> void:
+	var setup := _picture_gm()
+	var gm: GameManager = setup["gm"]
+	var top: Card = setup["top"]      # 7H at (1,0)
+	var left: Card = setup["left"]    # 5D at (0,1)
+	var eight := _card(8, "hearts")
+	var nine := _card(9, "hearts")
+	var joker := Card.new()
+	joker.is_joker = true
+	joker.suit = "joker"
+	_give_hand(gm, [eight, nine, joker, _card(2, "clubs")] as Array[Card])
+
+	# A single 8H up from the 7H petal: a growable pair, legal to stage.
+	var err := gm.play_off_picture(top, Vector2i.UP, [eight] as Array[Card])
+	if err != "":
+		_fail("8H off the 7H petal should stage as a growable pair, got: %s" % err)
+		return
+	var line: CardSet = gm.board.melds[-1]
+	if not line.is_attached() or line.attach_anchor != top or not line.is_valid():
+		_fail("the pair should live in a valid attached line off the 7H")
+	# Extending the line with 9H completes the run 7-8-9 reading outward.
+	if gm.add_cards_to_meld([nine] as Array[Card], line) != "":
+		_fail("9H should extend the line into 7-8-9")
+	if line.cards != ([eight, nine] as Array[Card]):
+		_fail("the line should hold 8H then 9H outward")
+	# The other way on the same axis is that line's, not a second one's.
+	if gm.play_off_picture(top, Vector2i.DOWN, [_card(6, "hearts")] as Array[Card]) == "":
+		_fail("the 7H already carries its vertical line — no second one")
+	# A dead pair never sticks; neither do jokers; picture cards are sealed.
+	if gm.play_off_picture(left, Vector2i.LEFT, [_card(2, "clubs")] as Array[Card]) == "":
+		_fail("2C off the 5D petal is a dead pair and must be refused")
+	if gm.play_off_picture(left, Vector2i.LEFT, [joker] as Array[Card]) == "":
+		_fail("jokers don't stick to pictures")
+	if gm.move_cards_to_new_meld([top] as Array[Card]) == "":
+		_fail("picture cards are sealed in place")
+	# Outward only: up from the left petal hugs the top petal diagonally' —
+	# the cell (0,0) touches the picture at (1,0) — so it is refused.
+	if gm.play_off_picture(left, Vector2i.UP, [_card(6, "diamonds")] as Array[Card]) == "":
+		_fail("a line hugging the picture must be refused (outward only)")
+	# Whole line or nothing: a lone card can't leave the line, the pair can.
+	if gm.move_cards_to_new_meld([eight] as Array[Card]) == "":
+		_fail("a single card must not tear out of an extension line")
+	if gm.return_cards_to_hand([nine] as Array[Card]) == "":
+		_fail("a take-back must also honor whole-line-or-nothing")
+	if gm.return_cards_to_hand([eight, nine] as Array[Card]) != "":
+		_fail("taking the whole line back to hand should be allowed")
+		return
+	if gm.board.melds.size() != 1:
+		_fail("the emptied line should dissolve, leaving just the picture")
+	# Re-play the run and commit the turn.
+	if gm.play_off_picture(top, Vector2i.UP, [eight, nine] as Array[Card]) != "":
+		_fail("re-playing 8H 9H together should stage the run")
+	if gm.commit_turn() != "":
+		_fail("a turn ending on a legal extension line should commit")
+	gm.free()
+
 ## Rendering: a vertical group lays its cards out in a column, and a cross
 ## renders as one grid panel with gaps where no card sits.
 func _test_rendering() -> void:
@@ -392,3 +504,49 @@ func _test_rendering() -> void:
 			_fail("the cross grid should hold 5 card buttons, got %d" % buttons)
 	ui.queue_free()
 	await process_frame
+
+## Ghost cells render around a picture on the player's turn, and a play off
+## one lays a line that renders inside the cluster grid.
+func _test_picture_ghost_cells() -> void:
+	var ui: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	root.add_child.call_deferred(ui)
+	await process_frame
+	await process_frame
+	ui._on_play_vanilla_pressed()
+	await process_frame
+	var flower_cards: Array[Card] = []
+	for i in CuteSlime.ULT_FLOWER.size():
+		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
+	var top := _slimed(7, "hearts")
+	flower_cards[0] = top
+	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
+	ui.gm.board.melds.assign([picture] as Array[CardSet])
+	ui.gm.players[0].has_opened = true
+	var eight := _card(8, "hearts")
+	ui.gm.players[0].hand = [eight] as Array[Card]
+	ui.gm._hand_snapshot = ui.gm.players[0].hand.duplicate()
+	ui._refresh()
+	await process_frame
+	if _count_ghosts(ui) == 0:
+		_fail("a picture on your turn should show ghost play cells")
+	ui._play_line_start(top, Vector2i.UP, [eight] as Array[Card])
+	await process_frame
+	var btn: Button = ui.card_nodes.get(eight)
+	if btn == null or not (btn.get_parent() is GridContainer):
+		_fail("the played line should render inside the picture's grid")
+	ui.queue_free()
+	await process_frame
+
+func _count_ghosts(ui: Control) -> int:
+	var n := 0
+	for panel in ui.board_flow.get_children():
+		n += _ghosts_in(panel)
+	return n
+
+func _ghosts_in(node: Node) -> int:
+	var n := 0
+	for child in node.get_children():
+		if child is Button and (child as Button).text == "+":
+			n += 1
+		n += _ghosts_in(child)
+	return n

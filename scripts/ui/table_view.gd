@@ -229,25 +229,129 @@ func _make_cluster_panel(cluster: Dictionary) -> PanelContainer:
 	elif melds.size() > 1:
 		panel.tooltip_text = "Crossing groups — they share the card where they meet, " \
 			+ "and each can still take cards."
-	var grid_size: Vector2i = cluster["size"]
+	var cells: Dictionary = cluster["cells"]
+	var meld_at: Dictionary = cluster["meld_at"]
+	# Ghost cells — the spots a line can be played off the picture — sit on a
+	# one-cell ring around the cluster, so the grid grows when any exist.
+	var ghosts := _extension_ghosts(cluster)
+	var lo := Vector2i.ZERO
+	var hi: Vector2i = cluster["size"]
+	if not ghosts.is_empty():
+		lo -= Vector2i.ONE
+		hi += Vector2i.ONE
 	var grid := GridContainer.new()
-	grid.columns = maxi(grid_size.x, 1)
+	grid.columns = maxi(hi.x - lo.x, 1)
 	grid.add_theme_constant_override("h_separation", 4)
 	grid.add_theme_constant_override("v_separation", 4)
 	panel.add_child(grid)
-	var cells: Dictionary = cluster["cells"]
-	var meld_at: Dictionary = cluster["meld_at"]
-	for y in grid_size.y:
-		for x in grid_size.x:
+	for y in range(lo.y, hi.y):
+		for x in range(lo.x, hi.x):
 			var cell := Vector2i(x, y)
 			if cells.has(cell):
 				grid.add_child(_make_card_button(cells[cell], meld_at[cell]))
+			elif ghosts.has(cell):
+				grid.add_child(_make_ghost_cell(ghosts[cell]))
 			else:
 				var gap := Control.new()
 				gap.custom_minimum_size = UITheme.BOARD_CARD_SIZE
 				gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				grid.add_child(gap)
 	return panel
+
+## Drop/click targets for Scrabble-style plays around a picture: the legal
+## first cell of a new line off each picture card (outward only, never
+## hugging the picture, one line per card per axis) and the next outward cell
+## of every existing extension line. Empty when it isn't the player's turn or
+## the cluster holds no picture. Best-effort mirror of the engine's cell
+## rules — the engine revalidates every play.
+func _extension_ghosts(cluster: Dictionary) -> Dictionary:
+	var out := {}
+	if not _ui._is_human_turn():
+		return out
+	var has_picture := false
+	for m: CardSet in cluster["melds"]:
+		if m.is_shape():
+			has_picture = true
+	if not has_picture:
+		return out
+	var cells: Dictionary = cluster["cells"]
+	var meld_at: Dictionary = cluster["meld_at"]
+	var cell_of := {}
+	for cell: Vector2i in cells:
+		cell_of[cells[cell]] = cell
+	var dirs := [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
+	for m: CardSet in cluster["melds"]:
+		if m.is_attached():
+			# Extend an existing line at its outward end.
+			var end: Vector2i = cell_of[m.attach_anchor] \
+				+ m.attach_step * (m.cards.size() + 1)
+			if not cells.has(end) and not _hugs_picture(end, m.attach_step, cells, meld_at):
+				out[end] = {"meld": m}
+			continue
+		if not m.is_shape():
+			continue
+		for p: Card in m.cards:
+			for dir: Vector2i in dirs:
+				if _axis_taken(p, dir):
+					continue
+				var first: Vector2i = cell_of[p] + dir
+				if cells.has(first) or out.has(first) \
+						or _hugs_picture(first, dir, cells, meld_at):
+					continue
+				out[first] = {"anchor": p, "step": dir}
+	return out
+
+## True when this empty cell touches a picture card other than the one the
+## line reads from (the cell behind it, against `step`) — the engine's
+## outward-only rule, so ghosts only appear where a play could stick.
+func _hugs_picture(cell: Vector2i, step: Vector2i, cells: Dictionary,
+		meld_at: Dictionary) -> bool:
+	for side in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+		var n_cell: Vector2i = cell + side
+		if n_cell == cell - step or not cells.has(n_cell):
+			continue
+		var n_meld: CardSet = meld_at.get(n_cell)
+		if n_meld != null and n_meld.is_shape():
+			return true
+	return false
+
+## True when this picture card already carries an extension line on the axis
+## of `dir` (one line per card per axis).
+func _axis_taken(anchor: Card, dir: Vector2i) -> bool:
+	for m in _ui.gm.board.melds:
+		if m.is_attached() and m.attach_anchor == anchor \
+				and m.attach_step.abs() == dir.abs():
+			return true
+	return false
+
+## A faint "+" cell beside a picture: drop cards (or click with a selection)
+## to lay them as a line reading outward from the picture card behind it.
+func _make_ghost_cell(info: Dictionary) -> Button:
+	var b := Button.new()
+	b.text = "+"
+	b.custom_minimum_size = UITheme.BOARD_CARD_SIZE
+	b.focus_mode = Control.FOCUS_NONE
+	b.tooltip_text = "Play cards here: together with the picture card they " \
+		+ "extend, they must read as a set or run (a single card may sit as " \
+		+ "a pair that could still grow)."
+	var sb := CardRenderer.panel_style(Color(1, 1, 1, 0.02), 7)
+	sb.border_color = Color(1, 1, 1, 0.18)
+	sb.set_border_width_all(1)
+	b.add_theme_stylebox_override("normal", sb)
+	b.add_theme_stylebox_override("pressed", sb)
+	b.add_theme_stylebox_override("hover", CardRenderer.hover_variant(sb))
+	b.add_theme_color_override("font_color", Color(1, 1, 1, 0.35))
+	if info.has("meld"):
+		var meld: CardSet = info["meld"]
+		b.pressed.connect(_ui._on_extend_line_pressed.bind(meld))
+		b.set_drag_forwarding(Callable(),
+			_ui._can_drop_on_meld.bind(meld), _ui._drop_on_meld.bind(meld))
+	else:
+		b.pressed.connect(_ui._on_line_start_pressed.bind(info["anchor"], info["step"]))
+		b.set_drag_forwarding(Callable(),
+			_ui._can_drop_line_start.bind(info["anchor"], info["step"]),
+			_ui._drop_line_start.bind(info["anchor"], info["step"]))
+	return b
 
 func _make_new_group_zone() -> Button:
 	var zone := Button.new()

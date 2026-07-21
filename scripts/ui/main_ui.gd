@@ -745,6 +745,10 @@ func _on_hand_card_hover_exit(c: Card) -> void:
 func _compute_play_hints(c: Card) -> void:
 	var open := gm.current_player_is_open()
 	for meld in gm.board.melds:
+		# Pictures and their extension lines play by grid rules; the plain
+		# lay-off hint doesn't read them (the ghost cells are their guide).
+		if meld.is_shape() or meld.is_attached():
+			continue
 		if not meld.is_valid():
 			continue
 		if not open and not gm.is_own_staged_meld(meld):
@@ -1057,6 +1061,34 @@ func _return_to_hand(cards: Array[Card]) -> void:
 	if cards.is_empty():
 		return
 	var err := gm.return_cards_to_hand(cards)
+	selected.clear()
+	_set_status(err)
+	_refresh()
+
+# --- Plays off a picture --------------------------------------------------------
+
+## A ghost cell beside a picture: drop cards (or click with a selection) to
+## lay them as a line reading outward from that picture card.
+func _can_drop_line_start(_at_position: Vector2, data: Variant, _anchor: Card,
+		_step: Vector2i) -> bool:
+	return _is_human_turn() and not _drag_cards(data).is_empty()
+
+func _drop_line_start(_at_position: Vector2, data: Variant, anchor: Card,
+		step: Vector2i) -> void:
+	_play_line_start(anchor, step, _drag_cards(data))
+
+func _on_line_start_pressed(anchor: Card, step: Vector2i) -> void:
+	_play_line_start(anchor, step, selected.duplicate())
+
+## The ghost at an existing extension line's outward end: same flow as
+## dropping on the line itself (add_cards_to_meld routes it as an extension).
+func _on_extend_line_pressed(meld: CardSet) -> void:
+	_stage_move(selected.duplicate(), meld)
+
+func _play_line_start(anchor: Card, step: Vector2i, cards: Array[Card]) -> void:
+	if cards.is_empty():
+		return
+	var err := gm.play_off_picture(anchor, step, cards)
 	selected.clear()
 	_set_status(err)
 	_refresh()

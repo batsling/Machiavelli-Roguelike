@@ -34,6 +34,10 @@ static func clusters(board: Board) -> Array[Dictionary]:
 	for seed_meld in board.melds:
 		if placed_in.has(seed_meld):
 			continue
+		# An attached line never seeds: its picture's cluster absorbs it (board
+		# order can put the line first, e.g. after a Randomize).
+		if seed_meld.is_attached():
+			continue
 		var cluster := _lay_out_cluster(board, seed_meld)
 		for m: CardSet in cluster["melds"]:
 			placed_in[m] = true
@@ -81,7 +85,9 @@ static func _lay_out_cluster(board: Board, seed_meld: CardSet) -> Dictionary:
 	var meld_at := {}  # Vector2i -> CardSet (the meld that placed the cell)
 	var cell_of := {}  # Card -> Vector2i, for aligning newcomers
 	_place_meld(seed_meld, Vector2i.ZERO, melds, cells, meld_at, cell_of)
-	# Keep absorbing melds that touch the placed patch until none are left.
+	# Keep absorbing melds that touch the placed patch until none are left:
+	# by a shared card (an intersection), or by hanging off a placed picture
+	# card (an attached extension line).
 	var grew := true
 	while grew:
 		grew = false
@@ -89,11 +95,14 @@ static func _lay_out_cluster(board: Board, seed_meld: CardSet) -> Dictionary:
 			if melds.has(m):
 				continue
 			var shared := _shared_placed_card(m, cell_of)
-			if shared == null:
-				continue
-			var anchor := _anchor_for(m, shared, cell_of[shared])
-			_place_meld(m, anchor, melds, cells, meld_at, cell_of)
-			grew = true
+			if shared != null:
+				_place_meld(m, _anchor_for(m, shared, cell_of[shared]),
+					melds, cells, meld_at, cell_of)
+				grew = true
+			elif m.is_attached() and cell_of.has(m.attach_anchor):
+				_place_meld(m, cell_of[m.attach_anchor] + m.attach_step,
+					melds, cells, meld_at, cell_of)
+				grew = true
 	# Normalize so the top-left occupied cell is (0,0).
 	var origin := Vector2i(2147483647, 2147483647)
 	for cell: Vector2i in cells:
@@ -139,6 +148,8 @@ static func _step(meld: CardSet) -> Vector2i:
 ## Write one meld's cards into the cluster maps. Cells already claimed by an
 ## earlier meld are left as they are (the shared card of an intersection is
 ## claimed by its host), so meld_at answers "whose panel is this" one way.
+## Attached extension lines keep their array order — it IS the spatial order —
+## and run along their own attach_step.
 static func _place_meld(meld: CardSet, anchor: Vector2i, melds: Array[CardSet],
 		cells: Dictionary, meld_at: Dictionary, cell_of: Dictionary) -> void:
 	melds.append(meld)
@@ -146,6 +157,10 @@ static func _place_meld(meld: CardSet, anchor: Vector2i, melds: Array[CardSet],
 		for c: Card in meld.shape_cells:
 			var cell: Vector2i = anchor + meld.shape_cells[c]
 			_claim(cell, c, meld, cells, meld_at, cell_of)
+		return
+	if meld.is_attached():
+		for i in meld.cards.size():
+			_claim(anchor + meld.attach_step * i, meld.cards[i], meld, cells, meld_at, cell_of)
 		return
 	var step := _step(meld)
 	var ordered := Rules.display_order(meld.cards)

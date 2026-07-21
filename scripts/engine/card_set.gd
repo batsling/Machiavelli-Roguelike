@@ -33,11 +33,34 @@ enum Orientation { HORIZONTAL, VERTICAL }
 ## makes this a shape (picture) group, valid when its cells form one
 ## edge-connected patch covering exactly its cards.
 @export var shape_cells := {}
+## Attached extension line (a Scrabble-style play off a picture): the picture
+## card the line reads from — it stays in its own group — and the outward
+## direction. cards[i] sits at the anchor's cell + attach_step * (i + 1), so
+## the array order IS the spatial order. Valid when the anchor plus the line
+## reads as a legal grid line (Rules.is_valid_grid_line), or is still a
+## growable pair while one card long (Rules.could_pair). Extension lines tear
+## off whole or not at all (GameManager enforces).
+var attach_anchor: Card = null
+@export var attach_step := Vector2i.ZERO
 
 func is_valid() -> bool:
 	if is_shape():
 		return _shape_is_valid()
+	if is_attached():
+		return _attached_line_valid()
 	return Rules.is_valid_meld(cards)
+
+func is_attached() -> bool:
+	return attach_anchor != null
+
+func _attached_line_valid() -> bool:
+	if cards.is_empty():
+		return false
+	var line: Array[Card] = [attach_anchor]
+	line.append_array(cards)
+	if line.size() == 2:
+		return Rules.could_pair(line[0], line[1])
+	return Rules.is_valid_grid_line(line)
 
 # --- Shape (picture) groups — groundwork -------------------------------------
 

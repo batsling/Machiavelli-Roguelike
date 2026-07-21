@@ -226,10 +226,12 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   double deck (optional jokers), each card tagged with its origin deck
   (`Card.deck_owner`), seeded Fisher-Yates shuffle, stock
 - `scripts/engine/card_set.gd` — `CardSet` resource: one group on the table (+ stubs for
-  future Trigger/Sticky effects), plus the layout groundwork: an orientation
-  (a line group can lie flat or stand upright on the felt) and shape cells
+  future Trigger/Sticky effects), plus the layout state: an orientation
+  (a line group can lie flat or stand upright on the felt), shape cells
   (a "picture" group placing its cards on a small grid, with line-through
-  helpers for the future play-off rules)
+  helpers), and the attachment of an extension line — the picture card it
+  reads from and its outward direction, its validity being the grid-line
+  (or growable-pair) reading with that anchor counted in
 - `scripts/engine/board.gd` — `Board`: the melds on the table, with snapshot/restore so a
   whole turn's rearrangement can be rolled back (snapshots keep each group's
   orientation and shape). A card may sit in more than one meld at once — an
@@ -245,8 +247,10 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 - `scripts/engine/game_manager.gd` — `GameManager`: deal, staged turns, per-move undo,
   the opening rule, commit validation, draw/pass, win detection; emits signals
   the UI listens to. Also carries the layout moves: `move_cards_to_new_shape`
-  (a new picture group on grid cells — the slime's ultimate plays through it)
-  and `stage_cross_meld`, the groundwork move (no card grants it in normal
+  (a new picture group on grid cells — the slime's ultimate plays through
+  it), `play_off_picture` (the player's Scrabble-style line off a picture
+  card, with the outward-only / one-per-axis / whole-line rules) and
+  `stage_cross_meld`, the groundwork move (no card grants it in normal
   play yet) that stages a new group crossing an existing one at a shared
   pivot card — the pivot counts as a member of both groups, both must be
   valid at commit, and both can still take cards
@@ -362,7 +366,11 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   line-through), BoardGrid cluster and adjacency math, the ultimate (fires on
   a full meter with gatherable slime, seals a valid picture, resets the
   meter, holds when short, and fires inside full seeded AI-vs-AI games with
-  every invariant intact), and the vertical/grid rendering paths
+  every invariant intact), the Scrabble-style plays off pictures (grid-line
+  and could-grow-pair readings, growable pair → run extension, outward-only
+  and one-line-per-axis rules, whole-line tear-down, sealed picture cards,
+  no jokers, commit, and the ghost play cells rendering), and the
+  vertical/grid rendering paths
 
 ## Headless smoke test
 
@@ -414,9 +422,20 @@ mechanics that will use it still to come:
   connected patch. This is what the Cute Slime's ultimate builds (her heart /
   ladybug / flower templates live on `CuteSlime.ULT_HEART` / `ULT_LADYBUG` /
   `ULT_FLOWER`; the engine move is `GameManager.move_cards_to_new_shape`).
-  Still to come: a picture as a "set" any card of which can be played off in
-  any direction that feasibly works — `CardSet.line_through` reads the
-  straight lines those plays will extend.
+- **Scrabble-style plays off pictures** — any picture card can be played off
+  in one direction, horizontal or vertical (`GameManager.play_off_picture`):
+  the cards land in a straight line outward from that card, and together
+  with it must read as a legal set or run on the grid — spatial order
+  matters for runs (`Rules.is_valid_grid_line`) — or, while only one card
+  long, as a pair that could still grow (`Rules.could_pair`: same rank in
+  different suits, or same suit in neighbouring ranks). Lines extend outward
+  only (they never hug the silhouette, so the picture always reads as
+  drawn), take one line per picture card per axis, hold no jokers, brush a
+  neighbouring line only where the touching pair could grow, and tear off
+  whole or not at all. Ghost "+" cells around a picture are the drop/click
+  targets. A played card connects in ONE direction only — sitting in two
+  combinations at once stays reserved for the future layer-mechanic card
+  (the crossing groundwork below).
 - **Adjacency** — `BoardGrid` lays every connected patch of groups onto a
   local grid and answers `neighbors(card)`: cards directly horizontal or
   vertical to each other, the relation that will eventually make such
@@ -468,6 +487,13 @@ table is whole again when she is done. The picture is all slimed, so it moves
 only as one lump nothing can legally absorb: those cards are sealed, and no
 planner (not even hers) ever unpicks a picture. Until a picture fits, she
 holds the full meter.
+
+A sealed picture isn't dead felt, though — you can play off it,
+Scrabble-style: any picture card takes a line of cards outward in one
+direction, reading as a legal set or run together with it (or a growable
+pair while one card long). The faint "+" cells around the picture are the
+targets; lines extend outward only and come off whole or not at all. See
+"Board layout groundwork" for the exact rules.
 
 **The Sadistic Billionaire** brings the **Clear** (glass) effect — glass cards
 render transparent and are see-through from the back: everyone can see them

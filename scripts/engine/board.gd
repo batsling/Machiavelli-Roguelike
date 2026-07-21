@@ -77,7 +77,8 @@ func prune_empty() -> void:
 
 ## Snapshot is an Array with one Dictionary per meld (card refs shared, so a
 ## card sitting in two melds is restored into both) carrying the cards plus
-## the layout groundwork: orientation and shape cells.
+## the layout state: orientation, shape cells, and the attachment of an
+## extension line played off a picture.
 func snapshot() -> Array:
 	var snap: Array = []
 	for m in melds:
@@ -85,6 +86,8 @@ func snapshot() -> Array:
 			"cards": m.cards.duplicate(),
 			"orientation": m.orientation,
 			"shape": m.shape_cells.duplicate(),
+			"attach_anchor": m.attach_anchor,
+			"attach_step": m.attach_step,
 		})
 	return snap
 
@@ -96,4 +99,6 @@ func restore(snap: Array) -> void:
 			m.cards.append(c)
 		m.orientation = entry["orientation"]
 		m.shape_cells = (entry["shape"] as Dictionary).duplicate()
+		m.attach_anchor = entry["attach_anchor"]
+		m.attach_step = entry["attach_step"]
 		melds.append(m)
