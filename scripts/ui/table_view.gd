@@ -168,15 +168,19 @@ func refresh_board() -> void:
 
 ## Put one group's panel on the felt: at the spot its group remembers, or — for
 ## an unplaced group — the next free patch, which is then stored on every meld
-## of the group so a crossing/picture cluster keeps one shared spot. Transient
-## panels (the New group zone/hint) pass no melds and store nothing.
+## of the group so a crossing/picture cluster keeps one shared spot. A
+## remembered spot the panel has outgrown (a lay-off widened the group onto a
+## neighbour, or past the felt's right edge) is given up and the group is
+## re-placed, so every group always sits whole and visible. Transient panels
+## (the New group zone/hint) pass no melds and store nothing.
 func _place_panel(panel: Control, melds: Array[CardSet], placed: Array[Rect2],
 		width: float) -> void:
 	var size := panel.get_combined_minimum_size()
 	panel.size = size
 	var anchor: CardSet = melds[0] if not melds.is_empty() else null
 	var pos: Vector2
-	if anchor != null and anchor.is_placed():
+	if anchor != null and anchor.is_placed() \
+			and not _needs_replacing(Rect2(anchor.board_pos, size), placed, width):
 		pos = anchor.board_pos
 	else:
 		pos = _free_spot(size, placed, width)
@@ -184,6 +188,15 @@ func _place_panel(panel: Control, melds: Array[CardSet], placed: Array[Rect2],
 			m.board_pos = pos
 	panel.position = pos
 	placed.append(Rect2(pos, size))
+
+## True when a group can no longer keep its remembered spot: its panel now
+## overlaps one already on the felt, or it spills past the right edge (where
+## clipping would hide cards). A panel wider than the felt itself is left
+## where it is — no spot could fit it anyway.
+func _needs_replacing(rect: Rect2, placed: Array[Rect2], width: float) -> bool:
+	if _overlaps_any(rect, placed):
+		return true
+	return rect.size.x <= width and rect.position.x + rect.size.x > width
 
 ## The next open spot for a panel of `size`: the topmost-then-leftmost candidate
 ## corner (the felt's top-left, plus the right and bottom edges every placed

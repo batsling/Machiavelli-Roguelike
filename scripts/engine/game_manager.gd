@@ -72,7 +72,7 @@ var max_plays_per_turn := 0
 ## meter_max 0 disables the meter entirely. Each committed hand adds
 ## meter_gain points — once per hand, or meter_gain per card played from hand
 ## when meter_per_card is on.
-var meter_max := 30
+var meter_max := 25
 var meter_gain := 1
 var meter_per_card := false
 
@@ -330,7 +330,10 @@ func _extension_cells_error(anchor: Card, step: Vector2i,
 ## Vector2i cell, exactly one per card. Same staging, undo and legality as
 ## move_cards_to_new_meld; the picture itself is valid when its cells form one
 ## connected patch (CardSet). This is what the Cute Slime's ultimate plays
-## through. Returns "" on success or a human-readable reason.
+## through. Sealing cards into a picture is a mechanic, not an ordinary play:
+## hand cards the picture swallows stop counting as played this turn, so the
+## builder still has to play a real card or draw to end the turn. Returns ""
+## on success or a human-readable reason.
 func move_cards_to_new_shape(cards_to_move: Array[Card], cells: Dictionary) -> String:
 	if cards_to_move.is_empty():
 		return ""
@@ -343,12 +346,22 @@ func move_cards_to_new_shape(cards_to_move: Array[Card], cells: Dictionary) -> S
 	for c in cards_to_move:
 		if not cells.has(c):
 			return "The picture needs exactly one cell per card."
+	var from_hand: Array[Card] = []
+	for c in cards_to_move:
+		if current_player().hand.has(c):
+			from_hand.append(c)
 	var err := move_cards_to_new_meld(cards_to_move)
 	if err != "":
 		return err
 	# move_cards_to_new_meld appends the new group last; shape it in place.
 	var meld: CardSet = board.melds[-1]
 	meld.set_shape(cells)
+	# Drop the swallowed hand cards from the turn-start snapshot so they never
+	# count toward cards_played_this_turn (the undo entry pushed above still
+	# holds the original snapshot, so undoing the picture restores them). They
+	# also stop being returnable to the hand — sealed is sealed.
+	for c in from_hand:
+		_hand_snapshot.erase(c)
 	board_changed.emit()
 	return ""
 
@@ -482,8 +495,6 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	var err := ""
 	if not joker.is_joker or joker.joker_rank == 0:
 		err = "That card is not a joker with a known value."
-	elif meld.is_shape():
-		err = "That joker is sealed inside a picture — nothing swaps it out."
 	elif not meld.cards.has(joker):
 		err = "That joker is not in that group."
 	elif not p.hand.has(hand_card) or hand_card.is_joker:
@@ -501,6 +512,11 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 		return err
 	_push_undo()
 	meld.cards[meld.cards.find(joker)] = hand_card
+	# Even a picture gives its joker up to the exact card it stands for; the
+	# real card takes over the joker's cell so the picture stays well-formed.
+	if meld.is_shape():
+		meld.shape_cells[hand_card] = meld.shape_cells[joker]
+		meld.shape_cells.erase(joker)
 	p.hand.erase(hand_card)
 	p.hand.append(joker)
 	# The joker now counts as a card the player started the turn with. The

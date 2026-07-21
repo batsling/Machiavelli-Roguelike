@@ -34,6 +34,7 @@ func _init() -> void:
 	_test_ult_in_driven_games()
 	_test_grid_line_rules()
 	_test_play_off_picture()
+	_test_picture_joker_swap()
 	await _test_rendering()
 	await _test_picture_ghost_cells()
 	if ok:
@@ -156,12 +157,17 @@ func _test_shape_groups() -> void:
 		return
 	if not heart.is_valid():
 		_fail("the heart picture should be a well-formed (connected) shape")
-	# The heart's widest rows are 5 cards; line_through reads them off.
+	# The heart is a hollow outline: its brow row is still 5 cards wide, but
+	# below it only the walls and the bottom tip carry cards.
 	var row_card := heart.card_at(Vector2i(0, 1))
 	if heart.line_through(row_card, true).size() != 5:
 		_fail("the heart's second row should be a 5-card line")
-	if heart.line_through(heart.card_at(Vector2i(2, 4)), false).size() != 4:
-		_fail("the heart's spine should be a 4-card vertical line")
+	if heart.line_through(heart.card_at(Vector2i(0, 2)), false).size() != 3:
+		_fail("the heart's left wall should be a 3-card vertical line")
+	if heart.line_through(heart.card_at(Vector2i(2, 5)), false).size() != 2:
+		_fail("the heart's tip should hang off a 2-card vertical line")
+	if heart.card_at(Vector2i(2, 2)) != null or heart.card_at(Vector2i(2, 3)) != null:
+		_fail("the heart's middle should be hollow — outline only")
 	# A disconnected picture is not a valid shape.
 	var torn := CardSet.new()
 	torn.set_shape({_card(2, "clubs"): Vector2i(0, 0), _card(3, "clubs"): Vector2i(1, 0),
@@ -278,8 +284,19 @@ func _test_slime_ultimate() -> void:
 	# The picture is one sticky lump: lifting any card drags the whole picture.
 	if picture.sticky_cluster(picture.cards[0]).size() != 9:
 		_fail("the picture should move as one 9-card lump")
-	if gm.commit_turn() != "":
-		_fail("the turn ending on the ultimate should commit")
+	# Sealing is a mechanic, not a play: the swallowed hand cards never count,
+	# so an ult-only turn can't commit — she draws, keeping the picture.
+	if gm.cards_played_this_turn() != 0:
+		_fail("the ultimate must not count as playing cards, counted %d"
+			% gm.cards_played_this_turn())
+	if gm.commit_turn() == "":
+		_fail("an ult-only turn has played nothing and must not commit")
+	var stock := gm.deck.size()
+	gm.draw_and_end_turn()
+	if gm.deck.size() != stock - 1:
+		_fail("the ultimate turn should still end in a draw")
+	if gm.board.melds[-1] != picture or not picture.is_shape():
+		_fail("the drawn turn should keep the picture on the felt")
 	# Her planner never unpicks the picture on later turns.
 	if not GreedyAI._immovable_cards(gm).has(picture.cards[0]):
 		_fail("picture cards should be immovable to every planner")
@@ -386,15 +403,16 @@ func _test_grid_line_rules() -> void:
 
 ## A picture on the felt with the player open: the flower's cards are known,
 ## so plays off its cards are deterministic. Template order maps card i to
-## cell i — index 0 is the top petal at (1,0), index 1 the left petal at (0,1).
+## cell i — index 1 is the blossom's top-middle at (1,0), index 3 the left
+## wall at (0,1), index 8 the stem at (1,3).
 func _picture_gm() -> Dictionary:
 	var flower_cards: Array[Card] = []
 	for i in CuteSlime.ULT_FLOWER.size():
 		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
 	var top := _slimed(7, "hearts")
 	var left := _slimed(5, "diamonds")
-	flower_cards[0] = top
-	flower_cards[1] = left
+	flower_cards[1] = top
+	flower_cards[3] = left
 	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
 	var gm := GameManager.new()
 	gm.setup(["You", "Foe"], 5, 7)
@@ -417,10 +435,11 @@ func _test_play_off_picture() -> void:
 	var left: Card = setup["left"]    # 5D at (0,1)
 	var eight := _card(8, "hearts")
 	var nine := _card(9, "hearts")
+	var queen := _card(12, "diamonds")
 	var joker := Card.new()
 	joker.is_joker = true
 	joker.suit = "joker"
-	_give_hand(gm, [eight, nine, joker, _card(2, "clubs")] as Array[Card])
+	_give_hand(gm, [eight, nine, queen, joker, _card(2, "clubs")] as Array[Card])
 
 	# A single 8H up from the 7H petal: a growable pair, legal to stage.
 	var err := gm.play_off_picture(top, Vector2i.UP, [eight] as Array[Card])
@@ -445,9 +464,10 @@ func _test_play_off_picture() -> void:
 		_fail("jokers don't stick to pictures")
 	if gm.move_cards_to_new_meld([top] as Array[Card]) == "":
 		_fail("picture cards are sealed in place")
-	# Outward only: up from the left petal hugs the top petal diagonally' —
-	# the cell (0,0) touches the picture at (1,0) — so it is refused.
-	if gm.play_off_picture(left, Vector2i.UP, [_card(6, "diamonds")] as Array[Card]) == "":
+	# Outward only: left from the stem could grow (JD then QD reads as a run),
+	# but the cell (0,3) hugs the picture's bottom wall at (0,2) — refused.
+	var stem: Card = (setup["picture"] as CardSet).card_at(Vector2i(1, 3))
+	if gm.play_off_picture(stem, Vector2i.LEFT, [queen] as Array[Card]) == "":
 		_fail("a line hugging the picture must be refused (outward only)")
 	# Whole line or nothing: a lone card can't leave the line, the pair can.
 	if gm.move_cards_to_new_meld([eight] as Array[Card]) == "":
@@ -464,6 +484,46 @@ func _test_play_off_picture() -> void:
 		_fail("re-playing 8H 9H together should stage the run")
 	if gm.commit_turn() != "":
 		_fail("a turn ending on a legal extension line should commit")
+	gm.free()
+
+## A joker sealed inside a picture can still be claimed the usual way: drop
+## the exact card it stands for and the joker comes back to the hand, the real
+## card taking over the joker's cell.
+func _test_picture_joker_swap() -> void:
+	var flower_cards: Array[Card] = []
+	for i in CuteSlime.ULT_FLOWER.size():
+		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
+	var joker := Card.new()
+	joker.is_joker = true
+	joker.suit = "joker"
+	joker.joker_lock_rank = 9
+	joker.joker_lock_suit = "hearts"
+	flower_cards[4] = joker  # the right wall cell (2,1)
+	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
+	var gm := GameManager.new()
+	gm.setup(["You", "Foe"], 5, 7)
+	gm.board.melds.assign([picture] as Array[CardSet])
+	gm.players[0].has_opened = true
+	var nine := _card(9, "hearts")
+	_give_hand(gm, [nine] as Array[Card])
+	Rules.assign_jokers(picture.cards)
+	var cell := picture.cell_of(joker)
+	if gm.swap_joker(nine, joker, picture) != "":
+		_fail("a locked joker in a picture should swap for its exact card")
+		gm.free()
+		return
+	if picture.cell_of(nine) != cell or picture.cards.has(joker):
+		_fail("the swap should seat the real card in the joker's cell")
+	if not gm.players[0].hand.has(joker) or joker.joker_lock_rank != 0:
+		_fail("the joker should return to the hand as a free wildcard")
+	if not picture.is_valid():
+		_fail("the picture must stay a well-formed shape after the swap")
+	# The swapped-in card is sealed like any picture card, and the swap itself
+	# counts as the turn's play, so the turn commits.
+	if gm.move_cards_to_new_meld([nine] as Array[Card]) == "":
+		_fail("the swapped-in card is sealed inside the picture")
+	if gm.commit_turn() != "":
+		_fail("a turn ending on the picture swap should commit")
 	gm.free()
 
 ## Rendering: a vertical group lays its cards out in a column, and a cross
@@ -518,7 +578,7 @@ func _test_picture_ghost_cells() -> void:
 	for i in CuteSlime.ULT_FLOWER.size():
 		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
 	var top := _slimed(7, "hearts")
-	flower_cards[0] = top
+	flower_cards[1] = top  # the blossom's top-middle cell (1,0)
 	var picture := CuteSlime.build_shape_meld(CuteSlime.ULT_FLOWER, flower_cards)
 	ui.gm.board.melds.assign([picture] as Array[CardSet])
 	ui.gm.players[0].has_opened = true
