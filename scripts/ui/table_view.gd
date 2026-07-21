@@ -468,7 +468,8 @@ func _make_ghost_cell(info: Dictionary) -> Button:
 	b.focus_mode = Control.FOCUS_NONE
 	b.tooltip_text = "Play cards here: together with the picture card they " \
 		+ "extend, they must read as a set or run (a single card may sit as " \
-		+ "a pair that could still grow)."
+		+ "a pair that could still grow). Vertical straights keep the lower " \
+		+ "rank on top."
 	var sb := CardRenderer.panel_style(Color(1, 1, 1, 0.02), 7)
 	sb.border_color = Color(1, 1, 1, 0.18)
 	sb.set_border_width_all(1)

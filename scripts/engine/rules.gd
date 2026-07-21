@@ -156,6 +156,31 @@ static func is_valid_grid_line(line: Array[Card]) -> bool:
 			return true
 	return false
 
+## The table convention for vertical straights: the lower rank sits on top,
+## i.e. ranks increase downward on the felt. `line` is in spatial order along
+## `step` (the picture anchor first, then outward). Horizontal lines, sets
+## (order-free) and anything that isn't a same-suit run reading always pass;
+## a vertical run (or run-growable pair) must run the right way. The ace reads
+## high when it sits beside a king, low otherwise.
+static func line_direction_ok(line: Array[Card], step: Vector2i) -> bool:
+	if step.y == 0 or line.size() < 2:
+		return true
+	var suit := _eff_suit(line[0])
+	for c in line:
+		if not _is_fixed(c) or _eff_suit(c) != suit:
+			return true  # a set reading (or a free wildcard): no direction to it
+	var ranks: Array[int] = []
+	for c in line:
+		ranks.append(_eff_rank(c))
+	for i in ranks.size():
+		if ranks[i] == 1 and ((i > 0 and ranks[i - 1] == 13)
+				or (i < ranks.size() - 1 and ranks[i + 1] == 13)):
+			ranks[i] = 14
+	for i in range(1, ranks.size()):
+		if (ranks[i] - ranks[i - 1]) * step.y <= 0:
+			return false
+	return true
+
 ## Sorted copy of a meld for display: runs in sequence order (jokers slotted
 ## where they stand, the ace where it is actually used), anything else by
 ## suit then rank with jokers last. Never mutates the cards.

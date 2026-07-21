@@ -208,13 +208,16 @@ func add_cards_to_meld(cards_to_move: Array[Card], meld: CardSet) -> String:
 ## group — along `step` (one of the four grid directions). The anchor counts
 ## in the line's reading: anchor + line must read as a legal set/run on the
 ## grid (Rules.is_valid_grid_line — spatial order matters for runs), or still
-## be a growable pair while one card long (Rules.could_pair). The anchor stays
-## a picture card; the played cards form (or extend) an attached extension
-## line. Outward only: the covered cells must be empty and clear of the
-## picture except at the anchor itself, so the picture always reads as drawn;
-## a cell brushing another extension line is fine when the touching pair
-## could still grow. One line per anchor per axis, no jokers, and lines tear
-## off whole or not at all. Returns "" on success or a human-readable reason.
+## be a growable pair while one card long (Rules.could_pair); a vertical
+## straight must also keep the lower rank on top (Rules.line_direction_ok).
+## The anchor stays a picture card; the played cards form (or extend) an
+## attached extension line. Outward only: the covered cells must be empty and
+## clear of the picture except at the anchor itself, so the picture always
+## reads as drawn; a cell brushing another extension line is fine when the
+## touching pair could still grow. One line per anchor per axis, and no
+## jokers. Line cards stay loose afterwards: any of them can be picked back
+## up or moved on its own (the rest slide in toward the anchor) — only the
+## picture itself is sealed. Returns "" on success or a human-readable reason.
 func play_off_picture(anchor: Card, step: Vector2i, cards_to_play: Array[Card]) -> String:
 	if cards_to_play.is_empty():
 		return ""
@@ -242,9 +245,13 @@ func play_off_picture(anchor: Card, step: Vector2i, cards_to_play: Array[Card]) 
 	var err := _stage_error(cards_to_play, existing if existing != null else picture)
 	if err != "":
 		return err
-	var ordered := _ordered_extension(anchor, existing, cards_to_play)
+	var ordered := _ordered_extension(anchor, existing, step, cards_to_play)
 	if ordered.is_empty():
-		return "Those cards don't read as a straight set or run off %s." % anchor.label()
+		var reason := "Those cards don't read as a straight set or run off %s." \
+			% anchor.label()
+		if step.x == 0:
+			reason += " Vertical straights keep the lower rank on top."
+		return reason
 	err = _extension_cells_error(anchor, step,
 		existing.cards.size() if existing != null else 0, ordered)
 	if err != "":
@@ -265,8 +272,10 @@ func play_off_picture(anchor: Card, step: Vector2i, cards_to_play: Array[Card]) 
 ## The played cards in an order that reads legally at the end of the line
 ## (anchor + existing line + new cards), or [] when no order does. Tries the
 ## order given plus rank-ascending and -descending — enough, since a legal
-## run line is monotone in rank and a set line is order-free.
-func _ordered_extension(anchor: Card, existing: CardSet,
+## run line is monotone in rank and a set line is order-free. A vertical
+## straight must additionally read with the lower rank on top
+## (Rules.line_direction_ok), so only one of the two rank orders can fit.
+func _ordered_extension(anchor: Card, existing: CardSet, step: Vector2i,
 		cards_to_play: Array[Card]) -> Array[Card]:
 	var prefix: Array[Card] = [anchor]
 	if existing != null:
@@ -280,7 +289,7 @@ func _ordered_extension(anchor: Card, existing: CardSet,
 		line.append_array(order)
 		var reads := Rules.could_pair(line[0], line[1]) if line.size() == 2 \
 			else Rules.is_valid_grid_line(line)
-		if reads:
+		if reads and Rules.line_direction_ok(line, step):
 			return order
 	var none: Array[Card] = []
 	return none
@@ -457,19 +466,6 @@ func return_cards_to_hand(cards_to_return: Array[Card]) -> String:
 	if not can_return_to_hand(cards_to_return):
 		return "Only cards you played from your hand this turn " \
 			+ "can go back to your hand."
-	# Extension lines come off whole even on a take-back.
-	var batch := {}
-	for c in cards_to_return:
-		batch[c] = true
-	for m in board.melds:
-		if not m.is_attached():
-			continue
-		var moving := 0
-		for c in m.cards:
-			if batch.has(c):
-				moving += 1
-		if moving > 0 and moving < m.cards.size():
-			return "An extension line comes off a picture whole, or not at all."
 	_push_undo()
 	var p := current_player()
 	for c in cards_to_return:
@@ -594,11 +590,13 @@ func _staged_open_meld_exists() -> bool:
 	return false
 
 ## Why the staged move is illegal under the play cap, the opening rule, or the
-## picture rules (sealed pictures, whole-line extension tear-down), or "" if
-## it is fine.
+## picture seal, or "" if it is fine. Cards in an extension line are NOT
+## sealed: they come off one at a time like any table card (the line slides in
+## toward its anchor and revalidates at commit), keeping the picture's own
+## borders exactly as they were.
 func _stage_error(cards_to_move: Array[Card], dest: CardSet) -> String:
 	var p := current_player()
-	# Picture cards are sealed in place; extension lines come off whole.
+	# Picture cards are sealed in place.
 	var batch := {}
 	for c in cards_to_move:
 		batch[c] = true
@@ -607,13 +605,6 @@ func _stage_error(cards_to_move: Array[Card], dest: CardSet) -> String:
 			for c in m.cards:
 				if batch.has(c):
 					return "That card is sealed inside a picture."
-		elif m.is_attached() and m != dest:
-			var moving := 0
-			for c in m.cards:
-				if batch.has(c):
-					moving += 1
-			if moving > 0 and moving < m.cards.size():
-				return "An extension line comes off a picture whole, or not at all."
 	if max_plays_per_turn > 0:
 		var from_hand := 0
 		for c in cards_to_move:
