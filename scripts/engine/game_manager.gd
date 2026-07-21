@@ -69,7 +69,7 @@ var max_plays_per_turn := 0
 ## meter_max 0 disables the meter entirely. Each committed hand adds
 ## meter_gain points — once per hand, or meter_gain per card played from hand
 ## when meter_per_card is on.
-var meter_max := 10
+var meter_max := 30
 var meter_gain := 1
 var meter_per_card := false
 
@@ -180,8 +180,14 @@ func move_cards_to_new_meld(cards_to_move: Array[Card]) -> String:
 	return ""
 
 ## Move cards (from hand and/or table) into an existing meld. Returns "" on
-## success or the reason the move is not allowed.
+## success or the reason the move is not allowed. Pictures are sealed (their
+## edges take Scrabble-style plays instead — play_off_picture), and dropping
+## onto an attached extension line reads as extending that line.
 func add_cards_to_meld(cards_to_move: Array[Card], meld: CardSet) -> String:
+	if meld.is_shape():
+		return "Pictures are sealed — play off their edges instead."
+	if meld.is_attached():
+		return play_off_picture(meld.attach_anchor, meld.attach_step, cards_to_move)
 	if cards_to_move.is_empty():
 		return ""
 	cards_to_move = _expand_sticky(cards_to_move)
@@ -189,6 +195,195 @@ func add_cards_to_meld(cards_to_move: Array[Card], meld: CardSet) -> String:
 	if err != "":
 		return err
 	_push_undo()
+	_move_cards(cards_to_move, meld)
+	_lock_table_jokers()
+	return ""
+
+# --- Scrabble-style plays off a picture ---------------------------------------
+
+## Lay cards in a straight line outward from `anchor` — a card of a picture
+## group — along `step` (one of the four grid directions). The anchor counts
+## in the line's reading: anchor + line must read as a legal set/run on the
+## grid (Rules.is_valid_grid_line — spatial order matters for runs), or still
+## be a growable pair while one card long (Rules.could_pair). The anchor stays
+## a picture card; the played cards form (or extend) an attached extension
+## line. Outward only: the covered cells must be empty and clear of the
+## picture except at the anchor itself, so the picture always reads as drawn;
+## a cell brushing another extension line is fine when the touching pair
+## could still grow. One line per anchor per axis, no jokers, and lines tear
+## off whole or not at all. Returns "" on success or a human-readable reason.
+func play_off_picture(anchor: Card, step: Vector2i, cards_to_play: Array[Card]) -> String:
+	if cards_to_play.is_empty():
+		return ""
+	var picture: CardSet = null
+	for m in board.melds_of(anchor):
+		if m.is_shape():
+			picture = m
+	if picture == null:
+		return "Lines like this start from a card in a picture group."
+	if absi(step.x) + absi(step.y) != 1:
+		return "Pick one straight direction to play in."
+	cards_to_play = _expand_sticky(cards_to_play)
+	for c in cards_to_play:
+		if c.is_joker:
+			return "Jokers don't stick to pictures — play naturals off them."
+	# One line per anchor and axis; playing at an anchor that already carries
+	# a line on this axis extends that line outward.
+	var existing: CardSet = null
+	for m in board.melds:
+		if m.is_attached() and m.attach_anchor == anchor \
+				and m.attach_step.abs() == step.abs():
+			if m.attach_step != step:
+				return "That card already carries its line out the other way."
+			existing = m
+	var err := _stage_error(cards_to_play, existing if existing != null else picture)
+	if err != "":
+		return err
+	var ordered := _ordered_extension(anchor, existing, cards_to_play)
+	if ordered.is_empty():
+		return "Those cards don't read as a straight set or run off %s." % anchor.label()
+	err = _extension_cells_error(anchor, step,
+		existing.cards.size() if existing != null else 0, ordered)
+	if err != "":
+		return err
+	_push_undo()
+	var line := existing
+	if line == null:
+		line = CardSet.new()
+		line.attach_anchor = anchor
+		line.attach_step = step
+		line.orientation = CardSet.Orientation.VERTICAL if step.x == 0 \
+			else CardSet.Orientation.HORIZONTAL
+		board.melds.append(line)
+	_move_cards(ordered, line)
+	_lock_table_jokers()
+	return ""
+
+## The played cards in an order that reads legally at the end of the line
+## (anchor + existing line + new cards), or [] when no order does. Tries the
+## order given plus rank-ascending and -descending — enough, since a legal
+## run line is monotone in rank and a set line is order-free.
+func _ordered_extension(anchor: Card, existing: CardSet,
+		cards_to_play: Array[Card]) -> Array[Card]:
+	var prefix: Array[Card] = [anchor]
+	if existing != null:
+		prefix.append_array(existing.cards)
+	var asc := cards_to_play.duplicate()
+	asc.sort_custom(func(a: Card, b: Card) -> bool: return a.rank < b.rank)
+	var desc := asc.duplicate()
+	desc.reverse()
+	for order: Array[Card] in [cards_to_play, asc, desc]:
+		var line := prefix.duplicate()
+		line.append_array(order)
+		var reads := Rules.could_pair(line[0], line[1]) if line.size() == 2 \
+			else Rules.is_valid_grid_line(line)
+		if reads:
+			return order
+	var none: Array[Card] = []
+	return none
+
+## Why the cells the new line segment would cover are not playable, or "".
+## Each cell must be empty, must not brush the picture anywhere past the
+## anchor (outward only — the notch of the heart stays a notch), and may only
+## brush another extension line where the touching pair could still grow.
+func _extension_cells_error(anchor: Card, step: Vector2i,
+		existing_len: int, ordered: Array[Card]) -> String:
+	var cluster := BoardGrid.cluster_of(board, anchor)
+	if cluster.is_empty():
+		return "That card isn't laid out on the felt."
+	var cells: Dictionary = cluster["cells"]
+	var meld_at: Dictionary = cluster["meld_at"]
+	var anchor_cell := Vector2i.ZERO
+	var found := false
+	for cell: Vector2i in cells:
+		if cells[cell] == anchor:
+			anchor_cell = cell
+			found = true
+			break
+	if not found:
+		return "That card isn't laid out on the felt."
+	for i in ordered.size():
+		var cell := anchor_cell + step * (existing_len + 1 + i)
+		if cells.has(cell):
+			return "No room that way — the line runs into other cards."
+		for side in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+			var n_cell: Vector2i = cell + side
+			if n_cell == cell - step:
+				continue  # the line itself: the anchor or the previous card
+			var n: Card = cells.get(n_cell)
+			if n == null:
+				continue
+			var n_meld: CardSet = meld_at.get(n_cell)
+			if n_meld != null and n_meld.is_shape():
+				return "Too snug against the picture — lines only extend " \
+					+ "outward, keeping the picture readable."
+			if not Rules.could_pair(ordered[i], n):
+				return "%s can't sit beside %s — that pair could never grow " \
+					% [ordered[i].label(), n.label()] + "into a group."
+	return ""
+
+## Move cards (from hand and/or table) into a brand-new SHAPE (picture) group
+## laid out on the given grid cells — `cells` maps every moved card to its
+## Vector2i cell, exactly one per card. Same staging, undo and legality as
+## move_cards_to_new_meld; the picture itself is valid when its cells form one
+## connected patch (CardSet). This is what the Cute Slime's ultimate plays
+## through. Returns "" on success or a human-readable reason.
+func move_cards_to_new_shape(cards_to_move: Array[Card], cells: Dictionary) -> String:
+	if cards_to_move.is_empty():
+		return ""
+	# The sticky expansion must not smuggle in cards the picture has no cell
+	# for (a mover bound by slime could drag extras along), so settle the real
+	# card list first and demand a perfect card<->cell match.
+	cards_to_move = _expand_sticky(cards_to_move)
+	if cards_to_move.size() != cells.size():
+		return "The picture needs exactly one cell per card."
+	for c in cards_to_move:
+		if not cells.has(c):
+			return "The picture needs exactly one cell per card."
+	var err := move_cards_to_new_meld(cards_to_move)
+	if err != "":
+		return err
+	# move_cards_to_new_meld appends the new group last; shape it in place.
+	var meld: CardSet = board.melds[-1]
+	meld.set_shape(cells)
+	board_changed.emit()
+	return ""
+
+## Layout groundwork (no card grants this in normal play yet — a future card
+## mechanic will): stage a brand-new group that CROSSES an existing one at
+## `pivot`. The pivot card stays in its current group AND becomes a member of
+## the new one, which lies perpendicular across it on the felt — one card
+## sitting in two combinations at once. Both groups remain ordinary melds:
+## each must be valid at commit with the pivot counted in, and each can still
+## take further cards (add_cards_to_meld works on either). Taking the pivot
+## off the table removes it from both (Board.remove_card). Returns "" on
+## success or a human-readable reason the move is not allowed.
+func stage_cross_meld(pivot: Card, cards_to_move: Array[Card]) -> String:
+	var host := board.meld_of(pivot)
+	if host == null:
+		return "The crossing card must already be in a group on the table."
+	if host.is_shape() or host.is_attached():
+		return "Crossings need a plain line group — pictures and their " \
+			+ "extension lines follow their own rules."
+	if board.melds_of(pivot).size() > 1:
+		return "That card is already shared between two groups."
+	if cards_to_move.is_empty():
+		return ""
+	if cards_to_move.has(pivot):
+		return "The crossing card stays where it is — bring the other cards to it."
+	cards_to_move = _expand_sticky(cards_to_move)
+	# Crossing reads and builds on a table group, so the opening rule treats it
+	# like adding to that group.
+	var err := _stage_error(cards_to_move, host)
+	if err != "":
+		return err
+	_push_undo()
+	var meld := CardSet.new()
+	meld.orientation = CardSet.Orientation.VERTICAL \
+		if host.orientation == CardSet.Orientation.HORIZONTAL \
+		else CardSet.Orientation.HORIZONTAL
+	meld.add_card(pivot)  # shared: joins the new group without leaving its host
+	board.melds.append(meld)
 	_move_cards(cards_to_move, meld)
 	_lock_table_jokers()
 	return ""
@@ -246,6 +441,19 @@ func return_cards_to_hand(cards_to_return: Array[Card]) -> String:
 	if not can_return_to_hand(cards_to_return):
 		return "Only cards you played from your hand this turn " \
 			+ "can go back to your hand."
+	# Extension lines come off whole even on a take-back.
+	var batch := {}
+	for c in cards_to_return:
+		batch[c] = true
+	for m in board.melds:
+		if not m.is_attached():
+			continue
+		var moving := 0
+		for c in m.cards:
+			if batch.has(c):
+				moving += 1
+		if moving > 0 and moving < m.cards.size():
+			return "An extension line comes off a picture whole, or not at all."
 	_push_undo()
 	var p := current_player()
 	for c in cards_to_return:
@@ -271,6 +479,8 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	var err := ""
 	if not joker.is_joker or joker.joker_rank == 0:
 		err = "That card is not a joker with a known value."
+	elif meld.is_shape():
+		err = "That joker is sealed inside a picture — nothing swaps it out."
 	elif not meld.cards.has(joker):
 		err = "That joker is not in that group."
 	elif not p.hand.has(hand_card) or hand_card.is_joker:
@@ -364,10 +574,27 @@ func _staged_open_meld_exists() -> bool:
 			return true
 	return false
 
-## Why the staged move is illegal under the play cap or the opening rule, or
-## "" if it is fine.
+## Why the staged move is illegal under the play cap, the opening rule, or the
+## picture rules (sealed pictures, whole-line extension tear-down), or "" if
+## it is fine.
 func _stage_error(cards_to_move: Array[Card], dest: CardSet) -> String:
 	var p := current_player()
+	# Picture cards are sealed in place; extension lines come off whole.
+	var batch := {}
+	for c in cards_to_move:
+		batch[c] = true
+	for m in board.melds:
+		if m.is_shape():
+			for c in m.cards:
+				if batch.has(c):
+					return "That card is sealed inside a picture."
+		elif m.is_attached() and m != dest:
+			var moving := 0
+			for c in m.cards:
+				if batch.has(c):
+					moving += 1
+			if moving > 0 and moving < m.cards.size():
+				return "An extension line comes off a picture whole, or not at all."
 	if max_plays_per_turn > 0:
 		var from_hand := 0
 		for c in cards_to_move:

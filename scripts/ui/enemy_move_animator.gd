@@ -42,7 +42,10 @@ func _enemy_hand_origin(enemy: PlayerState, opponent_backs: Dictionary) -> Vecto
 
 ## Fly card faces from `sources` (Card -> screen position) to wherever the cards
 ## sit in `card_nodes` after the last refresh. Each destination button is hidden
-## while its card is in flight, then revealed when the flight lands.
+## while its card is in flight, then revealed when the flight lands. The landing
+## callback holds only a weak reference to the destination: any board refresh
+## mid-flight frees and rebuilds the buttons, and a lambda that captured the
+## button directly would log "Lambda capture at index 0 was freed" per landing.
 func animate(cards: Array[Card], sources: Dictionary, card_nodes: Dictionary) -> void:
 	# The freshly rebuilt containers need a frame or two to lay out before
 	# destination positions are meaningful.
@@ -57,12 +60,14 @@ func animate(cards: Array[Card], sources: Dictionary, card_nodes: Dictionary) ->
 		_anim_layer.add_child(proxy)
 		proxy.global_position = sources[c]
 		dest.modulate.a = 0.0
+		var dest_ref: WeakRef = weakref(dest)
 		var tw := proxy.create_tween()
 		tw.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
 		tw.tween_property(proxy, "global_position", dest.global_position, ANIM_TIME)
 		tw.tween_callback(func() -> void:
-			if is_instance_valid(dest):
-				dest.modulate.a = 1.0
+			var landed: Control = dest_ref.get_ref()
+			if landed != null:
+				landed.modulate.a = 1.0
 			proxy.queue_free())
 		last_tween = tw
 	if last_tween != null:

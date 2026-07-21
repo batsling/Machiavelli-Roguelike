@@ -103,6 +103,59 @@ static func assign_jokers(cards: Array[Card]) -> void:
 		free_jokers[i].joker_rank = 1 if r == 14 else r
 		free_jokers[i].joker_suit = suit
 
+# --- Grid lines (plays off a picture) -----------------------------------------
+
+## True when two cards sitting directly beside each other on the table grid
+## could still grow into a legal group: same rank in different suits (a set
+## could form around them), or same suit with neighbouring ranks (a run could
+## extend past them — the ace neighbours both the 2 and, ace-high, the king).
+## Locked jokers read as their card; a free joker pairs with anything.
+static func could_pair(a: Card, b: Card) -> bool:
+	if (a.is_joker and a.joker_lock_rank == 0) or (b.is_joker and b.joker_lock_rank == 0):
+		return true
+	if _eff_rank(a) == _eff_rank(b):
+		return _eff_suit(a) != _eff_suit(b)
+	if _eff_suit(a) != _eff_suit(b):
+		return false
+	var diff := absi(_eff_rank(a) - _eff_rank(b))
+	return diff == 1 or diff == 12  # 12: the king beside an ace playing high
+
+## True when an ordered straight line of cards on the grid reads as a legal
+## group: a set (3-4 cards of one rank, distinct suits — order free) or a run
+## whose ranks step by exactly one along the line, ascending or descending,
+## ace low or high, never wrapping. The Scrabble-style reading for lines
+## played off a picture — unlike is_valid_meld, spatial order matters for
+## runs. Free (unlocked) jokers never appear in these lines; locked jokers
+## read as their card.
+static func is_valid_grid_line(line: Array[Card]) -> bool:
+	if line.size() < MIN_MELD_SIZE:
+		return false
+	if is_valid_set(line):
+		return true
+	for ace_high: bool in [false, true]:
+		var suit := _eff_suit(line[0])
+		var up := true
+		var down := true
+		var readable := true
+		var prev := 0
+		for i in line.size():
+			var c := line[i]
+			if (c.is_joker and c.joker_lock_rank == 0) or _eff_suit(c) != suit:
+				readable = false
+				break
+			var r := _eff_rank(c)
+			if ace_high and r == 1:
+				r = 14
+			if i > 0:
+				if r != prev + 1:
+					up = false
+				if r != prev - 1:
+					down = false
+			prev = r
+		if readable and (up or down):
+			return true
+	return false
+
 ## Sorted copy of a meld for display: runs in sequence order (jokers slotted
 ## where they stand, the ace where it is actually used), anything else by
 ## suit then rank with jokers last. Never mutates the cards.
