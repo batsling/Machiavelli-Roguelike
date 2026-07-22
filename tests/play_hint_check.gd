@@ -22,6 +22,12 @@ func _meld(cards: Array[Card]) -> CardSet:
 	m.cards = cards
 	return m
 
+func _pick(hand: Array[Card], rank: int, suit: String) -> Card:
+	for c in hand:
+		if c.rank == rank and c.suit == suit:
+			return c
+	return null
+
 func _init() -> void:
 	var ui: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	root.add_child.call_deferred(ui)
@@ -139,6 +145,44 @@ func _init() -> void:
 	ui._compute_play_hints(ui.gm.players[0].hand[0])
 	if ui.hint_new_group:
 		printerr("one card plus one joker is only two — no group")
+		ok = false
+
+	# --- Double-click auto-play picks the play the marker promises ------------
+	# _new_group_cards_for returns the exact cards of the group a card completes.
+	ui.gm.players[0].hand = [_card(5, "spades"), _card(6, "spades"),
+		_card(7, "spades")] as Array[Card]
+	var a_run: Array = ui._new_group_cards_for(_pick(ui.gm.players[0].hand, 5, "spades"))
+	if a_run.size() != 3:
+		printerr("auto-play should gather the 5-6-7S run (got %d cards)" % a_run.size())
+		ok = false
+
+	# A rank with three suits in hand gathers the whole set.
+	ui.gm.players[0].hand = [_card(9, "hearts"), _card(9, "diamonds"),
+		_card(9, "spades"), _card(2, "clubs")] as Array[Card]
+	var nines: Array = ui._new_group_cards_for(ui.gm.players[0].hand[0])
+	if nines.size() != 3:
+		printerr("auto-play should gather the three nines (got %d)" % nines.size())
+		ok = false
+	# The dead 2C forms nothing.
+	if not ui._new_group_cards_for(ui.gm.players[0].hand[3]).is_empty():
+		printerr("2C forms no group, so auto-play must gather nothing")
+		ok = false
+
+	# Integration: double-clicking the 8H lays it off onto the run on the felt.
+	ui.gm.board.melds = [_meld([_card(5, "hearts"), _card(6, "hearts"),
+		_card(7, "hearts")])] as Array[CardSet]
+	var lay_run: CardSet = ui.gm.board.melds[0]
+	var eight := _card(8, "hearts")
+	ui.gm.players[0].hand = [eight, _card(2, "clubs")] as Array[Card]
+	ui.gm.players[0].has_opened = true
+	if not ui._auto_play_card(eight):
+		printerr("double-clicking a playable 8H should stage a play")
+		ok = false
+	if not lay_run.cards.has(eight):
+		printerr("auto-play should have laid the 8H onto the run")
+		ok = false
+	if ui.gm.players[0].hand.has(eight):
+		printerr("the 8H should have left the hand once auto-played")
 		ok = false
 
 	if ok:

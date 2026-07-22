@@ -936,6 +936,80 @@ func _run_reachable(target: int, ranks: Dictionary, jokers: int) -> bool:
 					return true
 	return false
 
+## Play a hand card the instant it is double-clicked — the same play its green
+## marker promises, with no dragging. Lays it off onto an existing group when it
+## fits there (the smallest move, just this one card); otherwise lays down the
+## fresh group it completes with other naturals already in your hand. Lay-off
+## wins when both are possible. Only ever acts on your own turn, and only on a
+## card the marker already flags as playable now. Returns true when it staged a
+## play (so the caller can swallow the click).
+func _auto_play_card(c: Card) -> bool:
+	if not _card_is_playable_now(c):
+		return false
+	var open := gm.current_player_is_open()
+	for meld in gm.board.melds:
+		if _lays_off_onto(c, meld, open):
+			_play_on_meld([c], meld)
+			return true
+	var group := _new_group_cards_for(c)
+	if not group.is_empty():
+		_stage_move(group, null)
+		return true
+	return false
+
+## The concrete cards of the brand-new group `c` completes with other naturals
+## in your hand — a set of its rank across distinct suits, or the longest run of
+## its suit through it — or an empty array when none forms (jokers never count,
+## mirroring the green marker). Verified against the rules before returning, so
+## the caller can stage it straight away.
+func _new_group_cards_for(c: Card) -> Array[Card]:
+	if c.is_joker:
+		return []
+	var hand := gm.players[0].hand
+	# Set: c plus one natural per other suit of the same rank (capped at a full
+	# set by is_valid_meld's MAX_SET_SIZE guard).
+	var set_cards: Array[Card] = [c]
+	var suits := {c.suit: true}
+	for h in hand:
+		if h != c and not h.is_joker and h.rank == c.rank and not suits.has(h.suit):
+			set_cards.append(h)
+			suits[h.suit] = true
+	if set_cards.size() >= Rules.MIN_MELD_SIZE and Rules.is_valid_meld(set_cards):
+		return set_cards
+	# Run: the maximal contiguous block of naturals in c's suit that spans c.
+	var run := _natural_run_for(c, hand)
+	if run.size() >= Rules.MIN_MELD_SIZE and Rules.is_valid_meld(run):
+		return run
+	return []
+
+## The longest unbroken run of naturals in `c`'s suit that includes `c`, trying
+## the ace both low and high (never wrapping) and keeping whichever reaches
+## further. Jokers are excluded — this only gathers cards the run needs no
+## wildcard to bridge.
+func _natural_run_for(c: Card, hand: Array[Card]) -> Array[Card]:
+	var by_rank := {}
+	for h in hand:
+		if not h.is_joker and h.suit == c.suit and not by_rank.has(h.rank):
+			by_rank[h.rank] = h
+	var best: Array[Card] = []
+	for ace_high in [false, true]:
+		var eff := {}
+		for r: int in by_rank:
+			eff[14 if ace_high and r == 1 else r] = by_rank[r]
+		var cr := 14 if ace_high and c.rank == 1 else c.rank
+		var lo := cr
+		while eff.has(lo - 1):
+			lo -= 1
+		var hi := cr
+		while eff.has(hi + 1):
+			hi += 1
+		var block: Array[Card] = []
+		for r in range(lo, hi + 1):
+			block.append(eff[r])
+		if block.size() > best.size():
+			best = block
+	return best
+
 func _clear_children(node: Node) -> void:
 	for child in node.get_children():
 		node.remove_child(child)
@@ -1158,6 +1232,16 @@ func _on_card_gui_input(event: InputEvent, c: Card, meld: CardSet) -> void:
 		if meld != null and c.is_joker and _show_joker_menu(c, meld):
 			return
 		_clear_selection()
+		return
+	# Double-click a hand card the green marker flags as playable now to play it
+	# straight away — no dragging, no rearranging. Only your own hand (meld is
+	# null) on your own turn; a card the marker never lit falls through to the
+	# normal click-to-select.
+	if meld == null and event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT and event.double_click \
+			and _is_human_turn():
+		if _auto_play_card(c):
+			accept_event()
 
 ## Right-click on the felt or the hand panel (not on a card) clears the
 ## selection.
