@@ -230,9 +230,10 @@ func add_cards_to_meld(cards_to_move: Array[Card], meld: CardSet) -> String:
 ## Lay cards in a straight line outward from `anchor` — a card of a picture
 ## group — along `step` (one of the four grid directions). The anchor counts
 ## in the line's reading: anchor + line must read as a legal set/run on the
-## grid (Rules.is_valid_grid_line — spatial order matters for runs), or still
-## be a growable pair while one card long (Rules.could_pair); a vertical
-## straight must also keep the lower rank on top (Rules.line_direction_ok).
+## grid (Rules.is_valid_grid_line — spatial order matters for runs), so at
+## least three cards counting the anchor; a lone card off a picture is not a
+## play. A vertical straight must also keep the lower rank on top
+## (Rules.line_direction_ok).
 ## The anchor stays a picture card; the played cards form (or extend) an
 ## attached extension line. Outward only: the covered cells must be empty and
 ## clear of the picture except at the anchor itself, so the picture always
@@ -265,6 +266,12 @@ func play_off_picture(anchor: Card, step: Vector2i, cards_to_play: Array[Card]) 
 			if m.attach_step != step:
 				return "That card already carries its line out the other way."
 			existing = m
+	# A line off a picture must read as a full group of three counting the
+	# anchor, so it takes at least two cards — a single card is not a play.
+	var attached_len := existing.cards.size() if existing != null else 0
+	if attached_len + cards_to_play.size() < 2:
+		return "A line off a picture needs at least two cards — three counting " \
+			+ "the picture card it hangs off."
 	var err := _stage_error(cards_to_play, existing if existing != null else picture)
 	if err != "":
 		return err
@@ -295,8 +302,9 @@ func play_off_picture(anchor: Card, step: Vector2i, cards_to_play: Array[Card]) 
 ## The played cards in an order that reads legally at the end of the line
 ## (anchor + existing line + new cards), or [] when no order does. Tries the
 ## order given plus rank-ascending and -descending — enough, since a legal
-## run line is monotone in rank and a set line is order-free. A vertical
-## straight must additionally read with the lower rank on top
+## run line is monotone in rank and a set line is order-free. The reading needs
+## at least three cards counting the anchor (Rules.is_valid_grid_line); a
+## vertical straight must additionally read with the lower rank on top
 ## (Rules.line_direction_ok), so only one of the two rank orders can fit.
 func _ordered_extension(anchor: Card, existing: CardSet, step: Vector2i,
 		cards_to_play: Array[Card]) -> Array[Card]:
@@ -310,8 +318,7 @@ func _ordered_extension(anchor: Card, existing: CardSet, step: Vector2i,
 	for order: Array[Card] in [cards_to_play, asc, desc]:
 		var line := prefix.duplicate()
 		line.append_array(order)
-		var reads := Rules.could_pair(line[0], line[1]) if line.size() == 2 \
-			else Rules.is_valid_grid_line(line)
+		var reads := Rules.is_valid_grid_line(line)
 		if reads and Rules.line_direction_ok(line, step):
 			return order
 	var none: Array[Card] = []

@@ -43,18 +43,20 @@ const UNPLACED := Vector2(-1, -1)
 @export var board_pos := UNPLACED
 ## Card -> Vector2i local grid cell. Empty for ordinary line groups; non-empty
 ## makes this a shape (picture) group, valid when its cells form one
-## edge-connected patch covering exactly its cards.
+## connected patch (cells touching at an edge OR a corner) covering exactly
+## its cards.
 @export var shape_cells := {}
 ## Attached extension line (a Scrabble-style play off a picture): the picture
 ## card the line reads from — it stays in its own group — and the outward
 ## direction. cards[i] sits at the anchor's cell + attach_step * (i + 1), so
 ## the array order IS the spatial order. Valid when the anchor plus the line
-## reads as a legal grid line (Rules.is_valid_grid_line), or is still a
-## growable pair while one card long (Rules.could_pair); a vertical straight
-## must also read with the lower rank on top (Rules.line_direction_ok). Line
-## cards stay loose: any of them can be picked back up or moved on its own —
-## only the picture itself is sealed — with the cards left behind sliding in
-## toward the anchor.
+## reads as a legal grid line (Rules.is_valid_grid_line) — so, counting the
+## anchor, at least three cards: a lone card hanging off a picture is not a
+## play. A vertical straight must also read with the lower rank on top
+## (Rules.line_direction_ok). Line cards stay loose: any of them can be picked
+## back up or moved on its own — only the picture itself is sealed — with the
+## cards left behind sliding in toward the anchor (which can leave the line
+## briefly too short to be legal until the turn is cleaned up).
 var attach_anchor: Card = null
 @export var attach_step := Vector2i.ZERO
 
@@ -80,8 +82,9 @@ func _attached_line_valid() -> bool:
 	# Vertical straights keep the lower rank on top (Rules.line_direction_ok).
 	if not Rules.line_direction_ok(line, attach_step):
 		return false
-	if line.size() == 2:
-		return Rules.could_pair(line[0], line[1])
+	# Counting the anchor, the line must be a full group of three or more
+	# (is_valid_grid_line enforces MIN_MELD_SIZE) — a single card off a picture
+	# is not a legal play.
 	return Rules.is_valid_grid_line(line)
 
 # --- Shape (picture) groups — groundwork -------------------------------------
@@ -99,7 +102,9 @@ func set_shape(cells: Dictionary) -> void:
 
 ## A shape group is valid by construction — the mechanic that builds it is the
 ## legality gate — but it must be well-formed: one cell per card, every card
-## placed, no two cards sharing a cell, and the whole picture edge-connected.
+## placed, no two cards sharing a cell, and the whole picture connected. A
+## picture is an image, so cells count as joined when they touch at an edge OR
+## a corner (8-connectivity) — a diagonal step keeps the outline in one piece.
 func _shape_is_valid() -> bool:
 	if cards.size() < Rules.MIN_MELD_SIZE or shape_cells.size() != cards.size():
 		return false
@@ -111,7 +116,9 @@ func _shape_is_valid() -> bool:
 		if used.has(cell):
 			return false
 		used[cell] = c
-	# Flood-fill from any cell; a picture in one piece reaches every cell.
+	# Flood-fill from any cell; a picture in one piece reaches every cell. Steps
+	# span all eight neighbours (orthogonal AND diagonal), so cells that only
+	# meet at a corner still count as one connected image.
 	var seen := {}
 	var frontier: Array[Vector2i] = [shape_cells[cards[0]]]
 	while not frontier.is_empty():
@@ -119,7 +126,8 @@ func _shape_is_valid() -> bool:
 		if seen.has(cell) or not used.has(cell):
 			continue
 		seen[cell] = true
-		for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+		for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN,
+				Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
 			frontier.append(cell + step)
 	return seen.size() == used.size()
 
@@ -218,7 +226,8 @@ func sticky_cluster(start_card: Card) -> Array[Card]:
 	return cluster
 
 ## Flood the shape's grid from start_card over slimed cards touching edge to
-## edge — the picture-group reading of the sticky bond.
+## edge OR corner to corner — the picture-group reading of the sticky bond, so
+## a diagonally-linked outline still drags as one lump (matches _shape_is_valid).
 func _shape_sticky_cluster(start_card: Card) -> Array[Card]:
 	var cluster: Array[Card] = []
 	var frontier: Array[Card] = [start_card]
@@ -230,7 +239,8 @@ func _shape_sticky_cluster(start_card: Card) -> Array[Card]:
 		seen[c] = true
 		cluster.append(c)
 		var cell: Vector2i = shape_cells[c]
-		for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+		for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN,
+				Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
 			var n := card_at(cell + step)
 			if n != null and n.is_sticky() and not seen.has(n):
 				frontier.append(n)

@@ -41,22 +41,23 @@ extends Enemy
 ## picture swallows never count as her play for the turn, so she still draws
 ## (or plays a real card) to end it. Spending the ultimate resets her meter
 ## to zero. The picture is a hollow outline, not a filled block — every cell
-## still shares an edge with the next, so it stays one connected patch.
+## touches the next at an edge or a corner, so it still reads as one connected
+## patch (the shape check counts a diagonal as connected).
 ## The template is grid cells, row by row:
 ##
-##   heart (17)
+##   heart (12)
 ##   . X . X .
-##   X X X X X
-##   X . . . X
 ##   X X . X X
-##   . X X X .
+##   X . . . X
+##   . X . X .
+##   . . X . .
 ##   . . X . .
 const ULT_HEART: Array[Vector2i] = [
 	Vector2i(1, 0), Vector2i(3, 0),
-	Vector2i(0, 1), Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1), Vector2i(4, 1),
+	Vector2i(0, 1), Vector2i(1, 1), Vector2i(3, 1), Vector2i(4, 1),
 	Vector2i(0, 2), Vector2i(4, 2),
-	Vector2i(0, 3), Vector2i(1, 3), Vector2i(3, 3), Vector2i(4, 3),
-	Vector2i(1, 4), Vector2i(2, 4), Vector2i(3, 4),
+	Vector2i(1, 3), Vector2i(3, 3),
+	Vector2i(2, 4),
 	Vector2i(2, 5),
 ]
 
