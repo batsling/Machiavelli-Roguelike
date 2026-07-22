@@ -170,26 +170,41 @@ func _test_shape_groups() -> void:
 	if heart == null or not heart.is_shape():
 		_fail("the heart template should build a shape group")
 		return
-	if heart.cards.size() != 12:
-		_fail("the heart should be a 12-card outline, got %d" % heart.cards.size())
+	if heart.cards.size() != 14:
+		_fail("the heart should be a 14-card outline, got %d" % heart.cards.size())
 	if not heart.is_valid():
 		_fail("the heart picture should be a well-formed (connected) shape")
-	# The heart is a hollow outline that leans on diagonal contact: its brow row
-	# carries four cards around a hollow centre (two lobes), the walls step in
-	# below, and the bottom is a two-card vertical tip.
-	if heart.card_at(Vector2i(0, 1)) == null or heart.card_at(Vector2i(1, 1)) == null \
-			or heart.card_at(Vector2i(3, 1)) == null or heart.card_at(Vector2i(4, 1)) == null:
-		_fail("the heart's second row should carry four cards")
-	if heart.card_at(Vector2i(2, 1)) != null:
-		_fail("the heart's second row should be four cards around a hollow centre")
-	# The fourth row is only the inner two cards (the walls have stepped in).
-	if heart.card_at(Vector2i(1, 3)) == null or heart.card_at(Vector2i(3, 3)) == null:
-		_fail("the heart's fourth row should carry its inner two cards")
-	if heart.card_at(Vector2i(0, 3)) != null or heart.card_at(Vector2i(4, 3)) != null:
-		_fail("the heart's fourth row should be the inner two only, not four")
-	if heart.line_through(heart.card_at(Vector2i(2, 5)), false).size() != 2:
-		_fail("the heart's tip should hang off a 2-card vertical line")
-	if heart.card_at(Vector2i(2, 2)) != null or heart.card_at(Vector2i(2, 3)) != null:
+	# The heart is a hollow outline that leans on diagonal contact: the brow row
+	# carries two 2-card humps around the top notch, the walls bow out to the
+	# full width and then step in, and the bottom narrows to a single-card tip.
+	if heart.card_at(Vector2i(1, 0)) == null or heart.card_at(Vector2i(2, 0)) == null \
+			or heart.card_at(Vector2i(4, 0)) == null or heart.card_at(Vector2i(5, 0)) == null:
+		_fail("the heart's brow should carry two 2-card humps")
+	if heart.card_at(Vector2i(3, 0)) != null:
+		_fail("the heart's brow should be hollow between the humps (the top notch)")
+	# The next row drops the centre dip into the notch and bows the shoulders out.
+	if heart.card_at(Vector2i(3, 1)) == null:
+		_fail("the heart's centre dip should sit below the notch")
+	if heart.card_at(Vector2i(0, 1)) == null or heart.card_at(Vector2i(6, 1)) == null:
+		_fail("the heart's shoulders should bow out to the full width")
+	# The widest row, then the walls step inward toward the tip.
+	if heart.card_at(Vector2i(0, 2)) == null or heart.card_at(Vector2i(6, 2)) == null:
+		_fail("the heart's walls should carry its widest row")
+	if heart.card_at(Vector2i(1, 3)) == null or heart.card_at(Vector2i(5, 3)) == null:
+		_fail("the heart's walls should step in a row down")
+	if heart.card_at(Vector2i(0, 3)) != null or heart.card_at(Vector2i(6, 3)) != null:
+		_fail("the walls should have stepped in — nothing at the outer edge here")
+	if heart.card_at(Vector2i(2, 4)) == null or heart.card_at(Vector2i(4, 4)) == null:
+		_fail("the heart should pinch to two cards just above the tip")
+	# The tip is a lone card hanging off the pinch by diagonal contact.
+	var tip := heart.card_at(Vector2i(3, 5))
+	if tip == null:
+		_fail("the heart should close on a single-card tip")
+	elif heart.line_through(tip, false).size() != 1:
+		_fail("the tip is a lone card — nothing sits directly above it")
+	if heart.card_at(Vector2i(3, 4)) != null:
+		_fail("nothing sits directly above the tip; it hangs on diagonals")
+	if heart.card_at(Vector2i(3, 2)) != null or heart.card_at(Vector2i(3, 3)) != null:
 		_fail("the heart's middle should be hollow — outline only")
 	# A disconnected picture is not a valid shape.
 	var torn := CardSet.new()
@@ -296,18 +311,18 @@ func _test_projected_meter() -> void:
 ## picture that fits, seals it as one lump, and resets the meter.
 func _test_slime_ultimate() -> void:
 	var slime := CuteSlime.new()
-	# Table slime she can take legally: two fully slimed 5-card runs (each whole
+	# Table slime she can take legally: two fully slimed 6-card runs (each whole
 	# group may leave) and a slimed 8 in a set of four (the leftover trio stays
-	# valid) — 11 table cards. The clean set of jacks must not be touched.
+	# valid) — 13 table cards. The clean set of jacks must not be touched.
 	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
-		_slimed(6, "hearts"), _slimed(7, "hearts")])
+		_slimed(6, "hearts"), _slimed(7, "hearts"), _slimed(8, "hearts")])
 	var run2 := _meld([_slimed(3, "spades"), _slimed(4, "spades"), _slimed(5, "spades"),
-		_slimed(6, "spades"), _slimed(7, "spades")])
+		_slimed(6, "spades"), _slimed(7, "spades"), _slimed(8, "spades")])
 	var eights := _meld([_slimed(8, "diamonds"), _card(8, "clubs"), _card(8, "spades"),
 		_card(8, "hearts")])
 	var jacks := _meld([_card(11, "hearts"), _card(11, "clubs"), _card(11, "spades")])
-	# Slimed naturals in hand to top the picture off: 11 gathered from the table
-	# + 1 from the hand = 12 — exactly the heart. Her extra slime stays in hand.
+	# Slimed naturals in hand to top the picture off: 13 gathered from the table
+	# + 1 from the hand = 14 — exactly the heart. Her extra slime stays in hand.
 	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
 		_slimed(12, "hearts"), _slimed(13, "hearts"), _slimed(2, "diamonds"),
 		_slimed(9, "clubs"), _card(2, "clubs")]
@@ -317,13 +332,13 @@ func _test_slime_ultimate() -> void:
 		_fail("a full meter with enough gatherable slime should fire the ultimate")
 		gm.free()
 		return
-	if (move["cards"] as Array).size() != 12:
-		_fail("the ultimate should fill the 12-card heart, got %d cards"
+	if (move["cards"] as Array).size() != 14:
+		_fail("the ultimate should fill the 14-card heart, got %d cards"
 			% (move["cards"] as Array).size())
 	GreedyAI.apply_move(gm, move)
 	var picture: CardSet = gm.board.melds[-1]
-	if not picture.is_shape() or picture.cards.size() != 12 or not picture.is_valid():
-		_fail("the ultimate should leave a valid 12-card picture on the table")
+	if not picture.is_shape() or picture.cards.size() != 14 or not picture.is_valid():
+		_fail("the ultimate should leave a valid 14-card picture on the table")
 	if gm.players[1].meter != 0:
 		_fail("spending the ultimate should reset her meter, got %d" % gm.players[1].meter)
 	if gm.board.meld_of(hand[0]) != picture:
@@ -336,8 +351,8 @@ func _test_slime_ultimate() -> void:
 	if eights.cards.size() != 3:
 		_fail("the slimed eight should leave its set of four (leftover trio valid)")
 	# The picture is one sticky lump: lifting any card drags the whole picture.
-	if picture.sticky_cluster(picture.cards[0]).size() != 12:
-		_fail("the picture should move as one 12-card lump")
+	if picture.sticky_cluster(picture.cards[0]).size() != 14:
+		_fail("the picture should move as one 14-card lump")
 	# Sealing is a mechanic, not a play: the swallowed hand cards never count,
 	# so an ult-only turn can't commit — she draws, keeping the picture.
 	if gm.cards_played_this_turn() != 0:
@@ -376,7 +391,7 @@ func _test_slime_ultimate_gates() -> void:
 	gm.free()
 	# Full meter, but the only table slime is locked into its group: a set of
 	# three with one slimed card can't spare it (leftover pair invalid), and
-	# 3 hand cards alone can't fill the 12-card heart.
+	# 3 hand cards alone can't fill the 14-card heart.
 	var trio := _meld([_slimed(6, "diamonds"), _card(6, "clubs"), _card(6, "spades")])
 	var gm2 := _slime_gm([_slimed(9, "diamonds"), _slimed(10, "diamonds"),
 		_slimed(12, "hearts")] as Array[Card], [trio] as Array[CardSet])

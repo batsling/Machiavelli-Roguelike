@@ -45,20 +45,20 @@ extends Enemy
 ## patch (the shape check counts a diagonal as connected).
 ## The template is grid cells, row by row:
 ##
-##   heart (12)
-##   . X . X .
-##   X X . X X
-##   X . . . X
-##   . X . X .
-##   . . X . .
-##   . . X . .
+##   heart (14)
+##   . X X . X X .
+##   X . . X . . X
+##   X . . . . . X
+##   . X . . . X .
+##   . . X . X . .
+##   . . . X . . .
 const ULT_HEART: Array[Vector2i] = [
-	Vector2i(1, 0), Vector2i(3, 0),
-	Vector2i(0, 1), Vector2i(1, 1), Vector2i(3, 1), Vector2i(4, 1),
-	Vector2i(0, 2), Vector2i(4, 2),
-	Vector2i(1, 3), Vector2i(3, 3),
-	Vector2i(2, 4),
-	Vector2i(2, 5),
+	Vector2i(1, 0), Vector2i(2, 0), Vector2i(4, 0), Vector2i(5, 0),
+	Vector2i(0, 1), Vector2i(3, 1), Vector2i(6, 1),
+	Vector2i(0, 2), Vector2i(6, 2),
+	Vector2i(1, 3), Vector2i(5, 3),
+	Vector2i(2, 4), Vector2i(4, 4),
+	Vector2i(3, 5),
 ]
 
 ## The picture templates the ultimate can build. For now there is only the
