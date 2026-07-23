@@ -29,6 +29,12 @@ func _meld(cards: Array[Card]) -> CardSet:
 	m.cards = cards
 	return m
 
+func _joker() -> Card:
+	var c := Card.new()
+	c.is_joker = true
+	c.suit = "joker"
+	return c
+
 var ok := true
 
 func _fail(msg: String) -> void:
@@ -49,6 +55,7 @@ func _init() -> void:
 	_test_ult_in_driven_games()
 	_test_grid_line_rules()
 	_test_play_off_picture()
+	_test_picture_line_joker()
 	_test_picture_joker_swap()
 	await _test_rendering()
 	await _test_picture_ghost_cells()
@@ -590,8 +597,8 @@ func _give_hand(gm: GameManager, hand: Array[Card]) -> void:
 ## Scrabble-style plays off a picture: the three-card minimum (a lone card is
 ## refused), the lower-rank-on-top rule for vertical straights, the outward-only
 ## and one-line-per-axis rules, loose line cards (they come off one at a time,
-## which can leave the line too short), sealed picture cards, no jokers, and a
-## clean commit.
+## which can leave the line too short), sealed picture cards, and a clean commit.
+## (Jokers in a line are covered by _test_picture_line_joker.)
 func _test_play_off_picture() -> void:
 	var setup := _picture_gm()
 	var gm: GameManager = setup["gm"]
@@ -633,14 +640,14 @@ func _test_play_off_picture() -> void:
 	# The other way on the same axis is that line's, not a second one's.
 	if gm.play_off_picture(top, Vector2i.DOWN, [eight] as Array[Card]) == "":
 		_fail("the 7H already carries its vertical line — no second one")
-	# A line that doesn't read is refused; a lone card is too short; jokers
-	# never stick; picture cards are sealed.
+	# A line that doesn't read is refused; a lone card is too short (a joker is no
+	# exception — one card off a picture is never a play); picture cards are sealed.
 	if gm.play_off_picture(left, Vector2i.LEFT, [two, king] as Array[Card]) == "":
 		_fail("2C KD off the 5D petal don't read as a set or run — refused")
 	if gm.play_off_picture(left, Vector2i.LEFT, [two] as Array[Card]) == "":
 		_fail("a single card off the 5D petal is too short — refused")
 	if gm.play_off_picture(left, Vector2i.LEFT, [joker] as Array[Card]) == "":
-		_fail("jokers don't stick to pictures")
+		_fail("a single joker off a picture is still too short — refused")
 	if gm.move_cards_to_new_meld([top] as Array[Card]) == "":
 		_fail("picture cards are sealed in place")
 	# Outward only: left from the stem, JD QD KD reads as a run, but the first
@@ -670,6 +677,53 @@ func _test_play_off_picture() -> void:
 		_fail("Q K downward off the J stem should stage the run")
 	if gm.commit_turn() != "":
 		_fail("a turn ending on a legal extension line should commit")
+	gm.free()
+
+## Jokers play into a line off a picture just as they do in any set or run: a
+## free joker stands for the rank its spatial slot needs (or a missing suit),
+## and locks to it. Reader/assignment unit checks, then a full play + commit.
+func _test_picture_line_joker() -> void:
+	# Run: a free joker fills the rank its slot needs (5S _ 7S reads 5-6-7).
+	var jr := _joker()
+	var run_line: Array[Card] = [_card(5, "spades"), jr, _card(7, "spades")]
+	if not Rules.is_valid_grid_line(run_line):
+		_fail("5S (joker) 7S should read as a run line")
+	Rules.assign_grid_line(run_line, Vector2i.ZERO)
+	if jr.joker_rank != 6 or jr.joker_suit != "spades":
+		_fail("the run-line joker should stand for 6S, got %d%s" % [jr.joker_rank, jr.joker_suit])
+	# Set: a free joker takes a missing suit (7H 7C + joker reads as a set of 7s).
+	var js := _joker()
+	var set_line: Array[Card] = [_card(7, "hearts"), _card(7, "clubs"), js]
+	if not Rules.is_valid_grid_line(set_line):
+		_fail("7H 7C + joker should read as a set line")
+	Rules.assign_grid_line(set_line, Vector2i.ZERO)
+	if js.joker_rank != 7:
+		_fail("the set-line joker should stand for a 7, got %d" % js.joker_rank)
+	# A joker can't bridge a two-rank gap: 5S _ 9S never reads.
+	if Rules.is_valid_grid_line([_card(5, "spades"), _joker(), _card(9, "spades")] as Array[Card]):
+		_fail("5S (joker) 9S can't be consecutive — must not read")
+
+	# Full play: 6H then a joker up off the 7H petal reads 7-6-5 (lower rank on
+	# top), the joker locking to 5H, and the turn commits.
+	var setup := _picture_gm()
+	var gm: GameManager = setup["gm"]
+	var top: Card = setup["top"]      # 7H at (1,0)
+	var six := _card(6, "hearts")
+	var joker := _joker()
+	_give_hand(gm, [six, joker] as Array[Card])
+	var err := gm.play_off_picture(top, Vector2i.UP, [six, joker] as Array[Card])
+	if err != "":
+		_fail("6H + joker up off the 7H should read the run 7-6-5, got: %s" % err)
+		gm.free()
+		return
+	var line: CardSet = gm.board.melds[-1]
+	if not line.is_attached() or not line.is_valid():
+		_fail("the joker run should live in a valid attached line off the 7H")
+	if joker.joker_lock_rank != 5 or joker.joker_lock_suit != "hearts":
+		_fail("the line joker should lock to 5H, got %d%s"
+			% [joker.joker_lock_rank, joker.joker_lock_suit])
+	if gm.commit_turn() != "":
+		_fail("a turn ending on a valid joker line should commit")
 	gm.free()
 
 ## A joker sealed inside a picture can still be claimed the usual way: drop

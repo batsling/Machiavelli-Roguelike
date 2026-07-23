@@ -238,8 +238,10 @@ func add_cards_to_meld(cards_to_move: Array[Card], meld: CardSet) -> String:
 ## attached extension line. Outward only: the covered cells must be empty and
 ## clear of the picture except at the anchor itself, so the picture always
 ## reads as drawn; a cell brushing another extension line is fine when the
-## touching pair could still grow. One line per anchor per axis, and no
-## jokers. Line cards stay loose afterwards: any of them can be picked back
+## touching pair could still grow. One line per anchor per axis. A joker plays
+## into the line as its own kind of card — standing for the rank its slot needs
+## (or a missing suit), exactly as in any set or run (Rules.assign_grid_line),
+## and it locks to that. Line cards stay loose afterwards: any of them can be picked back
 ## up or moved on its own (the rest slide in toward the anchor) — only the
 ## picture itself is sealed. Returns "" on success or a human-readable reason.
 func play_off_picture(anchor: Card, step: Vector2i, cards_to_play: Array[Card]) -> String:
@@ -254,9 +256,6 @@ func play_off_picture(anchor: Card, step: Vector2i, cards_to_play: Array[Card]) 
 	if absi(step.x) + absi(step.y) != 1:
 		return "Pick one straight direction to play in."
 	cards_to_play = _expand_sticky(cards_to_play)
-	for c in cards_to_play:
-		if c.is_joker:
-			return "Jokers don't stick to pictures — play naturals off them."
 	# One line per anchor and axis; playing at an anchor that already carries
 	# a line on this axis extends that line outward.
 	var existing: CardSet = null
@@ -859,7 +858,14 @@ func _kept_rearrangement() -> bool:
 ## joker this turn via set_joker_stand_in.
 func _lock_table_jokers() -> void:
 	for m in board.melds:
-		Rules.assign_jokers(m.cards)
+		# A picture line reads by spatial position, so its jokers are assigned
+		# from their slot (anchor prepended); every other group is order-free.
+		if m.is_attached():
+			var line: Array[Card] = [m.attach_anchor]
+			line.append_array(m.cards)
+			Rules.assign_grid_line(line, m.attach_step)
+		else:
+			Rules.assign_jokers(m.cards)
 		for c in m.cards:
 			if c.is_joker and c.joker_lock_rank == 0 and c.joker_rank > 0:
 				c.joker_lock_rank = c.joker_rank

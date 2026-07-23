@@ -498,9 +498,11 @@ mechanics that will use it still to come:
   with it must read as a legal set or run on the grid — spatial order
   matters for runs (`Rules.is_valid_grid_line`), and counting the anchor a
   line is at least three cards, so a single card off a picture is refused
-  (you play at least two at once). Lines extend outward
+  (you play at least two at once). A joker plays into a line like any other
+  card — standing for the rank its spatial slot needs, or a missing suit in a
+  set, and locking to it (`Rules.assign_grid_line`). Lines extend outward
   only (they never hug the silhouette, so the picture always reads as
-  drawn), take one line per picture card per axis, hold no jokers, brush a
+  drawn), take one line per picture card per axis, brush a
   neighbouring line only where the touching pair could grow, and tear off
   whole or not at all. Ghost "+" cells around a picture are the drop/click
   targets. A played card connects in ONE direction only — sitting in two

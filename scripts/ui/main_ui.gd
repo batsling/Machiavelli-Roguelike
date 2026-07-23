@@ -805,9 +805,12 @@ func _clear_selection() -> void:
 ## True when the player can still pick what this table joker stands for: it
 ## is their turn, they placed the joker this turn (a joker locks the moment
 ## its group is valid, and only the placer may re-point it before the turn
-## ends), and the group actually offers a choice.
+## ends), and the group actually offers a choice. A joker in a picture line has
+## no choice — its slot in the line fixes what it stands for — so it is never
+## re-pointed by hand.
 func _joker_is_rechoosable(joker: Card, meld: CardSet) -> bool:
-	return _card_is_interactive(meld) and gm.placed_this_turn(joker) \
+	return _card_is_interactive(meld) and not meld.is_attached() \
+		and gm.placed_this_turn(joker) \
 		and not Rules.rechoice_alternatives(meld.cards, joker).is_empty()
 
 ## Menu of the cards a joker placed this turn could stand for; picking one
