@@ -198,6 +198,9 @@ var opponent_hand_title: Label
 var opponent_hand_body: HFlowContainer
 # Renders the seats, board and hand into the containers above.
 var _table := TableView.new()
+# Answers "what can this hand card do right now" — the hover hints, the green
+# playable-now cap and the double-click auto-play all read the board through it.
+var _advisor: PlayAdvisor
 ## The in-progress freeform group drag, or {} when nothing is being dragged. Set
 ## by a panel's move handle (TableView), followed and finished in _input.
 var _group_drag := {}
@@ -210,6 +213,7 @@ func _ready() -> void:
 	gm.cards_drawn.connect(_on_cards_drawn)
 	gm.player_passed.connect(_on_player_passed)
 	gm.game_over.connect(_on_game_over)
+	_advisor = PlayAdvisor.new(gm)
 	# Seed the per-enemy AI overrides from the roster, then let any saved
 	# settings override the defaults, before the settings dialog reads them.
 	settings.seed_ai_overrides()
@@ -836,48 +840,19 @@ func _on_hand_card_hover_exit(c: Card) -> void:
 	hint_new_group = false
 	_table.refresh_board()
 
-## Fill hint_meld_targets / hint_new_group for the hovered card: which existing
-## valid groups it lays off onto as-is (respecting the opening rule — before you
-## open, only your own just-laid groups count), and whether it completes a
-## brand-new valid group with other cards already in your hand.
+## Fill hint_meld_targets / hint_new_group for the hovered card, via the advisor:
+## which existing groups it lays off onto as-is (respecting the opening rule) and
+## whether it completes a brand-new group with other cards already in your hand.
 func _compute_play_hints(c: Card) -> void:
-	var open := gm.current_player_is_open()
-	for meld in gm.board.melds:
-		if _lays_off_onto(c, meld, open):
-			hint_meld_targets[meld] = true
-	hint_new_group = _hand_forms_new_group(c)
+	var hints := _advisor.play_hints(c, gm.current_player_is_open())
+	hint_meld_targets = hints["meld_targets"]
+	hint_new_group = hints["new_group"]
 
-## True when hand card `c` drops straight onto `meld` as-is (no rearranging):
-## the group is a plain valid set/run this card extends, and — before you have
-## opened — only your own just-laid groups qualify. Pictures and extension lines
-## play by grid rules, so the plain lay-off hint skips them (their ghost cells
-## are the guide instead). Shared by the hover hints and the always-on playable
-## marker so both read the board the same way.
-func _lays_off_onto(c: Card, meld: CardSet, open: bool) -> bool:
-	if meld.is_shape() or meld.is_attached():
-		return false
-	if not meld.is_valid():
-		return false
-	if not open and not gm.is_own_staged_meld(meld):
-		return false
-	var candidate: Array[Card] = meld.cards.duplicate()
-	candidate.append(c)
-	return Rules.is_valid_meld(candidate)
-
-## True when hand card `c` can be played this instant with no rearranging: it
-## lays off onto some existing group, or completes a brand-new group with other
-## naturals already in your hand. Only ever true on your own turn. Drives the
-## green cap the hand paints on immediately-playable cards.
+## True when hand card `c` can be played this instant with no rearranging (a
+## lay-off or a fresh group) — on your own turn. Drives the green cap the hand
+## paints on immediately-playable cards; the advisor does the board reading.
 func _card_is_playable_now(c: Card) -> bool:
-	if not _is_human_turn():
-		return false
-	if _hand_forms_new_group(c):
-		return true
-	var open := gm.current_player_is_open()
-	for meld in gm.board.melds:
-		if _lays_off_onto(c, meld, open):
-			return true
-	return false
+	return _is_human_turn() and _advisor.playable_now(c, gm.current_player_is_open())
 
 ## True when an opponent's hand holds at least one card whose status is visible
 ## through its back — a glass card (the Sadistic Billionaire's whole deck) or a
@@ -890,125 +865,29 @@ func _hand_has_visible_card(hand: Array[Card]) -> bool:
 			return true
 	return false
 
-## True when the hovered card plus other naturals already in the hand make a
-## valid new group — a set of its rank across distinct suits, or a run of its
-## suit. Plays that would need a joker to complete are disregarded, so the cue
-## only lights for groups you can form without spending a wildcard. A hovered
-## joker can't anchor a group on its own, so it never lights the new-group cue.
-func _hand_forms_new_group(c: Card) -> bool:
-	if c.is_joker:
-		return false
-	var hand := gm.players[0].hand
-	# Set: c plus other naturals of the same rank in distinct suits (no jokers).
-	var suits := {c.suit: true}
-	for h in hand:
-		if h != c and not h.is_joker and h.rank == c.rank:
-			suits[h.suit] = true
-	if suits.size() >= Rules.MIN_MELD_SIZE:
-		return true
-	# Run: c plus other naturals of the same suit, with no jokers to bridge gaps.
-	var ranks := {c.rank: true}
-	for h in hand:
-		if h != c and not h.is_joker and h.suit == c.suit:
-			ranks[h.rank] = true
-	return _run_reachable(c.rank, ranks, 0)
-
-## Whether a run of at least MIN_MELD_SIZE cards covering `target` fits within one
-## suit given the natural ranks present and `jokers` wildcards to fill gaps or
-## extend the ends. Tries the ace both low and high, never wrapping.
-func _run_reachable(target: int, ranks: Dictionary, jokers: int) -> bool:
-	for ace_high in [false, true]:
-		var present := {}
-		for r: int in ranks:
-			present[14 if ace_high and r == 1 else r] = true
-		var t := 14 if ace_high and target == 1 else target
-		var low := 2 if ace_high else 1
-		var high := 14 if ace_high else 13
-		for s in range(low, t + 1):
-			for e in range(t, high + 1):
-				if e - s + 1 < Rules.MIN_MELD_SIZE:
-					continue
-				var nat := 0
-				for r in range(s, e + 1):
-					if present.has(r):
-						nat += 1
-				if (e - s + 1) - nat <= jokers:
-					return true
-	return false
-
 ## Play a hand card the instant it is double-clicked — the same play its green
-## marker promises, with no dragging. Lays it off onto an existing group when it
-## fits there (the smallest move, just this one card); otherwise lays down the
-## fresh group it completes with other naturals already in your hand. Lay-off
-## wins when both are possible. Only ever acts on your own turn, and only on a
-## card the marker already flags as playable now. Returns true when it staged a
-## play (so the caller can swallow the click).
+## marker promises, with no dragging. The advisor decides where it goes: a
+## lay-off onto an existing group if it fits there (the smallest move, just this
+## one card), otherwise the fresh group it completes with other naturals in your
+## hand. Only acts on your own turn, on a card the marker already flags playable.
+## Returns true when it staged a play (so the caller can swallow the click).
 func _auto_play_card(c: Card) -> bool:
 	if not _card_is_playable_now(c):
 		return false
-	var open := gm.current_player_is_open()
-	for meld in gm.board.melds:
-		if _lays_off_onto(c, meld, open):
-			_play_on_meld([c], meld)
-			return true
-	var group := _new_group_cards_for(c)
-	if not group.is_empty():
-		_stage_move(group, null)
+	var target := _advisor.auto_play_target(c, gm.current_player_is_open())
+	if target.has("meld"):
+		_play_on_meld([c], target["meld"])
+		return true
+	if target.has("new_group"):
+		_stage_move(target["new_group"], null)
 		return true
 	return false
 
 ## The concrete cards of the brand-new group `c` completes with other naturals
-## in your hand — a set of its rank across distinct suits, or the longest run of
-## its suit through it — or an empty array when none forms (jokers never count,
-## mirroring the green marker). Verified against the rules before returning, so
-## the caller can stage it straight away.
+## in your hand (see PlayAdvisor.new_group_cards_for), or an empty array when
+## none forms.
 func _new_group_cards_for(c: Card) -> Array[Card]:
-	if c.is_joker:
-		return []
-	var hand := gm.players[0].hand
-	# Set: c plus one natural per other suit of the same rank (capped at a full
-	# set by is_valid_meld's MAX_SET_SIZE guard).
-	var set_cards: Array[Card] = [c]
-	var suits := {c.suit: true}
-	for h in hand:
-		if h != c and not h.is_joker and h.rank == c.rank and not suits.has(h.suit):
-			set_cards.append(h)
-			suits[h.suit] = true
-	if set_cards.size() >= Rules.MIN_MELD_SIZE and Rules.is_valid_meld(set_cards):
-		return set_cards
-	# Run: the maximal contiguous block of naturals in c's suit that spans c.
-	var run := _natural_run_for(c, hand)
-	if run.size() >= Rules.MIN_MELD_SIZE and Rules.is_valid_meld(run):
-		return run
-	return []
-
-## The longest unbroken run of naturals in `c`'s suit that includes `c`, trying
-## the ace both low and high (never wrapping) and keeping whichever reaches
-## further. Jokers are excluded — this only gathers cards the run needs no
-## wildcard to bridge.
-func _natural_run_for(c: Card, hand: Array[Card]) -> Array[Card]:
-	var by_rank := {}
-	for h in hand:
-		if not h.is_joker and h.suit == c.suit and not by_rank.has(h.rank):
-			by_rank[h.rank] = h
-	var best: Array[Card] = []
-	for ace_high in [false, true]:
-		var eff := {}
-		for r: int in by_rank:
-			eff[14 if ace_high and r == 1 else r] = by_rank[r]
-		var cr := 14 if ace_high and c.rank == 1 else c.rank
-		var lo := cr
-		while eff.has(lo - 1):
-			lo -= 1
-		var hi := cr
-		while eff.has(hi + 1):
-			hi += 1
-		var block: Array[Card] = []
-		for r in range(lo, hi + 1):
-			block.append(eff[r])
-		if block.size() > best.size():
-			best = block
-	return best
+	return _advisor.new_group_cards_for(c)
 
 func _clear_children(node: Node) -> void:
 	for child in node.get_children():

@@ -359,6 +359,12 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   table (opponent seats, the felt of meld panels + "New group" zone, and your
   hand's card buttons) into the controller's containers. Reads the controller's
   state and wires each button back to its handlers; holds no state itself.
+- `scripts/ui/play_advisor.gd` — `PlayAdvisor`: pure game-rule reasoning over the
+  `GameManager` for "what can this hand card do right now with no rearranging" —
+  the board groups it lays off onto, whether it completes a fresh group from the
+  hand, and the concrete cards of that play. One place the hover hints, the green
+  playable-now cap and the double-click auto-play all read the board through; no
+  widgets, no turn/AI state (the controller adds the "is it my turn" gate).
 - `scripts/ui/enemy_move_animator.gd` — `EnemyMoveAnimator`: flies enemy cards
   from where they were to where they land, so each AI move is visible.
 - `scripts/ui/ui_theme.gd` — `UITheme`: shared visual constants (the felt/cards
