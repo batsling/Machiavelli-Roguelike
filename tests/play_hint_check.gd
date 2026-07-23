@@ -168,13 +168,31 @@ func _init() -> void:
 		printerr("2C forms no group, so auto-play must gather nothing")
 		ok = false
 
-	# Integration: double-clicking the 8H lays it off onto the run on the felt.
+	# Integration: a green (playable) hand card keeps BOTH interactions — it can
+	# still be dragged, and now it can also be double-clicked to auto-play.
 	ui.gm.board.melds = [_meld([_card(5, "hearts"), _card(6, "hearts"),
 		_card(7, "hearts")])] as Array[CardSet]
 	var lay_run: CardSet = ui.gm.board.melds[0]
 	var eight := _card(8, "hearts")
 	ui.gm.players[0].hand = [eight, _card(2, "clubs")] as Array[Card]
 	ui.gm.players[0].has_opened = true
+	ui._refresh()
+	await process_frame
+
+	# The green cap is painted, and the card stays a live drag source: its button
+	# is enabled and still catches the mouse (drag detection runs through it), so
+	# the double-click never came at the cost of dragging. (Actual drag payloads —
+	# _get_card_drag_data — are exercised end to end in view_check; that path can
+	# only run mid-drag, when set_drag_preview is legal.)
+	var eight_btn: Button = ui.card_nodes.get(eight)
+	if eight_btn == null or eight_btn.disabled:
+		printerr("a playable hand card must stay an enabled, draggable button")
+		ok = false
+	elif eight_btn.mouse_filter == Control.MOUSE_FILTER_IGNORE:
+		printerr("a playable hand card must still catch the mouse to be dragged")
+		ok = false
+
+	# And the double-click path lays it straight off onto the run on the felt.
 	if not ui._auto_play_card(eight):
 		printerr("double-clicking a playable 8H should stage a play")
 		ok = false
