@@ -351,10 +351,15 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 ### UI — `scripts/ui/` + `scenes/`
 
 - `scripts/ui/main_ui.gd` + `scenes/main.tscn` — `MainUI`, the table controller:
-  owns the `GameManager`, builds the layout, drives selection, drag-and-drop and
-  click-to-play, the opening-rule locking, the right-click joker menu, and the
-  enemy-turn loop. Delegates look, rendering and self-contained regions to the
+  owns the `GameManager`, drives selection, drag-and-drop and click-to-play, the
+  opening-rule locking, the right-click joker menu, and the enemy-turn loop.
+  Delegates construction, look, rendering and self-contained regions to the
   helpers below.
+- `scripts/ui/main_ui_builder.gd` — `MainUIBuilder`: assembles MainUI's widget
+  tree once at startup (the felt/seats/hand/action-row shell, the flying-card
+  overlay, and the menu, settings and enemy-info pop-ups), stores the nodes the
+  controller refreshes into its fields, and wires every button back to the
+  controller's handlers. Pure construction — all behaviour stays on MainUI.
 - `scripts/ui/table_view.gd` — `TableView`: a passive view that renders the live
   table (opponent seats, the felt of meld panels + "New group" zone, and your
   hand's card buttons) into the controller's containers. Reads the controller's
