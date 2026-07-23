@@ -192,15 +192,34 @@ func _init() -> void:
 		printerr("a playable hand card must still catch the mouse to be dragged")
 		ok = false
 
-	# And the double-click path lays it straight off onto the run on the felt.
-	if not ui._auto_play_card(eight):
-		printerr("double-clicking a playable 8H should stage a play")
-		ok = false
+	# And a real left double-click, routed through the card's gui_input handler,
+	# lays it straight off onto the run on the felt — exercising the actual
+	# double-click branch (accept_event and all), not just the play helper.
+	var dbl := InputEventMouseButton.new()
+	dbl.button_index = MOUSE_BUTTON_LEFT
+	dbl.pressed = true
+	dbl.double_click = true
+	ui._on_card_gui_input(dbl, eight, null)
 	if not lay_run.cards.has(eight):
-		printerr("auto-play should have laid the 8H onto the run")
+		printerr("a double-click should have laid the 8H onto the run")
 		ok = false
 	if ui.gm.players[0].hand.has(eight):
-		printerr("the 8H should have left the hand once auto-played")
+		printerr("the 8H should have left the hand once double-clicked")
+		ok = false
+
+	# A single left click on the same kind of card must NOT auto-play — it just
+	# selects, so dragging and click-to-select keep working.
+	ui.gm.board.melds = [_meld([_card(5, "clubs"), _card(6, "clubs"),
+		_card(7, "clubs")])] as Array[CardSet]
+	var eight_c := _card(8, "clubs")
+	ui.gm.players[0].hand = [eight_c] as Array[Card]
+	var single := InputEventMouseButton.new()
+	single.button_index = MOUSE_BUTTON_LEFT
+	single.pressed = true
+	single.double_click = false
+	ui._on_card_gui_input(single, eight_c, null)
+	if not ui.gm.players[0].hand.has(eight_c):
+		printerr("a single click must not auto-play — it should stay in hand")
 		ok = false
 
 	if ok:

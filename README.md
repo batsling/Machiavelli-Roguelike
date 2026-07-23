@@ -130,6 +130,13 @@ that would need a joker to close are disregarded, so the cue only lights for
 groups you can form without spending a wildcard. Lay-offs only light up once you
 have opened; the new-group cue always shows, since that is how you open.
 
+A card that can be played this instant also wears a slim **green cap** across
+its top, so you can spot your ready plays without hovering each one. **Double-click
+a green-capped card to play it straight away** — no dragging: it lays off onto a
+matching group if one exists (the smallest move), otherwise it lays down the
+fresh group it completes with other cards in your hand. Cards without the cap
+are unaffected — they still drag and click-select as normal.
+
 Enemy turns play out move by move on screen: each card an enemy plays flies from
 where it was (their hidden hand or its previous spot on the table) to where it
 lands, and the log narrates each move. Every card the enemies touched stays
@@ -318,7 +325,7 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   valid with no leftover cards; she alone moves slimed cards freely. Once her
   ultimate meter fills, she gathers every slimed card she can legally take —
   her hand's, the table's free donations, and cards whose broken groups the
-  repair engine can mend — into a heart picture group (12 cards) sealed on the
+  repair engine can mend — into a heart picture group (14 cards) sealed on the
   felt, and her meter resets
 - `scripts/ai/sadistic_billionaire.gd` — `SadisticBillionaire`: the second designed
   enemy (strong, conservative, attentive). At combat start he turns every card in
@@ -393,7 +400,8 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 - `tests/play_hint_check.gd` — headless check of the hover-to-play hints: lay-off
   targets on the board, the new-group cue (natural groups only, joker-assisted
   plays disregarded), the opening-rule gate, and that both render their green
-  spotlight
+  spotlight; plus the double-click auto-play (the group a card completes,
+  lay-off preferred over a fresh group, and a green card staying draggable)
 - `tests/view_check.gd` — headless check of the table rendering and drag/drop:
   opponent seats, board meld panels, the "New group" zone, card-node
   registration and a new-group drop
@@ -529,7 +537,7 @@ cluster it didn't mean to.
 
 Her **ultimate** rides the ultimate meter: when it fills and enough slimed
 cards can be legally gathered, she squeezes them into a heart picture on the
-felt (12 cards) and the meter resets. Because the meter builds live as she
+felt (14 cards) and the meter resets. Because the meter builds live as she
 plays, the ultimate can fire the very turn her plays complete the bar — and
 she keeps acting afterward (guarding her slime) since the ult is a mechanic,
 not the end of her turn. The slime comes from her own hand (naturals first,
