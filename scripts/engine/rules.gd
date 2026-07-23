@@ -125,36 +125,97 @@ static func could_pair(a: Card, b: Card) -> bool:
 ## whose ranks step by exactly one along the line, ascending or descending,
 ## ace low or high, never wrapping. The Scrabble-style reading for lines
 ## played off a picture — unlike is_valid_meld, spatial order matters for
-## runs. Free (unlocked) jokers never appear in these lines; locked jokers
-## read as their card.
+## runs. Joker-aware like any other group: a free joker fills the rank its
+## spatial slot needs (or a missing suit in a set); a locked joker reads as
+## its card. assign_grid_line writes those stand-ins before a line locks.
 static func is_valid_grid_line(line: Array[Card]) -> bool:
 	if line.size() < MIN_MELD_SIZE:
 		return false
 	if is_valid_set(line):
 		return true
+	return _grid_run(line, Vector2i.ZERO)["ok"]
+
+## Write onto every free joker in a picture line the card its slot needs — a
+## missing suit for a set, or the rank its spatial position demands for a run —
+## so it locks to exactly that (GameManager._lock_table_jokers). `line` is the
+## anchor followed by the outward cards; `step` pins a vertical run's direction
+## (lower rank on top). A no-op when the line holds no free jokers or can't read.
+static func assign_grid_line(line: Array[Card], step: Vector2i) -> void:
+	if is_valid_set(line):
+		assign_jokers(line)
+		return
+	var run := _grid_run(line, step)
+	if not run["ok"]:
+		return
+	var assign: Dictionary = run["assign"]
+	for j: Card in assign:
+		j.joker_rank = assign[j]["rank"]
+		j.joker_suit = assign[j]["suit"]
+
+## Read `line` (anchor first, then outward) as a same-suit run, letting free
+## jokers fill whatever rank their slot needs. Returns {"ok": true, "assign":
+## {joker: {rank, suit}}} on success, else {"ok": false}. `step` constrains a
+## vertical line to the on-top-is-lower direction; a horizontal or step-less
+## call tries both directions (ascending first).
+static func _grid_run(line: Array[Card], step: Vector2i) -> Dictionary:
+	var fail := {"ok": false}
+	var suit := ""
+	for c in line:
+		if _is_fixed(c):
+			suit = _eff_suit(c)
+			break
+	if suit == "":
+		return fail  # a run needs at least one fixed card to anchor its suit
+	for c in line:
+		if _is_fixed(c) and _eff_suit(c) != suit:
+			return fail
+	var dirs: Array[int] = [1, -1]
+	if step.y > 0:
+		dirs = [1]
+	elif step.y < 0:
+		dirs = [-1]
 	for ace_high: bool in [false, true]:
-		var suit := _eff_suit(line[0])
-		var up := true
-		var down := true
-		var readable := true
-		var prev := 0
-		for i in line.size():
-			var c := line[i]
-			if (c.is_joker and c.joker_lock_rank == 0) or _eff_suit(c) != suit:
-				readable = false
-				break
-			var r := _eff_rank(c)
-			if ace_high and r == 1:
-				r = 14
-			if i > 0:
-				if r != prev + 1:
-					up = false
-				if r != prev - 1:
-					down = false
-			prev = r
-		if readable and (up or down):
-			return true
-	return false
+		for dir: int in dirs:
+			var res := _grid_run_try(line, suit, ace_high, dir)
+			if res["ok"]:
+				return res
+	return fail
+
+## One (ace-high, direction) attempt at reading `line` as a run in `suit`: the
+## first fixed card pins the sequence (rank = base + index*dir), every other
+## fixed card must land on its slot's rank, and each free joker is handed the
+## rank/suit of its slot. Ranks stay inside the ace-low (1-13) or ace-high
+## (2-14) window; a joker at 14 stands for the high ace (rank 1).
+static func _grid_run_try(line: Array[Card], suit: String, ace_high: bool, dir: int) -> Dictionary:
+	var base := 0
+	var anchored := false
+	for i in line.size():
+		if _is_fixed(line[i]):
+			var e := _eff_rank(line[i])
+			if ace_high and e == 1:
+				e = 14
+			base = e - i * dir
+			anchored = true
+			break
+	if not anchored:
+		return {"ok": false}
+	var lo := 2 if ace_high else 1
+	var hi := 14 if ace_high else 13
+	var assign := {}
+	for i in line.size():
+		var r := base + i * dir
+		if r < lo or r > hi:
+			return {"ok": false}
+		var c := line[i]
+		if _is_fixed(c):
+			var e := _eff_rank(c)
+			if ace_high and e == 1:
+				e = 14
+			if e != r:
+				return {"ok": false}
+		else:
+			assign[c] = {"rank": 1 if r == 14 else r, "suit": suit}
+	return {"ok": true, "assign": assign}
 
 ## The table convention for vertical straights: the lower rank sits on top,
 ## i.e. ranks increase downward on the felt. `line` is in spatial order along

@@ -22,6 +22,12 @@ func _meld(cards: Array[Card]) -> CardSet:
 	m.cards = cards
 	return m
 
+func _pick(hand: Array[Card], rank: int, suit: String) -> Card:
+	for c in hand:
+		if c.rank == rank and c.suit == suit:
+			return c
+	return null
+
 func _init() -> void:
 	var ui: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	root.add_child.call_deferred(ui)
@@ -139,6 +145,81 @@ func _init() -> void:
 	ui._compute_play_hints(ui.gm.players[0].hand[0])
 	if ui.hint_new_group:
 		printerr("one card plus one joker is only two — no group")
+		ok = false
+
+	# --- Double-click auto-play picks the play the marker promises ------------
+	# _new_group_cards_for returns the exact cards of the group a card completes.
+	ui.gm.players[0].hand = [_card(5, "spades"), _card(6, "spades"),
+		_card(7, "spades")] as Array[Card]
+	var a_run: Array = ui._new_group_cards_for(_pick(ui.gm.players[0].hand, 5, "spades"))
+	if a_run.size() != 3:
+		printerr("auto-play should gather the 5-6-7S run (got %d cards)" % a_run.size())
+		ok = false
+
+	# A rank with three suits in hand gathers the whole set.
+	ui.gm.players[0].hand = [_card(9, "hearts"), _card(9, "diamonds"),
+		_card(9, "spades"), _card(2, "clubs")] as Array[Card]
+	var nines: Array = ui._new_group_cards_for(ui.gm.players[0].hand[0])
+	if nines.size() != 3:
+		printerr("auto-play should gather the three nines (got %d)" % nines.size())
+		ok = false
+	# The dead 2C forms nothing.
+	if not ui._new_group_cards_for(ui.gm.players[0].hand[3]).is_empty():
+		printerr("2C forms no group, so auto-play must gather nothing")
+		ok = false
+
+	# Integration: a green (playable) hand card keeps BOTH interactions — it can
+	# still be dragged, and now it can also be double-clicked to auto-play.
+	ui.gm.board.melds = [_meld([_card(5, "hearts"), _card(6, "hearts"),
+		_card(7, "hearts")])] as Array[CardSet]
+	var lay_run: CardSet = ui.gm.board.melds[0]
+	var eight := _card(8, "hearts")
+	ui.gm.players[0].hand = [eight, _card(2, "clubs")] as Array[Card]
+	ui.gm.players[0].has_opened = true
+	ui._refresh()
+	await process_frame
+
+	# The green cap is painted, and the card stays a live drag source: its button
+	# is enabled and still catches the mouse (drag detection runs through it), so
+	# the double-click never came at the cost of dragging. (Actual drag payloads —
+	# _get_card_drag_data — are exercised end to end in view_check; that path can
+	# only run mid-drag, when set_drag_preview is legal.)
+	var eight_btn: Button = ui.card_nodes.get(eight)
+	if eight_btn == null or eight_btn.disabled:
+		printerr("a playable hand card must stay an enabled, draggable button")
+		ok = false
+	elif eight_btn.mouse_filter == Control.MOUSE_FILTER_IGNORE:
+		printerr("a playable hand card must still catch the mouse to be dragged")
+		ok = false
+
+	# And a real left double-click, routed through the card's gui_input handler,
+	# lays it straight off onto the run on the felt — exercising the actual
+	# double-click branch (accept_event and all), not just the play helper.
+	var dbl := InputEventMouseButton.new()
+	dbl.button_index = MOUSE_BUTTON_LEFT
+	dbl.pressed = true
+	dbl.double_click = true
+	ui._on_card_gui_input(dbl, eight, null)
+	if not lay_run.cards.has(eight):
+		printerr("a double-click should have laid the 8H onto the run")
+		ok = false
+	if ui.gm.players[0].hand.has(eight):
+		printerr("the 8H should have left the hand once double-clicked")
+		ok = false
+
+	# A single left click on the same kind of card must NOT auto-play — it just
+	# selects, so dragging and click-to-select keep working.
+	ui.gm.board.melds = [_meld([_card(5, "clubs"), _card(6, "clubs"),
+		_card(7, "clubs")])] as Array[CardSet]
+	var eight_c := _card(8, "clubs")
+	ui.gm.players[0].hand = [eight_c] as Array[Card]
+	var single := InputEventMouseButton.new()
+	single.button_index = MOUSE_BUTTON_LEFT
+	single.pressed = true
+	single.double_click = false
+	ui._on_card_gui_input(single, eight_c, null)
+	if not ui.gm.players[0].hand.has(eight_c):
+		printerr("a single click must not auto-play — it should stay in hand")
 		ok = false
 
 	if ok:

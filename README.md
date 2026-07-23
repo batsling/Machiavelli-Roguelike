@@ -130,6 +130,13 @@ that would need a joker to close are disregarded, so the cue only lights for
 groups you can form without spending a wildcard. Lay-offs only light up once you
 have opened; the new-group cue always shows, since that is how you open.
 
+A card that can be played this instant also wears a slim **green cap** across
+its top, so you can spot your ready plays without hovering each one. **Double-click
+a green-capped card to play it straight away** — no dragging: it lays off onto a
+matching group if one exists (the smallest move), otherwise it lays down the
+fresh group it completes with other cards in your hand. Cards without the cap
+are unaffected — they still drag and click-select as normal.
+
 Enemy turns play out move by move on screen: each card an enemy plays flies from
 where it was (their hidden hand or its previous spot on the table) to where it
 lands, and the log narrates each move. Every card the enemies touched stays
@@ -318,7 +325,7 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
   valid with no leftover cards; she alone moves slimed cards freely. Once her
   ultimate meter fills, she gathers every slimed card she can legally take —
   her hand's, the table's free donations, and cards whose broken groups the
-  repair engine can mend — into a heart picture group (12 cards) sealed on the
+  repair engine can mend — into a heart picture group (14 cards) sealed on the
   felt, and her meter resets
 - `scripts/ai/sadistic_billionaire.gd` — `SadisticBillionaire`: the second designed
   enemy (strong, conservative, attentive). At combat start he turns every card in
@@ -344,14 +351,25 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 ### UI — `scripts/ui/` + `scenes/`
 
 - `scripts/ui/main_ui.gd` + `scenes/main.tscn` — `MainUI`, the table controller:
-  owns the `GameManager`, builds the layout, drives selection, drag-and-drop and
-  click-to-play, the opening-rule locking, the right-click joker menu, and the
-  enemy-turn loop. Delegates look, rendering and self-contained regions to the
+  owns the `GameManager`, drives selection, drag-and-drop and click-to-play, the
+  opening-rule locking, the right-click joker menu, and the enemy-turn loop.
+  Delegates construction, look, rendering and self-contained regions to the
   helpers below.
+- `scripts/ui/main_ui_builder.gd` — `MainUIBuilder`: assembles MainUI's widget
+  tree once at startup (the felt/seats/hand/action-row shell, the flying-card
+  overlay, and the menu, settings and enemy-info pop-ups), stores the nodes the
+  controller refreshes into its fields, and wires every button back to the
+  controller's handlers. Pure construction — all behaviour stays on MainUI.
 - `scripts/ui/table_view.gd` — `TableView`: a passive view that renders the live
   table (opponent seats, the felt of meld panels + "New group" zone, and your
   hand's card buttons) into the controller's containers. Reads the controller's
   state and wires each button back to its handlers; holds no state itself.
+- `scripts/ui/play_advisor.gd` — `PlayAdvisor`: pure game-rule reasoning over the
+  `GameManager` for "what can this hand card do right now with no rearranging" —
+  the board groups it lays off onto, whether it completes a fresh group from the
+  hand, and the concrete cards of that play. One place the hover hints, the green
+  playable-now cap and the double-click auto-play all read the board through; no
+  widgets, no turn/AI state (the controller adds the "is it my turn" gate).
 - `scripts/ui/enemy_move_animator.gd` — `EnemyMoveAnimator`: flies enemy cards
   from where they were to where they land, so each AI move is visible.
 - `scripts/ui/ui_theme.gd` — `UITheme`: shared visual constants (the felt/cards
@@ -393,7 +411,8 @@ game state), `scripts/ai/` (opponents and their brains), and `scripts/ui/`
 - `tests/play_hint_check.gd` — headless check of the hover-to-play hints: lay-off
   targets on the board, the new-group cue (natural groups only, joker-assisted
   plays disregarded), the opening-rule gate, and that both render their green
-  spotlight
+  spotlight; plus the double-click auto-play (the group a card completes,
+  lay-off preferred over a fresh group, and a green card staying draggable)
 - `tests/view_check.gd` — headless check of the table rendering and drag/drop:
   opponent seats, board meld panels, the "New group" zone, card-node
   registration and a new-group drop
@@ -479,9 +498,11 @@ mechanics that will use it still to come:
   with it must read as a legal set or run on the grid — spatial order
   matters for runs (`Rules.is_valid_grid_line`), and counting the anchor a
   line is at least three cards, so a single card off a picture is refused
-  (you play at least two at once). Lines extend outward
+  (you play at least two at once). A joker plays into a line like any other
+  card — standing for the rank its spatial slot needs, or a missing suit in a
+  set, and locking to it (`Rules.assign_grid_line`). Lines extend outward
   only (they never hug the silhouette, so the picture always reads as
-  drawn), take one line per picture card per axis, hold no jokers, brush a
+  drawn), take one line per picture card per axis, brush a
   neighbouring line only where the touching pair could grow, and tear off
   whole or not at all. Ghost "+" cells around a picture are the drop/click
   targets. A played card connects in ONE direction only — sitting in two
@@ -529,7 +550,7 @@ cluster it didn't mean to.
 
 Her **ultimate** rides the ultimate meter: when it fills and enough slimed
 cards can be legally gathered, she squeezes them into a heart picture on the
-felt (12 cards) and the meter resets. Because the meter builds live as she
+felt (14 cards) and the meter resets. Because the meter builds live as she
 plays, the ultimate can fire the very turn her plays complete the bar — and
 she keeps acting afterward (guarding her slime) since the ult is a mechanic,
 not the end of her turn. The slime comes from her own hand (naturals first,
