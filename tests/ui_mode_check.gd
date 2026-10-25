@@ -37,6 +37,11 @@ func _init() -> void:
 		ok = false
 
 	# --- The first match ---------------------------------------------------------
+	# Show the instances' turn without its pause, so checks run straight away.
+	ui.instance_turn_time = 0.0
+	# Known instances, so the checks below don't depend on a random draw.
+	for id: StringName in [&"surge", &"extra_draw", &"open_decks", &"jackpot", &"overcharge"]:
+		ui.next_instances.append(MatchInstance.named(id))
 	ui._on_map_node_chosen(run.node_at(0, 0))
 	var gm: GameManager = ui.gm
 	if not ui.game_root.visible or ui.map_layer.visible:
@@ -50,12 +55,8 @@ func _init() -> void:
 		printerr("run rules wrong: draw %d, plays %d, hand cap %d, meter %d"
 			% [gm.draw_per_turn, gm.max_plays_per_turn, gm.max_hand_size, gm.meter_max])
 		ok = false
-	# 3 energy on the first turn, plus whatever the round-1 location adds.
-	var first_energy := 3
-	if gm.revealed_locations[0].id == MatchLocation.Id.OVERCHARGE:
-		first_energy += MatchLocation.OVERCHARGE_ENERGY
-	if gm.revealed_locations[0].id == MatchLocation.Id.SURGE:
-		first_energy += MatchLocation.SURGE_ENERGY
+	# 3 energy on the first turn, plus Surge's +3 (the round-1 instance).
+	var first_energy := 6
 	if not gm.energy_on() or gm.players[0].max_energy != first_energy \
 			or gm.energy_left() != first_energy:
 		printerr("the first turn should start with %d energy" % first_energy)
@@ -77,9 +78,9 @@ func _init() -> void:
 		if jokers != 2:
 			printerr("%s's deck should hold 2 jokers, found %d" % [p.display_name, jokers])
 			ok = false
-	# Two starting combos plus the round-1 location's combo.
-	if gm.board.melds.size() != 3 or not gm.players[0].has_opened:
-		printerr("starting combos should open both players with a meld each")
+	# No starting combos in a run: only the round-1 instance's combo is out.
+	if gm.board.melds.size() != 1 or gm.players[0].has_opened or not gm.starting_combos.is_empty():
+		printerr("a run should deal no starting combos, only the round-1 instance's combo")
 		ok = false
 	if ui.energy_slot.get_child_count() != 1 + first_energy:
 		printerr("the hand header should show the energy label and %d pips" % first_energy)
@@ -92,28 +93,72 @@ func _init() -> void:
 	if not ui.lives_label.visible or ui.lives_label.text.find("Node 1/3") == -1:
 		printerr("the top bar should show lives and 'Node 1/3', got '%s'" % ui.lives_label.text)
 		ok = false
-	if ui.settings_btn.disabled:
-		printerr("settings button should stay enabled during a run (roguelike tab)")
+	var popup: PopupMenu = ui.game_menu_btn.get_popup()
+	if popup.is_item_disabled(popup.get_item_index(MainUI.GameMenu.SETTINGS)):
+		printerr("Settings in the game menu should stay enabled during a run (roguelike tab)")
 		ok = false
-	if ui.new_game_btn.text != "Restart run":
-		printerr("mid-match the button should read Restart run, got '%s'" % ui.new_game_btn.text)
+	if popup.get_item_text(popup.get_item_index(MainUI.GameMenu.RESTART)) != "Restart run":
+		printerr("mid-match the game menu should offer Restart run")
+		ok = false
+	if ui.new_game_btn.visible:
+		printerr("Back to map / New run should only show once the match is over")
+		ok = false
+	# Draw lives on your deck pile; End turn waits for a card played from hand.
+	if ui.draw_btn.text.find("%d left" % gm.players[0].deck.size()) == -1:
+		printerr("the deck pile should show the cards left, reads '%s'" % ui.draw_btn.text)
+		ok = false
+	if not ui.end_turn_btn.disabled and not gm.has_pending_choice():
+		printerr("End turn should be disabled until a card is played from hand")
+		ok = false
+	# The groups dealt at the start say where they came from.
+	var origins := PackedStringArray()
+	for m: CardSet in gm.board.melds:
+		origins.append(ui._table.group_origin([m] as Array[CardSet]))
+	if origins != PackedStringArray(["%s combo" % gm.revealed_instances[0].title]):
+		printerr("the instance's combo should be labelled with its name, got %s" % origins)
+		ok = false
+	if not ui._table.instance_panels.has(gm.revealed_instances[0]):
+		printerr("a revealed instance's panel should be registered for its combo's flight")
 		ok = false
 
-	# --- Locations: three per match, one face up at the deal ------------------------
-	if gm.revealed_locations.size() != 1 or gm.upcoming_locations().size() != 2 \
-			or ui.locations_row.get_child_count() != 3 or not ui.locations_row.visible:
-		printerr("a match should show 3 locations, 1 revealed at the deal")
+	# --- The round: Instances, You, then the enemy --------------------------------
+	var steps := PackedStringArray()
+	for n in ui.turn_order_row.get_children():
+		if n is Label and (n as Label).text != "→":
+			steps.append((n as Label).text)
+	if steps != PackedStringArray(["Instances", "You", "Scrap Drone"]):
+		printerr("the turn order should read Instances → You → Scrap Drone, got %s" % steps)
+		ok = false
+
+	# --- Instances: five per match, one face up at the deal ------------------------
+	if gm.revealed_instances.size() != 1 or gm.upcoming_instances().size() != 4 \
+			or ui.instances_row.get_child_count() != 6 or not ui.instances_row.visible:
+		printerr("a match should show 5 instances, 1 revealed at the deal")
+		ok = false
+	# Every hand card wears its energy cost; the discard pile and coin tag show.
+	var badge_ok := true
+	for b in ui.hand_box.get_children():
+		if b.get_child_count() == 0 or not b.get_child(0) is Panel:
+			badge_ok = false
+	if not badge_ok:
+		printerr("every hand card should carry an energy-cost badge")
+		ok = false
+	if ui.discard_btn.text != "Discard\n0":
+		printerr("the discard pile should read 0, got '%s'" % ui.discard_btn.text)
+		ok = false
+	if ui._table.combo_coin_tag([gm.board.melds[0]] as Array[CardSet]) == "":
+		printerr("an instance combo group should be tagged as paying coins")
 		ok = false
 	# Settle any choice the random deal asked for, then reveal a Cycle early and
 	# work its choice through the Confirm button.
 	if gm.has_pending_choice():
-		GreedyAI.resolve_location_choice(gm)
-	gm.location_deck = [MatchLocation.new(MatchLocation.Id.CYCLE)] as Array[MatchLocation]
-	gm.reveal_next_location()
+		GreedyAI.resolve_instance_choice(gm)
+	gm.instance_deck = [MatchInstance.named(&"cycle")] as Array[MatchInstance]
+	gm.reveal_next_instance()
 	ui._refresh()
 	if not ui.choice_btn.visible or not ui.choice_btn.disabled or not ui.end_turn_btn.disabled \
 			or not ui.draw_btn.disabled:
-		printerr("a location choice should show a disabled Confirm and block ending the turn")
+		printerr("an instance choice should show a disabled Confirm and block ending the turn")
 		ok = false
 	var hand_before: int = gm.players[0].hand.size()
 	ui.selected.assign([gm.players[0].hand[0], gm.players[0].hand[1]])
@@ -122,12 +167,16 @@ func _init() -> void:
 		printerr("Confirm should enable at 2/2, reads '%s'" % ui.choice_btn.text)
 		ok = false
 	ui._on_choice_confirm_pressed()
-	if gm.has_pending_choice() or ui.choice_btn.visible or ui.end_turn_btn.disabled \
+	if gm.has_pending_choice() or ui.choice_btn.visible or ui.draw_btn.disabled \
 			or gm.players[0].hand.size() != hand_before:
 		printerr("Confirm should discard 2, draw 2 and hand the turn back")
 		ok = false
 
 	# --- Energy gates the green playable cap -------------------------------------
+	# No opening rule: a player who has never laid a group may still work the table.
+	if gm.opening_rule or gm.players[0].has_opened or not gm.current_player_is_open():
+		printerr("the opening rule should be off: the table is open from turn one")
+		ok = false
 	var run_meld := CardSet.new()
 	run_meld.cards.assign([_card(5, "hearts"), _card(6, "hearts"), _card(7, "hearts")])
 	gm.board.melds.append(run_meld)
@@ -147,7 +196,7 @@ func _init() -> void:
 	ui.settings.rogue_draw_per_turn = 3
 	ui.settings.rogue_start_hand_size = 10
 	ui.settings.rogue_start_energy = 4
-	ui.settings.rogue_locations = 0  # no locations next match, so its energy is exactly 4
+	ui.settings.rogue_instances = 0  # no instances next match, so its energy is exactly 4
 	gm.players[0].coins = 4
 	gm._end_game([gm.players[0]])
 	ui._refresh()
@@ -171,10 +220,10 @@ func _init() -> void:
 	ui.settings.rogue_draw_per_turn = 2
 	ui.settings.rogue_start_hand_size = 13
 	ui.settings.rogue_start_energy = 3
-	if ui.locations_row.visible:
-		printerr("a match with 0 locations should hide the locations row")
+	if ui.instances_row.visible:
+		printerr("a match with 0 instances should hide the instances row")
 		ok = false
-	ui.settings.rogue_locations = 3
+	ui.settings.rogue_instances = 5
 
 	# --- Loss: a life lost, the node stays open ----------------------------------
 	gm._end_game([gm.players[1]])
@@ -226,8 +275,8 @@ func _init() -> void:
 	if gm.players.size() != 4 or gm.max_plays_per_turn != 12 or gm.draw_per_turn != 1:
 		printerr("sandbox game should use sandbox settings")
 		ok = false
-	if gm.energy_on() or ui.lives_label.visible or ui.locations_row.visible:
-		printerr("sandbox games have no energy, lives or locations")
+	if gm.energy_on() or ui.lives_label.visible or ui.instances_row.visible:
+		printerr("sandbox games have no energy, lives or instances")
 		ok = false
 	if gm.meter_gain != 2 or not gm.meter_per_card or gm.meter_max != 20:
 		printerr("sandbox game should use sandbox meter settings: max %d gain %d per_card %s"

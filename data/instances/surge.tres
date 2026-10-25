@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="InstanceData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/instance_data.gd" id="1_loc"]
+
+[resource]
+script = ExtResource("1_loc")
+id = &"surge"
+title = "Surge"
+kind = "reveal"
+text = "+3 energy this turn."
+effect = "energy +3"
+order = 2

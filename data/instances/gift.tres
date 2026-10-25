@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="InstanceData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/instance_data.gd" id="1_loc"]
+
+[resource]
+script = ExtResource("1_loc")
+id = &"gift"
+title = "Gift"
+kind = "reveal"
+text = "Choose 2 cards to give your opponent."
+effect = "give choose 2"
+order = 1

@@ -10,65 +10,129 @@ extends RefCounted
 ## refresh_seats / refresh_board / refresh_hand from its _refresh().
 
 var _ui: MainUI
+## MatchInstance -> its panel in the instances column, rebuilt each refresh, so a
+## revealed instance's combo can fly onto the felt from it.
+var instance_panels := {}
 
 func setup(ui: MainUI) -> void:
 	_ui = ui
 
-## Seat opponents around the table: players[1] opposite you, players[2] on the
-## left, players[3] on the right. Unused seats collapse.
+## Seat opponents around the table in turn order, going clockwise from you
+## (you sit at the bottom): one enemy sits opposite you; two sit left, then
+## opposite; three sit left, opposite, then right. Unused seats collapse.
 func refresh_seats() -> void:
 	var gm := _ui.gm
 	# Rebuilding the seats frees the card backs any open hand reveal was tied to,
 	# so drop the reveal; re-entering a seat brings it back.
 	_ui._hide_opponent_hand()
 	_ui.opponent_backs.clear()
-	var seats: Array = [_ui.seat_top, _ui.seat_left, _ui.seat_right]
 	var seated_players := mini(gm.players.size(), MainUI.MAX_PLAYERS)
-	for i in seats.size():
-		var seat: VBoxContainer = seats[i]
+	var order := clockwise_seats(seated_players - 1)
+	for seat: VBoxContainer in [_ui.seat_top, _ui.seat_left, _ui.seat_right]:
 		_ui._clear_children(seat)
-		var player_index := i + 1
-		if player_index >= seated_players:
-			seat.visible = false
-			continue
-		seat.visible = true
+		seat.visible = order.has(seat)
+	for k in order.size():
+		var seat: VBoxContainer = order[k]
+		var player_index := k + 1
+		var top := seat == _ui.seat_top
 		var p := gm.players[player_index]
 		var chip := _make_player_chip(p, player_index)
 		chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seat.add_child(chip)
-		var backs := _make_card_backs(p, player_index, i == 0)
+		# Their hand with their own deck beside it: to the right of the cards in
+		# the seat opposite you, underneath them in a side seat.
+		var hand_row: BoxContainer = HBoxContainer.new() if top else VBoxContainer.new()
+		hand_row.add_theme_constant_override("separation", 10)
+		hand_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		seat.add_child(hand_row)
+		var backs := _make_card_backs(p, player_index, top)
 		backs.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		seat.add_child(backs)
+		hand_row.add_child(backs)
+		hand_row.add_child(_make_opponent_deck(p, UITheme.BACK_SIZE_TOP if top
+			else UITheme.BACK_SIZE_SIDE))
 		_ui.opponent_backs[p.player_id] = backs
-	_ui.stock_label.text = "Your deck: %d" % gm.players[0].deck.size()
-	_ui.stock_label.tooltip_text = "Cards left in your own deck — you only ever draw from it."
+	_refresh_draw_pile()
 	_ui.round_label.text = "Round %d" % gm.round_number
+	_refresh_turn_order()
 	_refresh_lives()
 	_refresh_stock_top()
-	_refresh_locations()
+	_refresh_instances()
 
-## The match's locations: a face-up panel per revealed location (an on-reveal location
-## dims once its round is over) and a face-down panel per location still to come,
-## naming the round it turns up on. Hidden when the match has no locations.
-func _refresh_locations() -> void:
+## The seats for `enemies` opponents, in turn order (clockwise from your seat at
+## the bottom).
+func clockwise_seats(enemies: int) -> Array:
+	match enemies:
+		0:
+			return []
+		1:
+			return [_ui.seat_top]
+		2:
+			return [_ui.seat_left, _ui.seat_top]
+	return [_ui.seat_left, _ui.seat_top, _ui.seat_right]
+
+## The round's turn order in the top bar — Instances (when the match has them),
+## You, then each enemy clockwise — with whoever is acting now lit in gold.
+func _refresh_turn_order() -> void:
 	var gm := _ui.gm
-	_ui._clear_children(_ui.locations_row)
-	var upcoming := gm.upcoming_locations()
-	_ui.locations_row.visible = not gm.revealed_locations.is_empty() or not upcoming.is_empty()
-	for e in gm.revealed_locations:
+	_ui._clear_children(_ui.turn_order_row)
+	var steps: Array[Dictionary] = []
+	if gm.has_instance_turn():
+		steps.append({"name": "Instances", "now": _ui.instance_phase_running})
+	for p in gm.players:
+		steps.append({"name": "You" if p == gm.players[0] else p.display_name,
+			"now": not _ui.instance_phase_running and not gm.is_game_over
+				and p == gm.current_player()})
+	for i in steps.size():
+		if i > 0:
+			var arrow := Label.new()
+			arrow.text = "→"
+			arrow.add_theme_color_override("font_color", Color(1, 1, 1, 0.35))
+			_ui.turn_order_row.add_child(arrow)
+		var step := Label.new()
+		step.text = steps[i]["name"]
+		step.add_theme_font_size_override("font_size", 15)
+		step.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE
+			if steps[i]["now"] else Color(1, 1, 1, 0.45))
+		_ui.turn_order_row.add_child(step)
+	_ui.turn_order_row.tooltip_text = "One round: the instances' turn, then yours, " \
+		+ "then each enemy's, clockwise around the table."
+
+## The match's instances: a face-up panel per revealed instance (a Reveal instance
+## dims once its round is over) and a face-down panel per instance still to come,
+## naming the round it turns up on. Hidden when the match has no instances.
+func _refresh_instances() -> void:
+	var gm := _ui.gm
+	_ui._clear_children(_ui.instances_row)
+	instance_panels.clear()
+	var upcoming := gm.upcoming_instances()
+	_ui.instances_row.visible = not gm.revealed_instances.is_empty() or not upcoming.is_empty()
+	# A heading that lights up while the instances take their turn.
+	var head := Label.new()
+	var acting := _ui.instance_phase_running
+	head.text = "▶ Instances' turn" if acting else "Instances"
+	head.add_theme_font_size_override("font_size", 16 if acting else 14)
+	head.add_theme_color_override("font_color",
+		UITheme.COL_CHIP_ACTIVE if acting else Color(1, 1, 1, 0.5))
+	head.tooltip_text = "The instances take the first turn of every round, " \
+		+ "before yours: the next one turns up on its round."
+	head.mouse_filter = Control.MOUSE_FILTER_STOP
+	_ui.instances_row.add_child(head)
+	for e in gm.revealed_instances:
 		var live := e.is_ongoing() or e.revealed_round == gm.round_number
-		_ui.locations_row.add_child(_make_location_panel(e.title, e.kind_label(),
+		var panel := _make_instance_panel(e.title, e.kind_label(),
 			"%s Combo: %s" % [e.text, e.combo_label()],
-			UITheme.COL_CHIP_ACTIVE if live else Color(1, 1, 1, 0.15), live))
+			UITheme.COL_CHIP_ACTIVE if live else Color(1, 1, 1, 0.15), live)
+		_ui.instances_row.add_child(panel)
+		instance_panels[e] = panel
 	for slot: Dictionary in upcoming:
-		_ui.locations_row.add_child(_make_location_panel("?", "Face down",
+		_ui.instances_row.add_child(_make_instance_panel("?", "Face down",
 			"Revealed at the start of round %d, with a combo for the table." % slot["round"],
 			Color(1, 1, 1, 0.15), false))
 
-func _make_location_panel(title: String, kind: String, body: String, edge: Color,
+func _make_instance_panel(title: String, kind: String, body: String, edge: Color,
 		live: bool) -> PanelContainer:
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = UITheme.LOCATION_PANEL_SIZE
+	panel.custom_minimum_size = UITheme.INSTANCE_PANEL_SIZE
 	var sb := CardRenderer.panel_style(UITheme.COL_CHIP_BG, 8)
 	sb.border_color = edge
 	sb.set_border_width_all(2)
@@ -86,7 +150,7 @@ func _make_location_panel(title: String, kind: String, body: String, edge: Color
 	var text := Label.new()
 	text.text = body
 	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	text.custom_minimum_size = Vector2(UITheme.LOCATION_PANEL_SIZE.x - 16, 0)
+	text.custom_minimum_size = Vector2(UITheme.INSTANCE_PANEL_SIZE.x - 16, 0)
 	text.add_theme_font_size_override("font_size", 12)
 	text.add_theme_color_override("font_color", Color(1, 1, 1, 0.85 if live else 0.45))
 	col.add_child(text)
@@ -113,7 +177,57 @@ func _refresh_lives() -> void:
 	_ui.lives_label.tooltip_text = "Lives left — losing a match costs one. Coins " \
 		+ "carry over the run."
 
-## Show the top card of your own deck beside the count when its status is
+## Your deck pile beside the hand, which is also the Draw button: the cards
+## left, and what clicking it does.
+func _refresh_draw_pile() -> void:
+	var gm := _ui.gm
+	var me := gm.players[0]
+	var n := gm.draw_count()
+	_ui.draw_btn.text = "Draw\n%d left" % me.deck.size()
+	var discarded := me.deck.discards.size()
+	_ui.discard_btn.text = "Discard\n%d" % discarded
+	_ui.discard_btn.tooltip_text = "Your discard pile: every card discarded or destroyed " \
+		+ "from your deck. Click to see them."
+	_ui.draw_btn.tooltip_text = "Your deck — you only ever draw from it. Click to " \
+		+ "draw %d card%s and end your turn (any cards you laid this turn go back to " \
+		% [n, "" if n == 1 else "s"] + "your hand)."
+	if not me.deck.discards.is_empty():
+		_ui.draw_btn.tooltip_text += "\n%d in its discard pile, shuffled back in " \
+			% me.deck.discards.size() + "when it runs dry."
+
+## An opponent's deck beside their cards: a face-down pile — or its top card,
+## when that card's status is public (glass, Open Decks) — over the cards left.
+func _make_opponent_deck(p: PlayerState, back_size: Vector2) -> Control:
+	var gm := _ui.gm
+	var top := p.deck.peek()
+	var pile: Control
+	if top != null and top.is_glass():
+		pile = CardRenderer.make_glass_face(top, back_size)
+	elif top != null and gm.top_is_public(top):
+		pile = CardRenderer.make_card_face(top)
+	else:
+		pile = CardRenderer.make_card_back(back_size, top)
+	pile.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	pile.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 2)
+	box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	box.mouse_filter = Control.MOUSE_FILTER_STOP
+	box.add_child(pile)
+	var count := Label.new()
+	count.text = "deck %d" % p.deck.size()
+	count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	count.add_theme_font_size_override("font_size", 12)
+	count.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
+	count.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(count)
+	box.tooltip_text = "%s's deck: %d left — they only ever draw from it." \
+		% [p.display_name, p.deck.size()]
+	if top != null and gm.top_is_public(top):
+		box.tooltip_text += " Its top card is face up: %s." % top.label()
+	return box
+
+## Show the top card of your own deck beside the pile when its status is
 ## public: a glass top (or any top while Open Decks is in force) shows its face
 ## (everyone sees your next draw), and a slimed top shows a back with the
 ## splotch. A plain top stays hidden.
@@ -156,29 +270,24 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	var lbl := Label.new()
 	lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var marker := "▶ " if is_current else ""
-	var opened := "" if p.has_opened else " · not open"
+	var opened := "" if p.has_opened or not gm.opening_rule else " · not open"
 	lbl.text = "%s%s — %d cards%s" % [marker, p.display_name, p.hand.size(), opened]
 	if is_current:
 		lbl.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	row.add_child(lbl)
-	# Their own deck (they draw only from it) and, when energy is on, the energy
-	# they have this turn — or will have on their next one.
-	var extra := Label.new()
-	extra.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	extra.add_theme_font_size_override("font_size", 13)
-	extra.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
-	extra.text = "deck %d" % p.deck.size()
-	var top := p.deck.peek()
-	if gm.top_is_public(top):
-		extra.text += " (top %s)" % top.label()
+	# When energy is on, the energy they have this turn — or will have on their
+	# next one. (Their deck sits beside their cards.)
 	if gm.energy_on():
+		var extra := Label.new()
+		extra.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		extra.add_theme_font_size_override("font_size", 13)
+		extra.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 		if is_current:
-			extra.text += " · ⚡%d/%d" % [gm.energy_left(), p.max_energy]
+			extra.text = "⚡%d/%d" % [gm.energy_left(), p.max_energy]
 		else:
-			extra.text += " · ⚡%d next turn" % gm.upcoming_energy(p)
-	extra.tooltip_text = "Cards left in their deck, and their energy (each card " \
-		+ "costs 1)."
-	row.add_child(extra)
+			extra.text = "⚡%d next turn" % gm.upcoming_energy(p)
+		extra.tooltip_text = "Their energy (each card costs 1)."
+		row.add_child(extra)
 	# "Info" button beside the name tag: the opponent's mechanic and AI brain.
 	var info_btn := Button.new()
 	info_btn.text = "Info"
@@ -265,6 +374,15 @@ func refresh_board() -> void:
 		empty.position = Vector2(UITheme.BOARD_PAD, UITheme.BOARD_PAD)
 		empty.size = empty.get_combined_minimum_size()
 		_ui.board_flow.add_child(empty)
+	# A fresh layout (the deal, Sort, Randomize: no group has a spot yet) is
+	# packed in reading order and then centered on the felt as one block; after
+	# that, each new group takes the free spot nearest the middle.
+	var fresh := true
+	for m in gm.board.melds:
+		if m.is_placed():
+			fresh = false
+			break
+	var laid: Array[Dictionary] = []
 	for cluster in BoardGrid.clusters(gm.board):
 		var melds: Array[CardSet] = cluster["melds"]
 		var panel: Control
@@ -273,11 +391,24 @@ func refresh_board() -> void:
 		else:
 			panel = _make_cluster_panel(cluster)
 		_ui.board_flow.add_child(panel)
-		_place_panel(panel, melds, placed, width)
+		if fresh:
+			_shelf_place(panel, melds, placed, width)
+			laid.append({"panel": panel, "melds": melds})
+		else:
+			_place_panel(panel, melds, placed, width)
+	if fresh and not laid.is_empty():
+		_center_block(laid, placed, width)
+		# Before the felt has its real size (the table not yet on screen) the
+		# middle is only a guess: show it, but keep the groups unplaced so the
+		# next refresh centers them properly.
+		if not _felt_laid_out():
+			for entry in laid:
+				for m: CardSet in entry["melds"]:
+					m.board_pos = CardSet.UNPLACED
 	# The "+ New group" click target only appears while cards are selected;
 	# drags can always land on empty felt instead. It (and the hover hint) tuck
 	# into a free patch of felt like any group, but keep no lasting spot.
-	# While you owe a location a choice, selecting picks cards for it — no zone.
+	# While you owe an instance a choice, selecting picks cards for it — no zone.
 	if not _ui.selected.is_empty() and _ui._is_human_turn() and not _ui.gm.has_pending_choice():
 		var zone := _make_new_group_zone()
 		_ui.board_flow.add_child(zone)
@@ -322,12 +453,74 @@ func _needs_replacing(rect: Rect2, placed: Array[Rect2], width: float) -> bool:
 		return true
 	return rect.size.x <= width and rect.position.x + rect.size.x > width
 
+## Pack a panel of a fresh layout into the next shelf spot (reading order) and
+## remember it on its melds; _center_block then moves the whole block.
+func _shelf_place(panel: Control, melds: Array[CardSet], placed: Array[Rect2],
+		width: float) -> void:
+	var size := panel.get_combined_minimum_size()
+	panel.size = size
+	var pos := _shelf_spot(size, placed, width)
+	panel.position = pos
+	for m in melds:
+		m.board_pos = pos
+	placed.append(Rect2(pos, size))
+
+## Slide a freshly packed layout so the block of groups sits in the middle of
+## the felt (never past its top-left padding), storing the moved spots.
+func _center_block(laid: Array[Dictionary], placed: Array[Rect2], width: float) -> void:
+	var box: Rect2 = placed[0]
+	for r in placed:
+		box = box.merge(r)
+	var pad := float(UITheme.BOARD_PAD)
+	var target := Vector2(width, _canvas_height()) / 2.0 - box.size / 2.0
+	var shift := (Vector2(maxf(target.x, pad), maxf(target.y, pad)) - box.position).floor()
+	for i in placed.size():
+		placed[i].position += shift
+	for entry in laid:
+		var panel: Control = entry["panel"]
+		panel.position += shift
+		for m: CardSet in entry["melds"]:
+			m.board_pos = panel.position
+
+## The open spot for a new panel of `size` nearest the middle of the felt: the
+## middle itself, or a spot beside, above or below a group already there (lined
+## up with its edges, so groups settle into tidy rows) that overlaps nothing and
+## stays on the felt. Sideways distance counts for less than vertical, since the
+## felt is wide. Falls back to the shelf spot when nothing near the middle fits.
+func _free_spot(size: Vector2, placed: Array[Rect2], width: float) -> Vector2:
+	var pad := float(UITheme.BOARD_PAD)
+	var center := Vector2(width, _canvas_height()) / 2.0
+	var cands: Array[Vector2] = [center - size / 2.0]
+	for r in placed:
+		var right := r.end.x + pad
+		var left := r.position.x - pad - size.x
+		var below := r.end.y + pad
+		var above := r.position.y - pad - size.y
+		var flush_right := r.end.x - size.x
+		cands.append_array([Vector2(right, r.position.y), Vector2(left, r.position.y),
+			Vector2(r.position.x, below), Vector2(r.position.x, above),
+			Vector2(flush_right, below), Vector2(flush_right, above)])
+	var best := Vector2.INF
+	var best_d := INF
+	for c in cands:
+		c = c.floor()
+		if c.x < pad or c.y < pad or c.x + size.x > width - pad:
+			continue
+		if _overlaps_any(Rect2(c, size), placed):
+			continue
+		var off := c + size / 2.0 - center
+		var d := off.x * off.x * 0.4 + off.y * off.y
+		if d < best_d:
+			best_d = d
+			best = c
+	return best if best != Vector2.INF else _shelf_spot(size, placed, width)
+
 ## The next open spot for a panel of `size`: the topmost-then-leftmost candidate
 ## corner (the felt's top-left, plus the right and bottom edges every placed
 ## panel opens up) that neither overlaps a placed panel nor overflows `width`.
 ## Placing every group this way packs them into tidy shelves that let a tall
 ## vertical group and a short horizontal one share a row with no wasted gap.
-func _free_spot(size: Vector2, placed: Array[Rect2], width: float) -> Vector2:
+func _shelf_spot(size: Vector2, placed: Array[Rect2], width: float) -> Vector2:
 	var pad := float(UITheme.BOARD_PAD)
 	var cand_x: Array[float] = [pad]
 	var cand_y: Array[float] = [pad]
@@ -363,6 +556,16 @@ func _canvas_width() -> float:
 	var w := _ui.board_flow.size.x
 	return w if w > 100.0 else 820.0
 
+func _felt_laid_out() -> bool:
+	return _ui.board_flow.is_visible_in_tree() and _ui.board_flow.size.x > 100.0 \
+		and (_ui.board_flow.get_parent() as Control).size.y > 100.0
+
+## The felt's visible height (its scroll area), or a sensible default before
+## layout has run.
+func _canvas_height() -> float:
+	var h := (_ui.board_flow.get_parent() as Control).size.y
+	return h if h > 100.0 else 420.0
+
 ## Grow the canvas tall enough to hold every placed panel, so the scroll area
 ## can reach a group parked near the bottom of the felt.
 func _size_canvas(placed: Array[Rect2]) -> void:
@@ -386,8 +589,30 @@ func _make_move_handle(panel: Control, melds: Array[CardSet]) -> Control:
 	dots.text = "⠿"
 	dots.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	dots.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	dots.clip_text = true
 	dots.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
 	dots.add_theme_font_size_override("font_size", 11)
+	# Name where an untouched starting or instance combo came from, so the
+	# groups dealt at the start of a match are told apart — and flag, in gold,
+	# every group holding an instance combo card, which pays coins per card
+	# played into it.
+	var origin := group_origin(melds)
+	var coin_tag := combo_coin_tag(melds)
+	var parts := PackedStringArray()
+	if origin != "":
+		parts.append(origin)
+	if coin_tag != "":
+		parts.append(coin_tag)
+	if not parts.is_empty():
+		dots.text = "⠿ %s" % " · ".join(parts)
+		handle.tooltip_text = "%s — drag to move this group around the felt" % " · ".join(parts)
+	if coin_tag != "":
+		dots.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
+		handle.tooltip_text = "An instance combo: every card you play into it from " \
+			+ "your hand earns %d coin%s when you end your turn. Drag to move the group." \
+			% [MatchInstance.COMBO_COINS, "" if MatchInstance.COMBO_COINS == 1 else "s"]
+		handle.add_theme_stylebox_override("panel",
+			CardRenderer.panel_style(UITheme.COL_COMBO_HANDLE, 6))
 	dots.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dots.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	handle.add_child(dots)
@@ -396,6 +621,39 @@ func _make_move_handle(panel: Control, melds: Array[CardSet]) -> Control:
 				and event.button_index == MOUSE_BUTTON_LEFT:
 			_ui.begin_group_drag(panel, melds))
 	return handle
+
+## Where a lone group came from while it is still exactly as it was dealt: an
+## instance's combo ("Extra Draw combo"), or a player's starting combo ("Your
+## start", "Scrap Drone's start"). "" for anything else, or once it changes.
+func group_origin(melds: Array[CardSet]) -> String:
+	if melds.size() != 1:
+		return ""
+	var gm := _ui.gm
+	var cards := melds[0].cards
+	for e in gm.revealed_instances:
+		if _same_cards(cards, e.combo):
+			return "%s combo" % e.title
+	for player_id: int in gm.starting_combos:
+		if _same_cards(cards, gm.starting_combos[player_id]):
+			return "Your start" if player_id == 0 \
+				else "%s's start" % gm.players[player_id].display_name
+	return ""
+
+## "+1 coin/card" for a group holding an instance combo card (they pay coins for
+## every card played into them from hand), else "".
+func combo_coin_tag(melds: Array[CardSet]) -> String:
+	for m in melds:
+		if _ui.gm.meld_has_instance_card(m):
+			return "+%d coin/card" % MatchInstance.COMBO_COINS
+	return ""
+
+static func _same_cards(a: Array, b: Array) -> bool:
+	if a.size() != b.size() or a.is_empty():
+		return false
+	for c in a:
+		if not b.has(c):
+			return false
+	return true
 
 func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	var gm := _ui.gm
@@ -657,9 +915,12 @@ func refresh_hand() -> void:
 	_ui.hand_panel.add_theme_stylebox_override("panel", sb)
 	_refresh_hand_meter()
 	_refresh_energy()
+	var coins := gm.pending_coins() if _ui._is_human_turn() else 0
+	_ui.coin_label.text = "+%d coin%s on End turn" % [coins, "" if coins == 1 else "s"] \
+		if coins > 0 else ""
 	_ui._clear_children(_ui.hand_box)
 	var hand := gm.players[0].hand
-	if gm.players[0].has_opened:
+	if gm.players[0].has_opened or not gm.opening_rule:
 		_ui.hand_title.text = "Your hand (%d)" % hand.size()
 	else:
 		_ui.hand_title.text = "Your hand (%d) — not open yet: lay down a valid group " % hand.size() \
@@ -712,7 +973,8 @@ func _refresh_energy() -> void:
 	tag.text = "Energy %d/%d" % [left, ceiling]
 	tag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	tag.add_theme_color_override("font_color", UITheme.COL_ENERGY)
-	tag.tooltip_text = "Each card you play from hand costs 1 energy. Rearranging " \
+	tag.tooltip_text = "Each card you play from hand costs the energy in its " \
+		+ "corner circle (1 unless an instance changed it). Rearranging " \
 		+ "the table is free. Energy refills every turn (+1 each turn) and " \
 		+ "never carries over."
 	tag.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -743,6 +1005,10 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	b.add_theme_font_size_override("font_size",
 		UITheme.BOARD_CARD_FONT_SIZE if on_board else UITheme.CARD_FONT_SIZE)
 	b.focus_mode = Control.FOCUS_NONE
+	# What the card costs to play, in a circle in its top-left corner (energy
+	# games only): green when cheaper than usual, red when dearer.
+	if _ui.gm.energy_on():
+		b.add_child(CardRenderer.make_cost_badge(_ui.gm.card_cost(c), on_board))
 
 	var font_col := UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK
 	if c.is_joker:

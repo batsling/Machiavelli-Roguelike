@@ -9,7 +9,7 @@ extends Node
 ##    dealt a starting hand from it. Players only ever draw from their own deck;
 ##    the table is shared.
 ##  - Energy (optional, on when start_energy > 0): each card played from hand
-##    costs its Card.cost in energy. A player starts their first turn with
+##    costs its energy (card_cost: Card.cost, unless an instance rule sets it). A player starts their first turn with
 ##    start_energy, gains energy_per_turn more each turn up to energy_cap, and
 ##    unspent energy never carries over. Rearranging the table is always free.
 ##  - On your turn you either play at least one card from your hand onto the
@@ -22,12 +22,13 @@ extends Node
 ##    own meld unlocks table play immediately (even mid-turn), and once a
 ##    turn containing such a meld is committed the player stays open for the
 ##    rest of the game. This applies to every player, human and AI.
-##  - Locations (optional, see MatchLocation): rule cards in location_deck are revealed
-##    one at the start of each round listed in location_rounds and affect every
-##    player — once on each player's turn of the reveal round (on reveal) or for
-##    the rest of the match (ongoing). A choice a location asks for is a pending
+##  - Instances (optional, see MatchInstance): rule cards in instance_deck are revealed
+##    one at the start of each round listed in instance_rounds and affect every
+##    player — on each player's turn of the reveal round (Reveal) or every turn
+##    for the rest of the match (Ongoing), running the commands of its Effect
+##    (see InstanceEffect). A choice an instance asks for is a pending
 ##    choice the current player resolves (resolve_choice) before playing. Each
-##    location also puts a random three-card combo of fresh cards (from no one's
+##    instance also puts a random three-card combo of fresh cards (from no one's
 ##    deck) on the table when it is revealed.
 ##  - First player to empty their hand wins. A player who cannot draw (their
 ##    deck is empty or their hand is at the cap) passes; if every player passes
@@ -52,14 +53,26 @@ signal cards_drawn(player: PlayerState, cards: Array[Card])
 signal turn_committed(player: PlayerState, cards_played: int)
 signal player_passed(player: PlayerState)
 signal game_over(winners: Array)
-## A location was turned face up (see MatchLocation).
-signal location_revealed(location: MatchLocation)
-## Cards left a player's hand for their deck's discard pile because of a location.
+## An instance was turned face up (see MatchInstance).
+signal instance_revealed(instance: MatchInstance)
+## The instances took their turn, which opens every round (before the first
+## player): `revealed` is the instance that turned up, or null for none.
+signal instance_turn_played(round: int, revealed: MatchInstance)
+## Cards left a player's hand for their deck's discard pile because of an instance.
 signal cards_discarded(player: PlayerState, cards: Array[Card])
-## A player handed cards from their hand to another player's hand (the Gift location).
+## A player handed cards from their hand to another player's hand (the Gift instance).
 signal cards_given(giver: PlayerState, receiver: PlayerState, cards: Array[Card])
-## A player earned coins (the Coin Rush location).
+## A player earned coins at commit: coins_per_card rules, and cards played into
+## a group holding an instance combo card (MatchInstance.COMBO_COINS each).
 signal coins_gained(player: PlayerState, amount: int)
+## An instance destroyed these cards (a whole group) off the table; each went to
+## its deck's discard pile.
+signal cards_destroyed(instance: MatchInstance, cards: Array[Card])
+## An instance gave these hand cards a random rank and suit (`before` holds their
+## old labels, in order).
+signal cards_jumbled(player: PlayerState, cards: Array[Card], before: PackedStringArray)
+## An instance changed these hand cards' energy cost by `delta` for good.
+signal costs_changed(player: PlayerState, cards: Array[Card], delta: int)
 ## Fired when a committed hand charges a player's ultimate meter. `amount` is
 ## how much the meter actually rose (0 is never emitted), and `now_full` is
 ## true on the charge that first fills it, so the UI can announce it.
@@ -70,8 +83,10 @@ const DEFAULT_HAND_SIZE := 13
 var players: Array[PlayerState] = []
 var board := Board.new()
 var turn_index := 0
-## The current round of play: every player takes one turn per round, and the
-## count ticks up each time play wraps back to the first player (turn_index 0).
+## The current round of play. A round is the instances' turn (when the match
+## has instances, see _instance_turn), then one turn per player in seat order —
+## you, then each enemy clockwise around the table. The count ticks up each time
+## play wraps back to the first player (turn_index 0).
 ## Starts at 1 the moment the game is dealt. This is the table's own round
 ## counter, distinct from the run's map progress (which enemy you face).
 var round_number := 1
@@ -102,20 +117,31 @@ var meter_per_card := false
 ## at energy_cap (0 = no cap). Energy refills to the ceiling every turn — unspent
 ## energy is lost.
 var start_energy := 0
+## The opening rule (classic Machiavelli): until a player has laid a valid group
+## built only from their own hand, they may not add to or take from other groups.
+## Off by default — anyone may work the whole table from their first turn — and
+## kept as a switch so an item or enemy can bring it back.
+var opening_rule := false
 var energy_per_turn := 1
 var energy_cap := 10
-## Locations still face down, in reveal order. Set before setup (like the energy
-## rules); setup resets every location to face down. Empty = no locations (sandbox).
-var location_deck: Array[MatchLocation] = []
-## The rounds a location is revealed on, one per round in order; the next face-down
-## location turns up at the start of each listed round.
-var location_rounds: Array[int] = [1, 3, 5]
-## Locations turned face up this match, in reveal order.
-var revealed_locations: Array[MatchLocation] = []
-# The choice the current player owes an on-reveal location this turn, or {} for
-# none: {"location": MatchLocation, "count": int}. Staging, committing and drawing
-# wait until resolve_choice settles it.
+## Instances still face down, in reveal order. Set before setup (like the energy
+## rules); setup resets every instance to face down. Empty = no instances (sandbox).
+var instance_deck: Array[MatchInstance] = []
+## The rounds an instance is revealed on, one per round in order; the next face-down
+## instance turns up at the start of each listed round.
+var instance_rounds: Array[int] = [1, 3, 5, 7, 9]
+## Instances turned face up this match, in reveal order.
+var revealed_instances: Array[MatchInstance] = []
+## Each player's starting combo (deal_starting_melds): player_id -> the cards it
+## laid, so the table can name where a group came from. Empty without them.
+var starting_combos := {}
+# The choice the current player owes an instance this turn, or {} for none (see
+# pending_choice; "rest" and "used" carry the instance's remaining commands).
+# Staging, committing and drawing wait until resolve_choice settles it.
 var _pending_choice := {}
+# The instances still to act on the current player's turn, after the one whose
+# choice is pending (see _start_of_turn_instances).
+var _instance_queue: Array[MatchInstance] = []
 
 # How many copies of each natural card ("rank,suit") exist across every deck
 # and hand at the deal. With per-player decks this depends on what each player
@@ -153,8 +179,9 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 	is_game_over = false
 	_consecutive_passes = 0
 	_pending_choice = {}
-	revealed_locations.clear()
-	for e in location_deck:
+	revealed_instances.clear()
+	starting_combos.clear()
+	for e in instance_deck:
 		e.revealed_round = 0
 		e.combo.clear()
 	for i in player_names.size():
@@ -178,6 +205,7 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 			p.hand.append(c)
 		players.append(p)
 	_count_copies()
+	_instance_turn()
 	_begin_turn()
 
 func current_player() -> PlayerState:
@@ -219,6 +247,7 @@ func deal_starting_melds() -> void:
 		for c in pulled:
 			meld.add_card(c)
 		board.melds.append(meld)
+		starting_combos[p.player_id] = pulled
 		p.has_opened = true
 	board_changed.emit()
 
@@ -624,8 +653,8 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	elif max_plays_per_turn > 0 and cards_played_this_turn() >= max_plays_per_turn:
 		err = "You can only play %d cards in a turn." % max_plays_per_turn
 	# ...and it costs the real card's energy, like any card played from hand.
-	elif energy_on() and hand_card.cost > energy_left():
-		err = _energy_error(hand_card.cost)
+	elif energy_on() and card_cost(hand_card) > energy_left():
+		err = _energy_error(card_cost(hand_card))
 	if err != "":
 		return err
 	_push_undo()
@@ -692,7 +721,10 @@ func set_joker_stand_in(joker: Card, meld: CardSet, rank: int, suit: String) -> 
 ## True when the current player may rearrange the table: either they opened on
 ## an earlier turn, or a valid new meld built purely from their own hand is
 ## staged on the table right now.
+## Always true while the opening rule is off.
 func current_player_is_open() -> bool:
+	if not opening_rule:
+		return true
 	return current_player().has_opened or _staged_open_meld_exists()
 
 ## True for a meld made entirely of cards the current player has played from
@@ -711,7 +743,7 @@ func _staged_open_meld_exists() -> bool:
 			return true
 	return false
 
-## Why moving these cards is blocked right now — a location choice is still owed,
+## Why moving these cards is blocked right now — an instance choice is still owed,
 ## or they would overrun the turn's play cap or energy (only the cards leaving
 ## the hand count) — or "" when the move may go ahead.
 func _stage_block_error(cards_to_move: Array[Card]) -> String:
@@ -723,7 +755,7 @@ func _stage_block_error(cards_to_move: Array[Card]) -> String:
 	for c in cards_to_move:
 		if p.hand.has(c):
 			from_hand += 1
-			cost += c.cost
+			cost += card_cost(c)
 	if max_plays_per_turn > 0 and from_hand > 0 \
 			and cards_played_this_turn() + from_hand > max_plays_per_turn:
 		return "You can only play %d cards in a turn." % max_plays_per_turn
@@ -775,7 +807,7 @@ func energy_on() -> bool:
 func energy_spent() -> int:
 	var spent := 0
 	for c in cards_placed_this_turn():
-		spent += c.cost
+		spent += card_cost(c)
 	return spent
 
 ## Energy the current player still has to spend this turn (0 when energy is off;
@@ -786,15 +818,35 @@ func energy_left() -> int:
 	return maxi(current_player().max_energy - energy_spent(), 0)
 
 ## How many more cards from hand the current player can afford this turn under
-## both the play cap and energy, assuming each costs 1 (every card does for
-## now); -1 when neither limit applies. The AI plans its moves inside this.
+## both the play cap and energy — for energy, as many of their cheapest hand
+## cards as fit in what is left; -1 when neither limit applies. The AI plans its
+## moves inside this (and GreedyAI.plan_move drops a move it can't pay for).
 func play_budget() -> int:
 	var budget := -1
 	if max_plays_per_turn > 0:
 		budget = maxi(max_plays_per_turn - cards_played_this_turn(), 0)
 	if energy_on():
-		budget = energy_left() if budget < 0 else mini(budget, energy_left())
+		var costs: Array[int] = []
+		for c in current_player().hand:
+			costs.append(card_cost(c))
+		costs.sort()
+		var left := energy_left()
+		var affordable := 0
+		for cost in costs:
+			if cost > left:
+				break
+			left -= cost
+			affordable += 1
+		budget = affordable if budget < 0 else mini(budget, affordable)
 	return budget
+
+## The energy the hand cards among `cards` cost to play now.
+func cost_of(cards: Array[Card]) -> int:
+	var total := 0
+	for c in cards:
+		if current_player().hand.has(c):
+			total += card_cost(c)
+	return total
 
 ## The energy ceiling `p` will start their next turn with — their current
 ## ceiling while it is their turn. Lets the UI show an opponent's (or your own)
@@ -805,11 +857,15 @@ func upcoming_energy(p: PlayerState) -> int:
 	if p == current_player() and not is_game_over:
 		return p.max_energy
 	var ceiling := _energy_ceiling(p.turns_taken + 1) + p.bonus_energy
-	# An Overcharge revealed this round still adds its bonus on p's turn if that
-	# turn has yet to come this round.
-	if p.player_id > turn_index and _revealed_this_round(MatchLocation.Id.OVERCHARGE):
-		ceiling += MatchLocation.OVERCHARGE_ENERGY
-	return ceiling
+	# A Reveal instance from this round still acts on p's turn if that turn has
+	# yet to come this round; past this round, only Ongoing ones do.
+	var later_this_round := p.player_id > turn_index
+	for e in revealed_instances:
+		if e.is_ongoing() or (later_this_round and e.revealed_round == round_number):
+			for eff in e.effects_of(InstanceEffect.Verb.MAX_ENERGY) \
+					+ e.effects_of(InstanceEffect.Verb.ENERGY):
+				ceiling += eff.count
+	return maxi(ceiling, 0)
 
 func _energy_error(cost: int) -> String:
 	return "Not enough energy — that costs %d and you have %d left this turn." \
@@ -817,16 +873,20 @@ func _energy_error(cost: int) -> String:
 
 ## Set the current player's energy ceiling as their turn begins: start_energy on
 ## their first turn, energy_per_turn more each turn after, capped at energy_cap,
-## plus any location bonus (Overcharge's +2 for good, Surge's +3 on its reveal
-## turn — bonuses may go past the cap).
+## plus any instance bonus (max_energy for good, an energy rule for the turn —
+## bonuses may go past the cap).
 func _refill_energy(p: PlayerState) -> void:
 	p.turns_taken += 1
+	_set_max_energy(p)
+
+## The current player's ceiling this turn (see _refill_energy), recomputed when
+## an instance changes it mid-turn.
+func _set_max_energy(p: PlayerState) -> void:
 	if not energy_on():
 		p.max_energy = 0
 		return
-	p.max_energy = _energy_ceiling(p.turns_taken) + p.bonus_energy
-	if _revealed_this_round(MatchLocation.Id.SURGE):
-		p.max_energy += MatchLocation.SURGE_ENERGY
+	p.max_energy = maxi(_energy_ceiling(p.turns_taken) + p.bonus_energy
+		+ _rule_total(InstanceEffect.Verb.ENERGY), 0)
 
 ## The base energy ceiling on a player's `turn`-th turn (1 = their first).
 func _energy_ceiling(turn: int) -> int:
@@ -851,9 +911,10 @@ func commit_turn() -> String:
 	var played := cards_played_this_turn()
 	turn_committed.emit(p, played)
 	_charge_meter(p, played)
-	if played > 0 and _revealed_this_round(MatchLocation.Id.COIN_RUSH):
-		p.coins += played
-		coins_gained.emit(p, played)
+	var coins := pending_coins()
+	if coins > 0:
+		p.coins += coins
+		coins_gained.emit(p, coins)
 	if p.hand.is_empty():
 		_end_game([p])
 		return ""
@@ -906,7 +967,7 @@ func spend_meter() -> void:
 ## Why the current turn can't be committed, or "" if it is legal. Split out so
 ## commit_turn keeps a single success path (the guard clauses live here).
 func _commit_error(p: PlayerState) -> String:
-	# An owed location choice comes first. Overrunning the cap or energy is normally
+	# An owed instance choice comes first. Overrunning the cap or energy is normally
 	# unreachable (staging enforces both), but the cap can be lowered mid-turn
 	# from the settings dialog.
 	var blocked := _commit_block_error(p)
@@ -920,12 +981,12 @@ func _commit_error(p: PlayerState) -> String:
 	for m in board.melds:
 		if not m.is_valid():
 			return "Invalid group on the table: %s" % _meld_text(m)
-	if not p.has_opened and not _staged_open_meld_exists():
+	if opening_rule and not p.has_opened and not _staged_open_meld_exists():
 		return "To open you must lay down at least one valid group " \
 			+ "built only from your own hand."
 	return ""
 
-## Why the staged turn can't commit yet — a location choice is still owed, or it
+## Why the staged turn can't commit yet — an instance choice is still owed, or it
 ## has played more than the play cap or energy allows — or "".
 func _commit_block_error(p: PlayerState) -> String:
 	if has_pending_choice():
@@ -946,7 +1007,7 @@ func _commit_block_error(p: PlayerState) -> String:
 ## player can rework the board and still draw. Any other staging (a partial
 ## play, or a table left invalid mid-edit) is abandoned first, as before.
 func draw_and_end_turn() -> void:
-	# A location's choice comes first; the driver resolves it (resolve_choice).
+	# An instance's choice comes first; the driver resolves it (resolve_choice).
 	if has_pending_choice():
 		return
 	if cards_played_this_turn() != 0 or not _kept_rearrangement():
@@ -977,54 +1038,101 @@ func draw_and_end_turn() -> void:
 			return
 	_advance()
 
-# --- Locations -------------------------------------------------------------------
-# See MatchLocation. Rule changes are read where they apply (energy refill, draw
-# count, commit, the AI's view of deck tops); the turn-start effects and the
-# pending choices live here.
+# --- Instances -------------------------------------------------------------------
+# See MatchInstance and InstanceEffect. An instance's Effect is a list of
+# commands. Player commands run on a player's turn (each player's turn of the
+# reveal round for a Reveal instance, the start of every turn for an Ongoing
+# one); rule commands are read where they apply (energy refill, draw count, card
+# costs, commit, deck tops) during those same turns; table commands run once at
+# a reveal (and each round for an Ongoing instance). A `choose` command pauses
+# the list as a pending choice until resolve_choice settles it.
 
-## True while an ongoing location of this id is face up.
-func is_location_active(id: MatchLocation.Id) -> bool:
-	for e in revealed_locations:
-		if e.id == id and e.is_ongoing():
+## Every rule command in force on the current player's turn: an Ongoing
+## instance's always, a Reveal instance's only in its reveal round.
+func _active_rules(verb: InstanceEffect.Verb) -> Array[InstanceEffect]:
+	var out: Array[InstanceEffect] = []
+	for e in revealed_instances:
+		if e.is_ongoing() or e.revealed_round == round_number:
+			out.append_array(e.effects_of(verb))
+	return out
+
+func _rule_total(verb: InstanceEffect.Verb) -> int:
+	var total := 0
+	for eff in _active_rules(verb):
+		total += eff.count
+	return total
+
+## Instances still face down, each paired with the round it turns up on:
+## [{"instance": MatchInstance, "round": int}], in order. Rounds past the end of
+## instance_rounds never come, so those instances are left out.
+func upcoming_instances() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for i in instance_deck.size():
+		var slot := revealed_instances.size() + i
+		if slot < instance_rounds.size():
+			out.append({"instance": instance_deck[i], "round": instance_rounds[slot]})
+	return out
+
+## Cards a draw takes: draw_per_turn plus any draw_bonus in force.
+func draw_count() -> int:
+	return maxi(draw_per_turn + _rule_total(InstanceEffect.Verb.DRAW_BONUS), 0)
+
+## True when this deck-top card's face is public: a glass card always is, and
+## every top is while an open_decks rule is in force.
+func top_is_public(card: Card) -> bool:
+	return card != null and (card.is_glass() \
+		or not _active_rules(InstanceEffect.Verb.OPEN_DECKS).is_empty())
+
+## The energy a card costs to play right now: its own cost (which `cost random
+## N ±D` changes for good), unless a `cost FILTER V` rule in force sets it.
+## Never below 0.
+func card_cost(c: Card) -> int:
+	var cost := c.cost
+	for eff in _active_rules(InstanceEffect.Verb.COST_RULE):
+		if eff.matches(c):
+			cost = eff.amount
+	return maxi(cost, 0)
+
+## True when `c` came with an instance's combo and still sits outside every deck.
+func is_instance_card(c: Card) -> bool:
+	return c.from_instance
+
+## Coins the current player's staged turn will earn at commit: the coins per
+## card any coins_per_card rule in force pays, plus MatchInstance.COMBO_COINS
+## for each card played from hand into a group holding an instance combo card.
+func pending_coins() -> int:
+	var placed := cards_placed_this_turn()
+	return placed.size() * _rule_total(InstanceEffect.Verb.COINS_PER_CARD) \
+		+ pending_combo_coins()
+
+## The combo part of pending_coins: COMBO_COINS per card played from hand that
+## sits in a group holding an instance combo card.
+func pending_combo_coins() -> int:
+	var n := 0
+	for c in cards_placed_this_turn():
+		var meld := board.meld_of(c)
+		if meld != null and meld_has_instance_card(meld):
+			n += 1
+	return n * MatchInstance.COMBO_COINS
+
+func meld_has_instance_card(meld: CardSet) -> bool:
+	for c in meld.cards:
+		if is_instance_card(c):
 			return true
 	return false
 
-## Locations still face down, each paired with the round it turns up on:
-## [{"location": MatchLocation, "round": int}], in order. Rounds past the end of
-## location_rounds never come, so those locations are left out.
-func upcoming_locations() -> Array[Dictionary]:
-	var out: Array[Dictionary] = []
-	for i in location_deck.size():
-		var slot := revealed_locations.size() + i
-		if slot < location_rounds.size():
-			out.append({"location": location_deck[i], "round": location_rounds[slot]})
-	return out
-
-## Cards a player draws when they draw: draw_per_turn, +1 while Extra Draw is in
-## force.
-func draw_count() -> int:
-	return draw_per_turn + (1 if is_location_active(MatchLocation.Id.EXTRA_DRAW) else 0)
-
-## True when `card` — the top of some player's deck — can be seen by everyone:
-## a glass card always, any card while Open Decks is in force.
-func top_is_public(card: Card) -> bool:
-	return card != null and (card.is_glass() or is_location_active(MatchLocation.Id.OPEN_DECKS))
-
-## Turn the next face-down location up right now and apply it to the current player
-## as if it had been revealed at the start of their turn (other players get it on
-## their turn this round). Returns false when there is nothing left to reveal or
-## the current player has already staged moves. Rounds in location_rounds reveal on
-## their own; this is for effects (and tests) that reveal one early.
-func reveal_next_location() -> bool:
-	if location_deck.is_empty() or not _undo_stack.is_empty():
+## Turn the next face-down instance up right now and apply it to the current
+## player straight away, as if it had been revealed at the start of their turn.
+## For testing and future card effects; refused when none are left or when the
+## current player has already staged moves. Rounds in instance_rounds reveal on
+## their own.
+func reveal_next_instance() -> bool:
+	if instance_deck.is_empty() or not _undo_stack.is_empty():
 		return false
-	var e := _reveal(location_deck.pop_front())
+	var e := _reveal(instance_deck.pop_front())
 	var p := current_player()
-	_apply_reveal(p, e)
-	if e.id == MatchLocation.Id.SURGE and energy_on():
-		p.max_energy += MatchLocation.SURGE_ENERGY
-	elif e.id == MatchLocation.Id.OVERCHARGE and energy_on():
-		p.max_energy += MatchLocation.OVERCHARGE_ENERGY
+	_run_instance(p, e, e.effects)
+	_set_max_energy(p)
 	_hand_snapshot = p.hand.duplicate()
 	board_changed.emit()
 	return true
@@ -1032,113 +1140,262 @@ func reveal_next_location() -> bool:
 func has_pending_choice() -> bool:
 	return not _pending_choice.is_empty()
 
-## The choice the current player owes a location before playing, or {} for none:
-## {"location": MatchLocation, "count": int} — pick `count` cards from hand.
+## The choice the current player owes an instance before playing, or {} for none:
+## {"instance": MatchInstance, "effect": InstanceEffect, "count": int} — pick
+## `count` cards from hand for that command.
 func pending_choice() -> Dictionary:
 	return _pending_choice
 
-## Settle the current player's pending choice with these hand cards (exactly
-## the count it asks for). Cycle discards them and draws as many; Gift hands
-## them to the next player. Returns "" on success or the reason it is refused.
+## What the pending choice will do with the picked cards ("discard", "give", ...).
+func pending_choice_verb() -> String:
+	if not has_pending_choice():
+		return ""
+	var eff: InstanceEffect = _pending_choice["effect"]
+	return eff.source.split(" ")[0]
+
+## Settle the current player's pending choice with these hand cards (exactly the
+## count it asks for): the command acts on them, then the rest of the
+## instance's commands run. Returns "" on success or the reason it is refused.
 func resolve_choice(cards: Array[Card]) -> String:
 	if not has_pending_choice():
-		return "There is no location choice to make."
+		return "There is no instance choice to make."
 	var p := current_player()
-	var e: MatchLocation = _pending_choice["location"]
+	var e: MatchInstance = _pending_choice["instance"]
+	var eff: InstanceEffect = _pending_choice["effect"]
 	var count: int = _pending_choice["count"]
 	var unique := {}
 	for c in cards:
 		if not p.hand.has(c):
 			return "Choose cards from your hand."
+		if not eff.matches(c):
+			return "That card doesn't fit: %s." % eff.source
 		unique[c] = true
 	if unique.size() != count:
 		return "Choose exactly %d card%s." % [count, "" if count == 1 else "s"]
+	var rest: Array[InstanceEffect] = _pending_choice["rest"]
+	var used: Dictionary = _pending_choice["used"]
 	_pending_choice = {}
+	_act_on_cards(p, eff, cards)
 	for c in cards:
-		p.hand.erase(c)
-	if e.id == MatchLocation.Id.GIFT:
-		var receiver := players[(turn_index + 1) % players.size()]
-		receiver.hand.append_array(cards)
-		cards_given.emit(p, receiver, cards)
-	else:
-		for c in cards:
-			p.deck.discard(c)
-		cards_discarded.emit(p, cards)
-		var drawn: Array[Card] = []
-		for _i in cards.size():
-			var c := p.deck.draw()
-			if c == null:
-				break
-			p.hand.append(c)
-			drawn.append(c)
-		if not drawn.is_empty():
-			cards_drawn.emit(p, drawn)
+		used[c] = true
+	_run_instance(p, e, rest, used)
+	if not has_pending_choice():
+		_continue_instances(p)
+	_set_max_energy(p)
 	_hand_snapshot = p.hand.duplicate()
 	board_changed.emit()
 	return ""
 
 func _pending_choice_error() -> String:
-	var e: MatchLocation = _pending_choice["location"]
-	return "Resolve the %s location first: %s" % [e.title, e.text]
+	var e: MatchInstance = _pending_choice["instance"]
+	return "Resolve the %s instance first: %s" % [e.title, e.text]
 
 ## Turn `e` face up and put its combo on the table: a random valid group of
 ## fresh cards from outside every deck (built now, from the first player's deck
-## rng so a seeded game replays exactly), counted into copies_in_play.
-func _reveal(e: MatchLocation) -> MatchLocation:
+## rng so a seeded game replays exactly), counted into copies_in_play. A Reveal
+## instance's table commands happen now, once.
+func _reveal(e: MatchInstance) -> MatchInstance:
 	e.revealed_round = round_number
-	revealed_locations.append(e)
+	revealed_instances.append(e)
 	if e.combo.is_empty():
-		e.combo = MatchLocation.random_combo(players[0].deck.rng)
+		e.combo = MatchInstance.random_combo(players[0].deck.rng)
 	var meld := CardSet.new()
 	for c in e.combo:
 		meld.add_card(c)
-		var key := "%d,%s" % [c.rank, c.suit]
-		_copies[key] = _copies.get(key, 0) + 1
+		_count_copy(c, 1)
 	board.melds.append(meld)
-	location_revealed.emit(e)
+	instance_revealed.emit(e)
+	if not e.is_ongoing():
+		_run_table_commands(e)
 	board_changed.emit()
 	return e
 
-## True when an on-reveal location of this id was revealed this round — its "this
-## turn" covers every player's turn in the round.
-func _revealed_this_round(id: MatchLocation.Id) -> bool:
-	for e in revealed_locations:
-		if e.id == id and not e.is_ongoing() and e.revealed_round == round_number:
-			return true
-	return false
+## The instances' turn, which opens every round before the first player's turn:
+## every Ongoing instance's table commands run, then the next face-down
+## instance turns up if this round is on the schedule (running a Reveal
+## instance's table commands). Emits instance_turn_played — even in a round
+## where nothing turns up, so the UI can show the turn. A match with no
+## instances at all (the sandbox) has no instances' turn.
+func _instance_turn() -> void:
+	if instance_deck.is_empty() and revealed_instances.is_empty():
+		return
+	for e in revealed_instances:
+		if e.is_ongoing():
+			_run_table_commands(e)
+	var revealed: MatchInstance = null
+	if not instance_deck.is_empty() \
+			and revealed_instances.size() < instance_rounds.size() \
+			and instance_rounds[revealed_instances.size()] <= round_number:
+		revealed = _reveal(instance_deck.pop_front())
+	instance_turn_played.emit(round_number, revealed)
 
-## Location effects at the start of `p`'s turn: a new round may turn the next location
-## up, Attrition discards a random card, and a location revealed this round asks
-## for its choice. A choice never takes a player's last card, so no location can end
-## a match on its own (and Attrition leaves a one-card hand alone).
-func _start_of_turn_locations(p: PlayerState) -> void:
-	if turn_index == 0 and not location_deck.is_empty() \
-			and revealed_locations.size() < location_rounds.size() \
-			and location_rounds[revealed_locations.size()] <= round_number:
-		_reveal(location_deck.pop_front())
-	if is_location_active(MatchLocation.Id.ATTRITION) and p.hand.size() > 1:
-		var lost := p.hand[p.deck.rng.randi_range(0, p.hand.size() - 1)]
-		p.hand.erase(lost)
-		p.deck.discard(lost)
-		var discarded: Array[Card] = [lost]
-		cards_discarded.emit(p, discarded)
-	for e in revealed_locations:
-		if not e.is_ongoing() and e.revealed_round == round_number:
-			_apply_reveal(p, e)
+## True when this match has instances, so each round opens with their turn.
+func has_instance_turn() -> bool:
+	return not instance_deck.is_empty() or not revealed_instances.is_empty()
 
-## The once-per-player part of an on-reveal location: Overcharge raises the
-## player's max energy for good, Cycle and Gift queue a choice (Surge and Coin
-## Rush are read where they apply).
-func _apply_reveal(p: PlayerState, e: MatchLocation) -> void:
-	if e.id == MatchLocation.Id.OVERCHARGE:
-		p.bonus_energy += MatchLocation.OVERCHARGE_ENERGY
-	var count := 0
-	if e.id == MatchLocation.Id.CYCLE:
-		count = mini(MatchLocation.CHOICE_COUNT, p.hand.size())
-	elif e.id == MatchLocation.Id.GIFT:
-		count = mini(MatchLocation.CHOICE_COUNT, p.hand.size() - 1)
-	if count > 0:
-		_pending_choice = {"location": e, "count": count}
+## Instance effects at the start of `p`'s turn (the instances' own turn has
+## already opened the round): each Ongoing instance's player commands run, and
+## each Reveal instance revealed this round runs its player commands for `p`. A
+## `choose` stops the run there as a pending choice; the rest continues once it
+## is resolved.
+func _start_of_turn_instances(p: PlayerState) -> void:
+	_instance_queue.clear()
+	for e in revealed_instances:
+		if e.is_ongoing() or e.revealed_round == round_number:
+			_instance_queue.append(e)
+	_continue_instances(p)
+
+## Run the queued instances for `p` in turn, stopping at a pending choice.
+func _continue_instances(p: PlayerState) -> void:
+	while not _instance_queue.is_empty() and not has_pending_choice():
+		var e: MatchInstance = _instance_queue.pop_front()
+		_run_instance(p, e, e.effects)
+
+## Run `effects` (player commands only) for `p` in order, stopping at a `choose`
+## that has cards to pick, which becomes the pending choice holding the rest.
+## `used` holds the cards earlier commands of this instance already picked, so a
+## later `random` pick takes "other" cards.
+func _run_instance(p: PlayerState, e: MatchInstance, effects: Array[InstanceEffect],
+		used := {}) -> void:
+	for i in effects.size():
+		var eff := effects[i]
+		if eff.scope() != InstanceEffect.Scope.PLAYER:
+			continue
+		match eff.verb:
+			InstanceEffect.Verb.DRAW:
+				_draw_cards(p, eff.count)
+			InstanceEffect.Verb.DRAW_JOKER:
+				_draw_jokers(p, eff.count)
+			InstanceEffect.Verb.MAX_ENERGY:
+				p.bonus_energy += eff.count
+			_:
+				var pool := _pickable(p, eff, used)
+				var n := pool.size() if eff.pick == InstanceEffect.Pick.ALL \
+					else mini(eff.count, pool.size())
+				if n <= 0:
+					continue
+				if eff.pick == InstanceEffect.Pick.CHOOSE:
+					var rest: Array[InstanceEffect] = []
+					rest.assign(effects.slice(i + 1))
+					_pending_choice = {"instance": e, "effect": eff, "count": n,
+						"rest": rest, "used": used}
+					return
+				var picked: Array[Card] = []
+				for _k in n:
+					var c: Card = pool.pop_at(p.deck.rng.randi_range(0, pool.size() - 1))
+					picked.append(c)
+					used[c] = true
+				_act_on_cards(p, eff, picked)
+
+## The hand cards a pick command may take: those passing its filter and not
+## already picked by this instance. Discarding and giving never take a player's
+## last card, so no instance can end a match on its own.
+func _pickable(p: PlayerState, eff: InstanceEffect, used: Dictionary) -> Array[Card]:
+	var out: Array[Card] = []
+	for c in p.hand:
+		if eff.matches(c) and not used.has(c):
+			out.append(c)
+	if eff.verb in [InstanceEffect.Verb.DISCARD, InstanceEffect.Verb.GIVE]:
+		while not out.is_empty() and p.hand.size() - out.size() < 1:
+			out.pop_back()
+	return out
+
+## Apply a pick command to the cards picked for it.
+func _act_on_cards(p: PlayerState, eff: InstanceEffect, cards: Array[Card]) -> void:
+	match eff.verb:
+		InstanceEffect.Verb.DISCARD:
+			for c in cards:
+				p.hand.erase(c)
+				p.deck.discard(c)
+			cards_discarded.emit(p, cards)
+		InstanceEffect.Verb.GIVE:
+			var receiver := players[(players.find(p) + 1) % players.size()]
+			for c in cards:
+				p.hand.erase(c)
+			receiver.hand.append_array(cards)
+			cards_given.emit(p, receiver, cards)
+		InstanceEffect.Verb.JUMBLE:
+			var before := PackedStringArray()
+			for c in cards:
+				before.append(c.label())
+				_count_copy(c, -1)
+				c.is_joker = false
+				c.rank = p.deck.rng.randi_range(1, 13)
+				c.suit = Deck.SUITS[p.deck.rng.randi_range(0, Deck.SUITS.size() - 1)]
+				c.joker_rank = 0
+				c.joker_suit = ""
+				_count_copy(c, 1)
+			cards_jumbled.emit(p, cards, before)
+		InstanceEffect.Verb.COST_CHANGE:
+			for c in cards:
+				c.cost = maxi(c.cost + eff.amount, 0)
+			costs_changed.emit(p, cards, eff.amount)
+
+## Draw up to `n` cards from `p`'s own deck (a location draw, outside the turn's
+## draw), stopping at the hand cap or an empty deck.
+func _draw_cards(p: PlayerState, n: int) -> void:
+	var drawn: Array[Card] = []
+	for _i in n:
+		if max_hand_size > 0 and p.hand.size() >= max_hand_size:
+			break
+		var c := p.deck.draw()
+		if c == null:
+			break
+		p.hand.append(c)
+		drawn.append(c)
+	if not drawn.is_empty():
+		cards_drawn.emit(p, drawn)
+
+## Take up to `n` jokers from `p`'s deck — or its discard pile — into their hand.
+func _draw_jokers(p: PlayerState, n: int) -> void:
+	var drawn: Array[Card] = []
+	for pile: Array[Card] in [p.deck.cards, p.deck.discards]:
+		for c in pile.duplicate():
+			if drawn.size() >= n:
+				break
+			if c.is_joker:
+				pile.erase(c)
+				p.hand.append(c)
+				drawn.append(c)
+	if not drawn.is_empty():
+		cards_drawn.emit(p, drawn)
+
+## An instance's table commands (destroy), run on the instances' turn.
+## Destroyed cards go to their deck's discard pile; a combo card (from no one's
+## deck) goes to the discard pile of the player who acts first in the round,
+## and is theirs from then on.
+func _run_table_commands(e: MatchInstance) -> void:
+	for eff in e.effects:
+		if eff.verb != InstanceEffect.Verb.DESTROY_COMBO:
+			continue
+		# Any group on the table but the one holding this instance's own combo —
+		# it lands just before the destroy, and taking it would do nothing. With
+		# no other group on the table, nothing is destroyed.
+		var targets: Array[CardSet] = []
+		for m in board.melds:
+			if not e.combo.any(func(c: Card) -> bool: return m.cards.has(c)):
+				targets.append(m)
+		if targets.is_empty():
+			continue
+		var rng := players[0].deck.rng
+		var meld: CardSet = targets[rng.randi_range(0, targets.size() - 1)]
+		var gone: Array[Card] = meld.cards.duplicate()
+		board.melds.erase(meld)
+		for c in gone:
+			if c.is_joker:
+				c.joker_lock_rank = 0
+				c.joker_lock_suit = ""
+			if is_instance_card(c):
+				c.deck_owner = current_player().player_id
+				c.from_instance = false
+			players[c.deck_owner].deck.discard(c)
+		cards_destroyed.emit(e, gone)
+
+func _count_copy(c: Card, delta: int) -> void:
+	if c.is_joker:
+		return
+	var key := "%d,%s" % [c.rank, c.suit]
+	_copies[key] = _copies.get(key, 0) + delta
 
 # --- Mechanic-driven turns ---------------------------------------------------
 # Primitives a designed enemy uses to drive a turn that isn't an ordinary
@@ -1262,7 +1519,8 @@ func _restore_locks(locks: Dictionary) -> void:
 func _begin_turn() -> void:
 	var p := current_player()
 	_pending_choice = {}
-	_start_of_turn_locations(p)
+	_instance_queue.clear()
+	_start_of_turn_instances(p)
 	_refill_energy(p)
 	_hand_snapshot = p.hand.duplicate()
 	_undo_stack.clear()
@@ -1274,9 +1532,11 @@ func _advance() -> void:
 	if is_game_over:
 		return
 	turn_index = (turn_index + 1) % players.size()
-	# Wrapping back to the first player opens a fresh round of play.
+	# Wrapping back to the first player opens a fresh round of play, which
+	# starts with the instances' turn.
 	if turn_index == 0:
 		round_number += 1
+		_instance_turn()
 	_begin_turn()
 
 func _end_game(winners: Array) -> void:

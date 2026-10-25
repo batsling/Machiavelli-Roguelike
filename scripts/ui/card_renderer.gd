@@ -192,6 +192,53 @@ static func make_drag_preview(cards: Array[Card]) -> Control:
 	row.modulate = Color(1, 1, 1, 0.9)
 	return row
 
+## The energy-cost circle for a card's top-left corner: the cost in white on
+## blue, green when it is below the usual 1, red above it. `small` sizes it for
+## a table card. Never catches the mouse.
+static func make_cost_badge(cost: int, small: bool) -> Panel:
+	var d := UITheme.COST_BADGE_SIZE * (0.75 if small else 1.0)
+	var badge := Panel.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.position = Vector2(3, 3)
+	badge.size = Vector2(d, d)
+	badge.custom_minimum_size = Vector2(d, d)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UITheme.COL_COST_CHEAP if cost < 1 \
+		else (UITheme.COL_COST_DEAR if cost > 1 else UITheme.COL_COST_BADGE)
+	sb.set_corner_radius_all(int(d / 2.0))
+	sb.border_color = Color(1, 1, 1, 0.85)
+	sb.set_border_width_all(1)
+	badge.add_theme_stylebox_override("panel", sb)
+	var lbl := Label.new()
+	lbl.text = str(cost)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", int(d * 0.65))
+	lbl.add_theme_color_override("font_color", Color.WHITE)
+	badge.add_child(lbl)
+	return badge
+
+## A plain, non-interactive table-size card face (the discard pile viewer).
+static func make_plain_face(c: Card) -> Control:
+	var face := PanelContainer.new()
+	face.custom_minimum_size = UITheme.BOARD_CARD_SIZE
+	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_theme_stylebox_override("panel", card_style(
+		UITheme.COL_JOKER_BG if c.is_joker else UITheme.COL_CARD_BG,
+		UITheme.COL_JOKER if c.is_joker else UITheme.COL_CARD_BORDER, 1))
+	var lbl := Label.new()
+	lbl.text = c.label()
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", UITheme.BOARD_CARD_FONT_SIZE)
+	lbl.add_theme_color_override("font_color", UITheme.COL_JOKER if c.is_joker
+		else (UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK))
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(lbl)
+	return face
+
 ## A non-interactive card face used as an enemy-move animation proxy; sized like
 ## the board card it lands on and styled like the gold highlight it will carry.
 static func make_card_face(c: Card) -> Control:

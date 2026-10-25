@@ -13,10 +13,10 @@ extends Resource
 @export var max_energy: int = 0
 # How many turns this player has started this game; drives max_energy.
 @export var turns_taken: int = 0
-# Max energy added for good by locations this match (Overcharge's +2), on top of
+# Max energy added for good by instances this match (Overcharge's +2), on top of
 # the turn-by-turn ceiling.
 @export var bonus_energy: int = 0
-# Coins earned this match (the Coin Rush location, for now). A run banks the
+# Coins earned this match (combo coins and the Coin Rush instance). A run banks the
 # player's coins when the match ends (RunState.coins).
 @export var coins: int = 0
 # Ultimate-meter charge: rises each time this player commits a hand (see

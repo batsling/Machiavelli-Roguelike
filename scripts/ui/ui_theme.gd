@@ -54,12 +54,23 @@ const FILTER_DIM_ALPHA := 0.28   # the other suits fade this low while a suit is
 const COL_HINT_EDGE := Color(0.34, 0.86, 0.46)    # play-hint spotlight on a group you can play into
 const COL_HINT_BG := Color(0.34, 0.86, 0.46, 0.12)  # faint green fill behind a hinted group
 const COL_GROUP_HANDLE := Color(1, 1, 1, 0.10)     # the grip strip atop each group on the felt
+const COL_COMBO_HANDLE := Color(0.93, 0.72, 0.13, 0.22)  # ...on a group holding an instance combo card (pays coins)
+const COL_DISCARD_PILE := Color(0.30, 0.31, 0.34)  # your face-up discard pile beside the hand
+const COL_COIN := Color(1.0, 0.82, 0.28)          # coins: the pending payout and the "+N coins" pop
+const COL_COST_BADGE := Color(0.18, 0.42, 0.78)   # the energy-cost circle on a card
+const COL_COST_CHEAP := Color(0.24, 0.62, 0.30)   # ...when the card costs less than usual
+const COL_COST_DEAR := Color(0.78, 0.30, 0.22)    # ...when it costs more
+const COST_BADGE_SIZE := 20.0                     # its diameter on a hand card (table cards scale down)
 const PLAY_MARKER_HEIGHT := 5     # the green strip capping a hand card that can be played right now
 const COL_OPP_HAND_BG := Color(0.06, 0.14, 0.10, 0.96)  # backing of the enlarged opponent-hand reveal
 const COL_ENERGY := Color(0.40, 0.78, 1.0)        # an energy pip you can still spend
 const COL_ENERGY_SPENT := Color(1, 1, 1, 0.22)    # an energy pip spent this turn
 const COL_LIFE := Color(0.92, 0.33, 0.36)         # the hearts of your remaining lives
-const LOCATION_PANEL_SIZE := Vector2(230, 56)        # one location card in the locations row
+const INSTANCE_PANEL_SIZE := Vector2(210, 78)        # one instance card in the instances column
+const LOG_PANEL_WIDTH := 340.0                       # the log laid over the left of the screen
+const LOG_PANEL_TOP := 64.0                          # its top edge, just under the top bar
+const COL_LOG_PANEL := Color(0.05, 0.14, 0.09, 0.97) # its backing, a near-opaque dark felt
+const PRIMARY_BUTTON_SIZE := Vector2(190, 48)        # End turn (and Back to map after a match)
 
 # --- Ultimate meter -----------------------------------------------------------
 const COL_METER_TRACK := Color(0, 0, 0, 0.38)      # empty channel behind the fill

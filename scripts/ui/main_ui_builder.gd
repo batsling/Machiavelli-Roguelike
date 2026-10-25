@@ -20,22 +20,37 @@ func build(ui: MainUI) -> void:
 	# Paint the whole window in dark felt instead of the engine's gray.
 	RenderingServer.set_default_clear_color(UITheme.COL_FELT_DARK)
 
-	ui.game_root = VBoxContainer.new()
+	# The screen: one column of seats, felt and hand. The log opens over its left
+	# side (see _build_log_panel) rather than taking room from it.
+	ui.game_root = HBoxContainer.new()
 	ui.game_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	ui.game_root.add_theme_constant_override("separation", 6)
+	ui.game_root.add_theme_constant_override("separation", 10)
 	ui.game_root.offset_left = 10
 	ui.game_root.offset_top = 10
 	ui.game_root.offset_right = -10
 	ui.game_root.offset_bottom = -10
 	ui.add_child(ui.game_root)
+	var main_col := VBoxContainer.new()
+	main_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main_col.add_theme_constant_override("separation", 6)
+	ui.game_root.add_child(main_col)
 
-	# Top row: the first enemy's seat, centered directly opposite you, with your
-	# deck count tucked into the corner.
+	# Top row: the log button and match status in the top-left corner, the first
+	# enemy's seat (with their deck beside their cards) centered opposite you, and
+	# the game menu in the top-right corner.
 	var top_bar := HBoxContainer.new()
 	top_bar.add_theme_constant_override("separation", 8)
-	ui.game_root.add_child(top_bar)
-	# Round counter tucked into the top-left corner: one round is a full lap of
-	# the table (every player takes a turn), ticking up when play returns to you.
+	main_col.add_child(top_bar)
+	ui.log_btn = Button.new()
+	ui.log_btn.text = "Log"
+	ui.log_btn.toggle_mode = true
+	ui.log_btn.focus_mode = Control.FOCUS_NONE
+	ui.log_btn.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	ui.log_btn.tooltip_text = "Show the game log over the left of the table"
+	ui.log_btn.toggled.connect(ui._on_log_toggled)
+	top_bar.add_child(ui.log_btn)
+	# Round counter: one round is a full lap of the table (every player takes a
+	# turn), ticking up when play returns to you.
 	ui.round_label = Label.new()
 	ui.round_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	ui.round_label.add_theme_font_size_override("font_size", 18)
@@ -47,6 +62,13 @@ func build(ui: MainUI) -> void:
 	ui.lives_label.add_theme_font_size_override("font_size", 18)
 	ui.lives_label.add_theme_color_override("font_color", UITheme.COL_LIFE)
 	top_bar.add_child(ui.lives_label)
+	# The round's turn order (Instances → You → each enemy, clockwise), with
+	# whoever is acting lit; refresh_seats fills it.
+	ui.turn_order_row = HBoxContainer.new()
+	ui.turn_order_row.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	ui.turn_order_row.add_theme_constant_override("separation", 6)
+	ui.turn_order_row.mouse_filter = Control.MOUSE_FILTER_STOP
+	top_bar.add_child(ui.turn_order_row)
 	var top_pad_left := Control.new()
 	top_pad_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(top_pad_left)
@@ -55,31 +77,21 @@ func build(ui: MainUI) -> void:
 	var top_pad_right := Control.new()
 	top_pad_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(top_pad_right)
-	# Deck corner: how many cards are left in your own deck, plus its top card
-	# when that card's status is public (a glass top shows your next draw).
-	var stock_box := HBoxContainer.new()
-	stock_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	stock_box.add_theme_constant_override("separation", 6)
-	top_bar.add_child(stock_box)
-	ui.stock_label = Label.new()
-	ui.stock_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	stock_box.add_child(ui.stock_label)
-	ui.stock_top_slot = HBoxContainer.new()
-	stock_box.add_child(ui.stock_top_slot)
+	_build_game_menu(ui, top_bar)
 
-	# Locations: the match's rule cards, face up once revealed and face down (with
-	# the round they turn up on) until then. TableView fills it; hidden when the
-	# match has no locations.
-	ui.locations_row = HBoxContainer.new()
-	ui.locations_row.add_theme_constant_override("separation", 8)
-	ui.locations_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	ui.game_root.add_child(ui.locations_row)
-
-	# Middle row: left seat, the felt, right seat (hidden until a 4th player).
+	# Middle row: the instances, left seat, the felt, right seat (hidden until a
+	# 4th player).
 	var mid_row := HBoxContainer.new()
 	mid_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	mid_row.add_theme_constant_override("separation", 8)
-	ui.game_root.add_child(mid_row)
+	main_col.add_child(mid_row)
+	# Instances: the match's rule cards in a column beside the felt, face up once
+	# revealed and face down (with the round they turn up on) until then.
+	# TableView fills it; hidden when the match has no instances.
+	ui.instances_row = VBoxContainer.new()
+	ui.instances_row.add_theme_constant_override("separation", 8)
+	ui.instances_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	mid_row.add_child(ui.instances_row)
 	ui.seat_left = _make_seat()
 	ui.seat_left.custom_minimum_size = Vector2(UITheme.SIDE_SEAT_WIDTH, 0)
 	mid_row.add_child(ui.seat_left)
@@ -104,12 +116,15 @@ func build(ui: MainUI) -> void:
 	var table_top := HBoxContainer.new()
 	table_top.add_theme_constant_override("separation", 8)
 	table_col.add_child(table_top)
-	var table_title := Label.new()
-	table_title.text = "Table"
-	table_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	table_title.add_theme_font_size_override("font_size", 15)
-	table_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	table_top.add_child(table_title)
+	# The status line — what to do right now — heads the table, where the eye
+	# already is.
+	ui.status_label = Label.new()
+	ui.status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ui.status_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ui.status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ui.status_label.add_theme_font_size_override("font_size", 16)
+	ui.status_label.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
+	table_top.add_child(ui.status_label)
 	# Suit highlighter: hovering a suit outlines those cards everywhere in play
 	# (hand and table) and fades the rest.
 	var highlight_hint := Label.new()
@@ -153,10 +168,16 @@ func build(ui: MainUI) -> void:
 	ui.seat_right.custom_minimum_size = Vector2(UITheme.SIDE_SEAT_WIDTH, 0)
 	mid_row.add_child(ui.seat_right)
 
+	# Bottom row: your hand, then your deck and the turn controls on its right.
+	var bottom_row := HBoxContainer.new()
+	bottom_row.add_theme_constant_override("separation", 10)
+	main_col.add_child(bottom_row)
+
 	# Hand: darker felt panel at the bottom. The whole panel accepts drops so
 	# cards played this turn can be dragged back into the hand.
 	ui.hand_panel = PanelContainer.new()
-	ui.game_root.add_child(ui.hand_panel)
+	ui.hand_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bottom_row.add_child(ui.hand_panel)
 	var hand_col := VBoxContainer.new()
 	hand_col.add_theme_constant_override("separation", 4)
 	ui.hand_panel.add_child(hand_col)
@@ -164,11 +185,18 @@ func build(ui: MainUI) -> void:
 	hand_top.add_theme_constant_override("separation", 8)
 	hand_col.add_child(hand_top)
 	ui.hand_title = Label.new()
-	ui.hand_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ui.hand_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	ui.hand_title.add_theme_font_size_override("font_size", 15)
 	ui.hand_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 	hand_top.add_child(ui.hand_title)
+	# What you have selected, beside the hand's title.
+	ui.selection_label = Label.new()
+	ui.selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ui.selection_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ui.selection_label.clip_text = true
+	ui.selection_label.add_theme_font_size_override("font_size", 14)
+	ui.selection_label.add_theme_color_override("font_color", UITheme.COL_SELECT_BG)
+	hand_top.add_child(ui.selection_label)
 
 	# Your own ultimate meter sits in the hand header; refresh_hand fills it (a
 	# label + bar) when the meter is enabled, and leaves it empty otherwise.
@@ -176,6 +204,13 @@ func build(ui: MainUI) -> void:
 	ui.hand_meter_slot.add_theme_constant_override("separation", 6)
 	ui.hand_meter_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hand_top.add_child(ui.hand_meter_slot)
+	# The coins your staged turn will earn when you end it (combo coins, Coin
+	# Rush); refresh_hand fills it, blank while there are none.
+	ui.coin_label = Label.new()
+	ui.coin_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ui.coin_label.add_theme_font_size_override("font_size", 15)
+	ui.coin_label.add_theme_color_override("font_color", UITheme.COL_COIN)
+	hand_top.add_child(ui.coin_label)
 	# Your energy for the turn: a label + pips, filled by refresh_hand when
 	# energy is on (a roguelike run) and left empty otherwise.
 	ui.energy_slot = HBoxContainer.new()
@@ -183,104 +218,93 @@ func build(ui: MainUI) -> void:
 	ui.energy_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hand_top.add_child(ui.energy_slot)
 
-	# Hand sort buttons: the hand keeps whatever order you give it, but these lay
-	# it out the two plain ways players read a hand — by rank (increasing, left to
-	# right) or by suit (reds then blacks, rank order within). Jokers sort last.
-	var sort_row := HBoxContainer.new()
-	sort_row.add_theme_constant_override("separation", 4)
-	sort_row.alignment = BoxContainer.ALIGNMENT_END
-	hand_top.add_child(sort_row)
-	var sort_rank_btn := Button.new()
-	sort_rank_btn.text = "Sort: rank"
-	sort_rank_btn.tooltip_text = "Sort your hand by rank, increasing left to right (jokers last)"
-	sort_rank_btn.focus_mode = Control.FOCUS_NONE
-	sort_rank_btn.pressed.connect(ui._on_sort_rank_pressed)
-	sort_row.add_child(sort_rank_btn)
-	var sort_suit_btn := Button.new()
-	sort_suit_btn.text = "Sort: suit"
-	sort_suit_btn.tooltip_text = "Sort your hand by suit, reds then blacks (jokers last)"
-	sort_suit_btn.focus_mode = Control.FOCUS_NONE
-	sort_suit_btn.pressed.connect(ui._on_sort_suit_pressed)
-	sort_row.add_child(sort_suit_btn)
-
+	var hand_row := HBoxContainer.new()
+	hand_row.add_theme_constant_override("separation", 8)
+	hand_col.add_child(hand_row)
+	# Your discard pile at the hand's left: everything discarded or destroyed
+	# from your deck. Click it to see the cards; TableView fills its count.
+	ui.discard_btn = _make_discard_pile_button()
+	ui.discard_btn.pressed.connect(ui._on_discard_pressed)
+	hand_row.add_child(ui.discard_btn)
 	ui.hand_box = HFlowContainer.new()
+	ui.hand_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ui.hand_box.add_theme_constant_override("h_separation", 4)
 	ui.hand_box.add_theme_constant_override("v_separation", 4)
-	hand_col.add_child(ui.hand_box)
-	for zone: Control in [ui.hand_panel, hand_col, hand_top, ui.hand_title, ui.hand_box]:
+	hand_row.add_child(ui.hand_box)
+	# Hand sort buttons, small icons at the hand's right edge: the hand keeps
+	# whatever order you give it, but these lay it out the two plain ways players
+	# read a hand — by rank (increasing, left to right) or by suit (reds then
+	# blacks, rank order within). Jokers sort last.
+	var sort_col := VBoxContainer.new()
+	sort_col.add_theme_constant_override("separation", 4)
+	sort_col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hand_row.add_child(sort_col)
+	sort_col.add_child(_make_sort_icon("A–K",
+		"Sort your hand by rank, increasing left to right (jokers last)",
+		ui._on_sort_rank_pressed))
+	sort_col.add_child(_make_sort_icon("♥♠",
+		"Sort your hand by suit, reds then blacks (jokers last)",
+		ui._on_sort_suit_pressed))
+	for zone: Control in [ui.hand_panel, hand_col, hand_top, hand_row, ui.hand_title,
+			ui.selection_label, ui.hand_box]:
 		zone.set_drag_forwarding(Callable(), ui._can_drop_on_hand, ui._drop_on_hand)
 		zone.gui_input.connect(ui._on_background_gui_input)
 
-	# Action row.
-	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 8)
-	ui.game_root.add_child(actions)
+	# Right of the hand: your deck, which is the Draw button (if you won't or
+	# can't play, click it to draw and end your turn), and the turn controls
+	# beside it. The deck's top card shows left of it when that card's status is
+	# public (a glass top shows your next draw). TableView fills the pile's count.
+	var turn_box := HBoxContainer.new()
+	turn_box.add_theme_constant_override("separation", 10)
+	turn_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bottom_row.add_child(turn_box)
+	ui.stock_top_slot = HBoxContainer.new()
+	ui.stock_top_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	turn_box.add_child(ui.stock_top_slot)
+	ui.draw_btn = _make_deck_pile_button()
+	ui.draw_btn.pressed.connect(ui._on_draw_pressed)
+	turn_box.add_child(ui.draw_btn)
+	var controls := VBoxContainer.new()
+	controls.add_theme_constant_override("separation", 4)
+	controls.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	turn_box.add_child(controls)
 
-	ui.selection_label = Label.new()
-	ui.selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	actions.add_child(ui.selection_label)
-
-	# Confirms the cards picked for a location's choice (Cycle, Gift); shown only
+	# Confirms the cards picked for an instance's choice (Cycle, Gift); shown only
 	# while you owe one.
 	ui.choice_btn = Button.new()
 	ui.choice_btn.visible = false
 	ui.choice_btn.pressed.connect(ui._on_choice_confirm_pressed)
-	actions.add_child(ui.choice_btn)
+	controls.add_child(ui.choice_btn)
 
-	ui.return_btn = Button.new()
-	ui.return_btn.text = "Return to hand"
-	ui.return_btn.tooltip_text = "Put the selected cards you played this turn back in your hand"
-	ui.return_btn.pressed.connect(ui._on_return_pressed)
-	actions.add_child(ui.return_btn)
-
-	ui.undo_action_btn = Button.new()
-	ui.undo_action_btn.text = "Undo action"
-	ui.undo_action_btn.tooltip_text = "Take back only the last move you staged this turn"
-	ui.undo_action_btn.pressed.connect(ui._on_undo_action_pressed)
-	actions.add_child(ui.undo_action_btn)
-
-	ui.reset_btn = Button.new()
-	ui.reset_btn.text = "Undo turn"
-	ui.reset_btn.tooltip_text = "Take back everything staged this turn"
-	ui.reset_btn.pressed.connect(ui._on_reset_pressed)
-	actions.add_child(ui.reset_btn)
-
-	ui.end_turn_btn = Button.new()
-	ui.end_turn_btn.text = "End turn"
+	# The main action. Ending the turn needs a card played from your hand; with
+	# nothing to play, draw from your deck (the pile beside it) instead.
+	ui.end_turn_btn = _make_primary_button("End turn")
 	ui.end_turn_btn.pressed.connect(ui._on_end_turn_pressed)
-	actions.add_child(ui.end_turn_btn)
+	controls.add_child(ui.end_turn_btn)
 
-	ui.draw_btn = Button.new()
-	ui.draw_btn.text = "Draw & end turn"
-	ui.draw_btn.pressed.connect(ui._on_draw_pressed)
-	actions.add_child(ui.draw_btn)
-
-	ui.settings_btn = Button.new()
-	ui.settings_btn.text = "Settings"
-	ui.settings_btn.tooltip_text = "Sandbox and roguelike-run rules"
-	ui.settings_btn.pressed.connect(ui._on_settings_pressed)
-	actions.add_child(ui.settings_btn)
-
-	ui.new_game_btn = Button.new()
-	ui.new_game_btn.text = "New game"
+	# Once a match is over: Back to map / New run / New game. Mid-match restarts
+	# live in the game menu instead.
+	ui.new_game_btn = _make_primary_button("New game")
+	ui.new_game_btn.visible = false
 	ui.new_game_btn.pressed.connect(ui._on_new_game_pressed)
-	actions.add_child(ui.new_game_btn)
+	controls.add_child(ui.new_game_btn)
 
-	var menu_btn := Button.new()
-	menu_btn.text = "Menu"
-	menu_btn.tooltip_text = "Back to the main menu — the game is kept"
-	menu_btn.pressed.connect(ui._show_menu)
-	actions.add_child(menu_btn)
+	var undo_row := HBoxContainer.new()
+	undo_row.add_theme_constant_override("separation", 4)
+	controls.add_child(undo_row)
+	ui.undo_action_btn = _make_small_button("Undo action",
+		"Take back only the last move you staged this turn")
+	ui.undo_action_btn.pressed.connect(ui._on_undo_action_pressed)
+	undo_row.add_child(ui.undo_action_btn)
+	ui.reset_btn = _make_small_button("Undo turn", "Take back everything staged this turn")
+	ui.reset_btn.pressed.connect(ui._on_reset_pressed)
+	undo_row.add_child(ui.reset_btn)
+	ui.return_btn = _make_small_button("Return to hand",
+		"Put the selected cards you played this turn back in your hand")
+	ui.return_btn.pressed.connect(ui._on_return_pressed)
+	controls.add_child(ui.return_btn)
 
-	ui.status_label = Label.new()
-	ui.status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	ui.game_root.add_child(ui.status_label)
-
-	ui.log_box = RichTextLabel.new()
-	ui.log_box.custom_minimum_size = Vector2(0, 74)
-	ui.log_box.scroll_following = true
-	ui.log_box.fit_content = false
-	ui.game_root.add_child(ui.log_box)
+	_build_log_panel(ui)
 
 	# Overlay for the flying-card animations; never intercepts the mouse.
 	ui.anim_layer = Control.new()
@@ -299,6 +323,141 @@ func build(ui: MainUI) -> void:
 	_build_menu(ui)
 	_build_settings_dialog(ui)
 	_build_enemy_info_dialog(ui)
+	_build_discard_dialog(ui)
+
+## The game log, opened by the Log button: a panel laid over the left side of
+## the screen (below the top bar, above your hand) so opening it never squeezes
+## the table, and the hand and turn buttons stay clear. Hidden until opened;
+## MainUI keeps its bottom edge above the hand.
+func _build_log_panel(ui: MainUI) -> void:
+	ui.log_panel = PanelContainer.new()
+	ui.log_panel.visible = false
+	ui.log_panel.anchor_left = 0
+	ui.log_panel.anchor_right = 0
+	ui.log_panel.anchor_top = 0
+	ui.log_panel.anchor_bottom = 1
+	ui.log_panel.offset_left = 10
+	ui.log_panel.offset_right = 10 + UITheme.LOG_PANEL_WIDTH
+	ui.log_panel.offset_top = UITheme.LOG_PANEL_TOP
+	ui.log_panel.offset_bottom = -200
+	var sb := CardRenderer.panel_style(UITheme.COL_LOG_PANEL, 10)
+	sb.border_color = Color(1, 1, 1, 0.18)
+	sb.set_border_width_all(1)
+	sb.shadow_color = Color(0, 0, 0, 0.45)
+	sb.shadow_size = 12
+	ui.log_panel.add_theme_stylebox_override("panel", sb)
+	ui.add_child(ui.log_panel)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 8)
+	ui.log_panel.add_child(col)
+	var head := HBoxContainer.new()
+	col.add_child(head)
+	var title := Label.new()
+	title.text = "Log"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", 15)
+	title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	head.add_child(title)
+	var close := Button.new()
+	close.text = "✕"
+	close.tooltip_text = "Hide the log"
+	close.focus_mode = Control.FOCUS_NONE
+	close.pressed.connect(func() -> void: ui.log_btn.button_pressed = false)
+	head.add_child(close)
+	ui.log_box = RichTextLabel.new()
+	ui.log_box.bbcode_enabled = true
+	ui.log_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	ui.log_box.scroll_following = true
+	ui.log_box.fit_content = false
+	ui.log_box.add_theme_font_size_override("normal_font_size", 14)
+	ui.log_box.add_theme_font_size_override("bold_font_size", 14)
+	col.add_child(ui.log_box)
+
+## A small icon button for the hand's sort column.
+func _make_sort_icon(text: String, tip: String, on_press: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.tooltip_text = tip
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(40, 32)
+	b.add_theme_font_size_override("font_size", 13)
+	b.pressed.connect(on_press)
+	return b
+
+## The turn's main button: big, and gold while it can be pressed.
+func _make_primary_button(text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = UITheme.PRIMARY_BUTTON_SIZE
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_font_size_override("font_size", 20)
+	var states := {
+		"normal": UITheme.COL_CHIP_ACTIVE,
+		"hover": UITheme.COL_CHIP_ACTIVE.lightened(0.15),
+		"pressed": UITheme.COL_CHIP_ACTIVE.darkened(0.15),
+		"disabled": Color(1, 1, 1, 0.08),
+	}
+	for state: String in states:
+		var sb := CardRenderer.panel_style(states[state], 8)
+		b.add_theme_stylebox_override(state, sb)
+	for state in ["font_color", "font_hover_color", "font_pressed_color"]:
+		b.add_theme_color_override(state, UITheme.COL_CARD_BLACK)
+	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.35))
+	return b
+
+## A secondary turn control (undo, return to hand): small and quiet.
+func _make_small_button(text: String, tip: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.tooltip_text = tip
+	b.focus_mode = Control.FOCUS_NONE
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", 13)
+	return b
+
+## The ☰ Menu button in the top-left corner: Settings, restarting (the run, or
+## a new sandbox game) and the main menu, kept out of the action row.
+func _build_game_menu(ui: MainUI, parent: Control) -> void:
+	ui.game_menu_btn = MenuButton.new()
+	ui.game_menu_btn.text = "☰ Menu"
+	ui.game_menu_btn.flat = false
+	ui.game_menu_btn.focus_mode = Control.FOCUS_NONE
+	ui.game_menu_btn.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	ui.game_menu_btn.tooltip_text = "Settings, restart, and the main menu"
+	var popup := ui.game_menu_btn.get_popup()
+	popup.add_item("Settings", MainUI.GameMenu.SETTINGS)
+	popup.add_item("Restart run", MainUI.GameMenu.RESTART)
+	popup.add_separator()
+	popup.add_item("Main menu", MainUI.GameMenu.MAIN_MENU)
+	popup.id_pressed.connect(ui._on_game_menu_id_pressed)
+	parent.add_child(ui.game_menu_btn)
+
+## Your deck as a face-down pile you click to draw: a card back with the cards
+## left (and the action) written on it.
+func _make_deck_pile_button() -> Button:
+	var pile := Button.new()
+	pile.custom_minimum_size = UITheme.CARD_SIZE
+	pile.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	pile.focus_mode = Control.FOCUS_NONE
+	pile.add_theme_font_size_override("font_size", 15)
+	var states := {
+		"normal": UITheme.COL_CARD_BACK,
+		"hover": UITheme.COL_CARD_BACK.lightened(0.18),
+		"pressed": UITheme.COL_CARD_BACK.darkened(0.2),
+		"disabled": UITheme.COL_CARD_BACK.darkened(0.35),
+	}
+	for state: String in states:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = states[state]
+		sb.border_color = UITheme.COL_CHIP_ACTIVE if state == "hover" \
+			else UITheme.COL_CARD_BACK_EDGE
+		sb.set_border_width_all(2)
+		sb.set_corner_radius_all(6)
+		pile.add_theme_stylebox_override(state, sb)
+	for state in ["font_color", "font_hover_color", "font_pressed_color"]:
+		pile.add_theme_color_override(state, Color.WHITE)
+	pile.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.45))
+	return pile
 
 ## A plain centered seat column (an opponent's name chip + card backs go here).
 func _make_seat() -> VBoxContainer:
@@ -306,6 +465,48 @@ func _make_seat() -> VBoxContainer:
 	seat.alignment = BoxContainer.ALIGNMENT_CENTER
 	seat.add_theme_constant_override("separation", 6)
 	return seat
+
+## Your discard pile as a face-up pile: a pale card with the count on it.
+func _make_discard_pile_button() -> Button:
+	var pile := Button.new()
+	pile.custom_minimum_size = UITheme.CARD_SIZE
+	pile.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	pile.focus_mode = Control.FOCUS_NONE
+	pile.add_theme_font_size_override("font_size", 14)
+	for state: String in ["normal", "hover", "pressed", "disabled"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = UITheme.COL_DISCARD_PILE.lightened(0.12 if state == "hover" else 0.0)
+		sb.border_color = UITheme.COL_CHIP_ACTIVE if state == "hover" \
+			else Color(1, 1, 1, 0.35)
+		sb.set_border_width_all(2)
+		sb.set_corner_radius_all(6)
+		pile.add_theme_stylebox_override(state, sb)
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
+		pile.add_theme_color_override(state, Color(1, 1, 1, 0.85))
+	return pile
+
+## The pop-up listing the cards in your discard pile, opened from the pile.
+func _build_discard_dialog(ui: MainUI) -> void:
+	ui.discard_dialog = AcceptDialog.new()
+	ui.discard_dialog.title = "Your discard pile"
+	ui.discard_dialog.ok_button_text = "Close"
+	ui.add_child(ui.discard_dialog)
+	var col := VBoxContainer.new()
+	col.custom_minimum_size = Vector2(620, 0)
+	col.add_theme_constant_override("separation", 8)
+	ui.discard_dialog.add_child(col)
+	ui.discard_note = Label.new()
+	ui.discard_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# A wrapping label needs a width, or it measures itself absurdly tall.
+	ui.discard_note.custom_minimum_size = Vector2(620, 0)
+	col.add_child(ui.discard_note)
+	# A grid, not a flow: a flow measures itself one card per row before it is
+	# laid out, which makes the pop-up far too tall.
+	ui.discard_body = GridContainer.new()
+	ui.discard_body.columns = 10
+	ui.discard_body.add_theme_constant_override("h_separation", 6)
+	ui.discard_body.add_theme_constant_override("v_separation", 6)
+	col.add_child(ui.discard_body)
 
 ## A small pop-up describing an opponent: its mechanic (in a roguelike round)
 ## and the AI brain it is running. Opened by the "Info" button on its name chip.

@@ -30,10 +30,16 @@ const JOKER_GLYPH := "★"
 # keeps the id of its origin deck for good wherever it ends up. -1 for cards
 # built outside a dealt game (e.g. test fixtures).
 @export var deck_owner: int = -1
+# True for a card that came with an instance's combo (it belongs to no deck).
+# Playing a card from hand into a group holding one earns coins
+# (GameManager.pending_combo_coins). Cleared if the card is destroyed into a
+# player's discard pile, where it becomes theirs.
+@export var from_instance: bool = false
 @export var effects: Array[Effect] = []
 @export var is_joker: bool = false   # counts as any card; see Rules.assign_jokers
 # Energy it costs to play this card from hand (see GameManager's energy rules).
-# Every card costs 1 for now; augmented cards will cost more.
+# Every card starts at 1; instances can change it for good (`cost random N ±D`),
+# and a cost rule can override it while in force (GameManager.card_cost).
 @export var cost: int = 1
 
 # What the joker currently stands for on the table (0 / "" while it sits free
