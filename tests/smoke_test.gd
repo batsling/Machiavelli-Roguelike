@@ -1326,6 +1326,31 @@ func _test_events() -> bool:
 	if revealed_by_round != {1: 1, 2: 1, 3: 2, 4: 2, 5: 3}:
 		printerr("events: wrong reveal schedule %s" % str(revealed_by_round))
 		ok = false
+	# Each reveal put its combo on the table: three valid groups of fresh cards
+	# from outside both decks, counted as extra copies.
+	if gm.board.melds.size() != 3:
+		printerr("events: 3 reveals should put 3 combos on the table, got %d"
+			% gm.board.melds.size())
+		ok = false
+	for e in gm.revealed_events:
+		var meld := gm.board.meld_of(e.combo[0])
+		if e.combo.size() != 3 or meld == null or not meld.is_valid():
+			printerr("events: %s's combo should be a valid 3-card group on the table" % e.title)
+			ok = false
+		for c in e.combo:
+			if c.deck_owner != MatchEvent.NO_OWNER or c.is_joker \
+					or gm.players[0].deck.cards.has(c) or gm.players[1].deck.cards.has(c):
+				printerr("events: combo cards must be fresh naturals from no one's deck")
+				ok = false
+	var combo_card := gm.revealed_events[0].combo[0]
+	var extra := 0
+	for e in gm.revealed_events:
+		for c in e.combo:
+			if c.rank == combo_card.rank and c.suit == combo_card.suit:
+				extra += 1
+	if gm.copies_in_play(combo_card.rank, combo_card.suit) != 2 + extra:
+		printerr("events: combo cards should count as extra copies in play")
+		ok = false
 	gm.free()
 
 	# Cycle: a choice of 2 that blocks play until resolved, then discard 2, draw 2.
@@ -1393,15 +1418,19 @@ func _test_events() -> bool:
 		ok = false
 	gm.free()
 
-	# Overcharge: +1 max energy for the rest of the match, shown ahead too.
+	# Overcharge: on reveal, +2 max energy for good, shown ahead for P1 too.
 	gm = _event_gm([ev.OVERCHARGE])
-	if gm.players[0].max_energy != 4 or gm.upcoming_energy(gm.players[1]) != 4:
-		printerr("events: Overcharge should make the first turn 4 for everyone")
+	if gm.players[0].max_energy != 5 or gm.upcoming_energy(gm.players[1]) != 5:
+		printerr("events: Overcharge should make the first turn 5 for everyone")
 		ok = false
 	gm.draw_and_end_turn()
+	if gm.players[1].max_energy != 5:
+		printerr("events: Overcharge should reach P1 on its turn of the round")
+		ok = false
 	gm.draw_and_end_turn()
-	if gm.players[0].max_energy != 5:
-		printerr("events: Overcharge should make P0's second turn 5")
+	if gm.players[0].max_energy != 6 or gm.upcoming_energy(gm.players[1]) != 6:
+		printerr("events: Overcharge's +2 should last (P0's second turn 6, got %d)"
+			% gm.players[0].max_energy)
 		ok = false
 	gm.free()
 
@@ -1460,7 +1489,7 @@ func _test_events() -> bool:
 	gm.event_rounds = [5]
 	gm.setup(["P0", "P1"], 13, 3)
 	if not gm.revealed_events.is_empty() or not gm.reveal_next_event() \
-			or gm.players[0].max_energy != 6:
+			or gm.players[0].max_energy != 6 or gm.board.melds.size() != 1:
 		printerr("events: an early Surge should give the current player 6 energy")
 		ok = false
 	gm.free()
@@ -1483,7 +1512,8 @@ func _play_event_game(seed_value: int) -> bool:
 	var titles := PackedStringArray()
 	for e in gm.revealed_events + gm.event_deck:
 		titles.append(e.title)
-	var total_cards := _cards_in_game(gm)
+	# Each reveal adds its 3-card combo to the game.
+	var base_cards := _cards_in_game(gm) - 3 * gm.revealed_events.size()
 	var turns := 0
 	var profile := AIProfile.new(1.0, 0.0, 1.0, seed_value)
 	while not gm.is_game_over and turns < MAX_TURNS:
@@ -1504,7 +1534,8 @@ func _play_event_game(seed_value: int) -> bool:
 		else:
 			gm.draw_and_end_turn()
 		turns += 1
-		if not gm.board.all_valid() or _cards_in_game(gm) != total_cards:
+		if not gm.board.all_valid() \
+				or _cards_in_game(gm) != base_cards + 3 * gm.revealed_events.size():
 			printerr("event game %d: invalid table or card count after turn %d"
 				% [seed_value, turns])
 			return false

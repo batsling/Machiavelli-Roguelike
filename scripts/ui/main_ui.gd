@@ -1272,8 +1272,13 @@ func _on_choice_confirm_pressed() -> void:
 		+ "or click to select, then use \"+ New group\".")
 	_refresh()
 
+## Log the event and its combo, and light the combo up in gold like an enemy
+## move, so the new group on the felt is easy to spot.
 func _on_event_revealed(event: MatchEvent) -> void:
-	_log("[b]Event revealed — %s[/b] (%s): %s" % [event.title, event.kind_label(), event.text])
+	_log("[b]Event revealed — %s[/b] (%s): %s Its combo joins the table: %s."
+		% [event.title, event.kind_label(), event.text, event.combo_label()])
+	for c in event.combo:
+		highlighted[c] = true
 
 ## Event discards are public (they go face up to the deck's discard pile).
 func _on_cards_discarded(p: PlayerState, cards: Array[Card]) -> void:

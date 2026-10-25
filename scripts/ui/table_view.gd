@@ -57,11 +57,13 @@ func _refresh_events() -> void:
 	_ui.events_row.visible = not gm.revealed_events.is_empty() or not upcoming.is_empty()
 	for e in gm.revealed_events:
 		var live := e.is_ongoing() or e.revealed_round == gm.round_number
-		_ui.events_row.add_child(_make_event_panel(e.title, e.kind_label(), e.text,
+		_ui.events_row.add_child(_make_event_panel(e.title, e.kind_label(),
+			"%s Combo: %s" % [e.text, e.combo_label()],
 			UITheme.COL_CHIP_ACTIVE if live else Color(1, 1, 1, 0.15), live))
 	for slot: Dictionary in upcoming:
 		_ui.events_row.add_child(_make_event_panel("?", "Face down",
-			"Revealed at the start of round %d." % slot["round"], Color(1, 1, 1, 0.15), false))
+			"Revealed at the start of round %d, with a combo for the table." % slot["round"],
+			Color(1, 1, 1, 0.15), false))
 
 func _make_event_panel(title: String, kind: String, body: String, edge: Color,
 		live: bool) -> PanelContainer:

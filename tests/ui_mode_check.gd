@@ -52,8 +52,8 @@ func _init() -> void:
 		ok = false
 	# 3 energy on the first turn, plus whatever the round-1 event adds.
 	var first_energy := 3
-	if gm.is_event_active(MatchEvent.Id.OVERCHARGE):
-		first_energy += 1
+	if gm.revealed_events[0].id == MatchEvent.Id.OVERCHARGE:
+		first_energy += MatchEvent.OVERCHARGE_ENERGY
 	if gm.revealed_events[0].id == MatchEvent.Id.SURGE:
 		first_energy += MatchEvent.SURGE_ENERGY
 	if not gm.energy_on() or gm.players[0].max_energy != first_energy \
@@ -77,7 +77,8 @@ func _init() -> void:
 		if jokers != 2:
 			printerr("%s's deck should hold 2 jokers, found %d" % [p.display_name, jokers])
 			ok = false
-	if gm.board.melds.size() != 2 or not gm.players[0].has_opened:
+	# Two starting combos plus the round-1 event's combo.
+	if gm.board.melds.size() != 3 or not gm.players[0].has_opened:
 		printerr("starting combos should open both players with a meld each")
 		ok = false
 	if ui.energy_slot.get_child_count() != 1 + first_energy:

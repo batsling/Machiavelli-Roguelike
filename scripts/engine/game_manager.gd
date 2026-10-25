@@ -26,7 +26,9 @@ extends Node
 ##    one at the start of each round listed in event_rounds and affect every
 ##    player — once on each player's turn of the reveal round (on reveal) or for
 ##    the rest of the match (ongoing). A choice an event asks for is a pending
-##    choice the current player resolves (resolve_choice) before playing.
+##    choice the current player resolves (resolve_choice) before playing. Each
+##    event also puts a random three-card combo of fresh cards (from no one's
+##    deck) on the table when it is revealed.
 ##  - First player to empty their hand wins. A player who cannot draw (their
 ##    deck is empty or their hand is at the cap) passes; if every player passes
 ##    in a full round, the game ends and whoever holds the fewest cards wins
@@ -154,6 +156,7 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 	revealed_events.clear()
 	for e in event_deck:
 		e.revealed_round = 0
+		e.combo.clear()
 	for i in player_names.size():
 		var p := PlayerState.new()
 		p.player_id = i
@@ -801,7 +804,12 @@ func upcoming_energy(p: PlayerState) -> int:
 		return 0
 	if p == current_player() and not is_game_over:
 		return p.max_energy
-	return _energy_ceiling(p.turns_taken + 1) + _ongoing_energy_bonus()
+	var ceiling := _energy_ceiling(p.turns_taken + 1) + p.bonus_energy
+	# An Overcharge revealed this round still adds its bonus on p's turn if that
+	# turn has yet to come this round.
+	if p.player_id > turn_index and _revealed_this_round(MatchEvent.Id.OVERCHARGE):
+		ceiling += MatchEvent.OVERCHARGE_ENERGY
+	return ceiling
 
 func _energy_error(cost: int) -> String:
 	return "Not enough energy — that costs %d and you have %d left this turn." \
@@ -809,14 +817,14 @@ func _energy_error(cost: int) -> String:
 
 ## Set the current player's energy ceiling as their turn begins: start_energy on
 ## their first turn, energy_per_turn more each turn after, capped at energy_cap,
-## plus any event bonus (Overcharge's +1 while it is in force, Surge's +3 on its
-## reveal turn — bonuses may go past the cap).
+## plus any event bonus (Overcharge's +2 for good, Surge's +3 on its reveal
+## turn — bonuses may go past the cap).
 func _refill_energy(p: PlayerState) -> void:
 	p.turns_taken += 1
 	if not energy_on():
 		p.max_energy = 0
 		return
-	p.max_energy = _energy_ceiling(p.turns_taken) + _ongoing_energy_bonus()
+	p.max_energy = _energy_ceiling(p.turns_taken) + p.bonus_energy
 	if _revealed_this_round(MatchEvent.Id.SURGE):
 		p.max_energy += MatchEvent.SURGE_ENERGY
 
@@ -824,9 +832,6 @@ func _refill_energy(p: PlayerState) -> void:
 func _energy_ceiling(turn: int) -> int:
 	var ceiling := start_energy + (turn - 1) * energy_per_turn
 	return mini(ceiling, energy_cap) if energy_cap > 0 else ceiling
-
-func _ongoing_energy_bonus() -> int:
-	return 1 if is_event_active(MatchEvent.Id.OVERCHARGE) else 0
 
 # --- Ending the turn --------------------------------------------------------
 
@@ -1019,7 +1024,7 @@ func reveal_next_event() -> bool:
 	if e.id == MatchEvent.Id.SURGE and energy_on():
 		p.max_energy += MatchEvent.SURGE_ENERGY
 	elif e.id == MatchEvent.Id.OVERCHARGE and energy_on():
-		p.max_energy += 1
+		p.max_energy += MatchEvent.OVERCHARGE_ENERGY
 	_hand_snapshot = p.hand.duplicate()
 	board_changed.emit()
 	return true
@@ -1076,10 +1081,22 @@ func _pending_choice_error() -> String:
 	var e: MatchEvent = _pending_choice["event"]
 	return "Resolve the %s event first: %s" % [e.title, e.text]
 
+## Turn `e` face up and put its combo on the table: a random valid group of
+## fresh cards from outside every deck (built now, from the first player's deck
+## rng so a seeded game replays exactly), counted into copies_in_play.
 func _reveal(e: MatchEvent) -> MatchEvent:
 	e.revealed_round = round_number
 	revealed_events.append(e)
+	if e.combo.is_empty():
+		e.combo = MatchEvent.random_combo(players[0].deck.rng)
+	var meld := CardSet.new()
+	for c in e.combo:
+		meld.add_card(c)
+		var key := "%d,%s" % [c.rank, c.suit]
+		_copies[key] = _copies.get(key, 0) + 1
+	board.melds.append(meld)
 	event_revealed.emit(e)
+	board_changed.emit()
 	return e
 
 ## True when an on-reveal event of this id was revealed this round — its "this
@@ -1109,9 +1126,12 @@ func _start_of_turn_events(p: PlayerState) -> void:
 		if not e.is_ongoing() and e.revealed_round == round_number:
 			_apply_reveal(p, e)
 
-## The once-per-player part of an on-reveal event that needs the player: Cycle
-## and Gift queue a choice (Surge and Coin Rush are read where they apply).
+## The once-per-player part of an on-reveal event: Overcharge raises the
+## player's max energy for good, Cycle and Gift queue a choice (Surge and Coin
+## Rush are read where they apply).
 func _apply_reveal(p: PlayerState, e: MatchEvent) -> void:
+	if e.id == MatchEvent.Id.OVERCHARGE:
+		p.bonus_energy += MatchEvent.OVERCHARGE_ENERGY
 	var count := 0
 	if e.id == MatchEvent.Id.CYCLE:
 		count = mini(MatchEvent.CHOICE_COUNT, p.hand.size())

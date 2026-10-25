@@ -22,9 +22,9 @@ this project.
 | Lives | A run starts with 3. Losing a match costs one; at 0 the run is over. |
 | Map | Slay the Spire style, three nodes in a line, one enemy each. Win to unlock the next node; lose and you may retry the same node. Beat node 3 to win the run. |
 | Enemies | Three plain opponents with no special effects, ramping up in AI skill. |
-| Events | Three random rule cards per match, revealed at the start of rounds 1, 3 and 5. Mechanics only, no theme yet. |
+| Events | Three random rule cards per match, revealed at the start of rounds 1, 3 and 5, each bringing a random combo to the table. Mechanics only, no theme yet. |
 | Coins | Earned only from the Coin Rush event for now; banked into the run. Nothing spends them yet. |
-| Not yet | Score, combo/streak bonus, combo objectives on events, card effects, shop. See the design doc. |
+| Not yet | Score, combo/streak bonus, card effects, shop. See the design doc. |
 
 ## Rules
 
@@ -80,13 +80,19 @@ Every event affects **every player**, not just whoever's turn it is:
   revealed in — that turn is "this turn" in their text.
 - **Ongoing** events stay in force for the rest of the match.
 
+Every event also brings a **combo**: a random valid three-card group (a set or
+a run) made of fresh cards from outside both players' decks. It lands on the
+table the moment the event is revealed, lit in gold, and anyone may build on it
+or borrow from it like any other group (after opening). The event panel names
+its combo.
+
 | Event | Kind | Rule |
 | --- | --- | --- |
 | Cycle | On reveal | Choose 2 cards to discard, then draw 2. |
 | Gift | On reveal | Choose 2 cards to give to your opponent. |
 | Surge | On reveal | Gain +3 energy this turn (may go past the cap). |
 | Coin Rush | On reveal | This turn, each card played gives +1 coin. |
-| Overcharge | Ongoing | +1 max energy (may go past the cap). |
+| Overcharge | On reveal | +2 max energy for the rest of the match (may go past the cap). |
 | Extra Draw | Ongoing | Draw 1 more card whenever you draw. |
 | Attrition | Ongoing | Discard 1 random card at the start of your turn. |
 | Open Decks | Ongoing | The top card of every deck is face up. |

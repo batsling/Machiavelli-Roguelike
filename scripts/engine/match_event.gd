@@ -12,7 +12,11 @@ extends RefCounted
 ##    ("choose 2 cards ...") becomes a pending choice the player resolves before
 ##    they play (GameManager.pending_choice / resolve_choice).
 ##  - ONGOING events stay in force for the rest of the match.
-## GameManager applies the rules; this class only names and describes them.
+## Every event also comes with a combo: a random valid three-card group built
+## from fresh cards that belong to neither player's deck (Card.deck_owner -1).
+## It joins the table the moment the event is revealed, for anyone to build on.
+## GameManager applies the rules; this class names and describes them and
+## builds the combos.
 
 enum Kind { ON_REVEAL, ONGOING }
 
@@ -20,7 +24,7 @@ enum Id {
 	CYCLE,        # on reveal: choose 2 cards to discard, then draw 2
 	GIFT,         # on reveal: choose 2 cards to give to the opponent
 	SURGE,        # on reveal: +3 energy this turn
-	OVERCHARGE,   # ongoing: +1 max energy
+	OVERCHARGE,   # on reveal: +2 max energy for the rest of the match
 	EXTRA_DRAW,   # ongoing: draw 1 more whenever you draw
 	ATTRITION,    # ongoing: discard 1 random card at the start of your turn
 	COIN_RUSH,    # on reveal: this turn each card played gives +1 coin
@@ -31,6 +35,10 @@ enum Id {
 const CHOICE_COUNT := 2
 ## Bonus energy SURGE gives on the reveal turn.
 const SURGE_ENERGY := 3
+## Max energy OVERCHARGE adds, for good, on each player's reveal turn.
+const OVERCHARGE_ENERGY := 2
+## The deck_owner of combo cards: they come from outside every player's deck.
+const NO_OWNER := -1
 
 var id: Id = Id.CYCLE
 var kind: Kind = Kind.ON_REVEAL
@@ -38,6 +46,9 @@ var title := ""
 var text := ""
 ## The round this event was revealed in, or 0 while it is still face down.
 var revealed_round := 0
+## The combo this event puts on the table when revealed (built then, so it
+## stays secret while the event is face down); empty until revealed.
+var combo: Array[Card] = []
 
 func _init(id_value: Id = Id.CYCLE) -> void:
 	id = id_value
@@ -51,7 +62,8 @@ func _init(id_value: Id = Id.CYCLE) -> void:
 		Id.SURGE:
 			_describe(Kind.ON_REVEAL, "Surge", "Gain +%d energy this turn." % SURGE_ENERGY)
 		Id.OVERCHARGE:
-			_describe(Kind.ONGOING, "Overcharge", "+1 max energy.")
+			_describe(Kind.ON_REVEAL, "Overcharge",
+				"+%d max energy for the rest of the match." % OVERCHARGE_ENERGY)
 		Id.EXTRA_DRAW:
 			_describe(Kind.ONGOING, "Extra Draw", "Draw 1 more card whenever you draw.")
 		Id.ATTRITION:
@@ -76,6 +88,42 @@ func is_ongoing() -> bool:
 ## "On reveal" / "Ongoing", for the event panel and the log.
 func kind_label() -> String:
 	return "Ongoing" if is_ongoing() else "On reveal"
+
+## "7♥ 8♥ 9♥" — the combo's cards, for the event panel and the log.
+func combo_label() -> String:
+	var parts := PackedStringArray()
+	for c in combo:
+		parts.append(c.label())
+	return " ".join(parts)
+
+## A random valid three-card group of fresh natural cards from outside every
+## deck: an even coin flip between a set (one rank, three different suits) and a
+## run (one suit, three consecutive ranks, ace low). Drawn from `rng`.
+static func random_combo(rng: RandomNumberGenerator) -> Array[Card]:
+	var out: Array[Card] = []
+	if rng.randi_range(0, 1) == 0:
+		var rank := rng.randi_range(1, 13)
+		var suits := Deck.SUITS.duplicate()
+		for i in range(suits.size() - 1, 0, -1):
+			var j := rng.randi_range(0, i)
+			var tmp: String = suits[i]
+			suits[i] = suits[j]
+			suits[j] = tmp
+		for i in 3:
+			out.append(_combo_card(rank, suits[i]))
+	else:
+		var suit: String = Deck.SUITS[rng.randi_range(0, Deck.SUITS.size() - 1)]
+		var start := rng.randi_range(1, 11)
+		for i in 3:
+			out.append(_combo_card(start + i, suit))
+	return out
+
+static func _combo_card(rank: int, suit: String) -> Card:
+	var c := Card.new()
+	c.rank = rank
+	c.suit = suit
+	c.deck_owner = NO_OWNER
+	return c
 
 ## A fresh copy of every event in the pool.
 static func pool() -> Array[MatchEvent]:
