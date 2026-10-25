@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/settings_dialog.gd" id="1_settings"]
+
+[node name="SettingsDialog" type="AcceptDialog"]
+script = ExtResource("1_settings")
