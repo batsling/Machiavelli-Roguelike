@@ -202,9 +202,9 @@ func _build_rogue_settings() -> VBoxContainer:
 		func(v: float) -> void: _settings.rogue_energy_cap = int(v)))
 	col.add_child(_make_spin_row("Lives (next run)", 1, 9, _settings.rogue_lives,
 		func(v: float) -> void: _settings.rogue_lives = int(v)))
-	col.add_child(_make_spin_row("Locations per match (rounds 1, 3, 5)", 0, 3,
-		_settings.rogue_locations,
-		func(v: float) -> void: _settings.rogue_locations = int(v)))
+	col.add_child(_make_spin_row("Instances per match (rounds 1, 3, 5, 7, 9)", 0, 5,
+		_settings.rogue_instances,
+		func(v: float) -> void: _settings.rogue_instances = int(v)))
 
 	col.add_child(HSeparator.new())
 	col.add_child(_make_section("Enemy AI",

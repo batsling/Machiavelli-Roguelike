@@ -46,8 +46,8 @@ var rogue_energy_per_turn := 1
 var rogue_energy_cap := 10
 # Lives a new run starts with; losing a match costs one.
 var rogue_lives := RunState.DEFAULT_LIVES
-# Locations drawn for each match (0-3), revealed on rounds 1, 3 and 5.
-var rogue_locations := 3
+# Instances drawn for each match (0-3), revealed on rounds 1, 3 and 5.
+var rogue_instances := 5
 # Per-enemy AI overrides for roguelike runs, keyed by enemy display_name ->
 # {"strength", "style", "attention", "planning"}. Seeded from each designed
 # enemy's own dials (see seed_ai_overrides) and editable from the Settings
@@ -136,7 +136,7 @@ func save() -> void:
 	cfg.set_value("rogue", "energy_per_turn", rogue_energy_per_turn)
 	cfg.set_value("rogue", "energy_cap", rogue_energy_cap)
 	cfg.set_value("rogue", "lives", rogue_lives)
-	cfg.set_value("rogue", "locations", rogue_locations)
+	cfg.set_value("rogue", "instance_count", rogue_instances)
 	for name: String in rogue_ai_overrides:
 		var ov: Dictionary = rogue_ai_overrides[name]
 		cfg.set_value("rogue_ai", name,
@@ -172,9 +172,8 @@ func load_saved() -> void:
 	rogue_energy_per_turn = cfg.get_value("rogue", "energy_per_turn", rogue_energy_per_turn)
 	rogue_energy_cap = cfg.get_value("rogue", "energy_cap", rogue_energy_cap)
 	rogue_lives = cfg.get_value("rogue", "lives", rogue_lives)
-	# Saved as "events" before locations were called locations.
-	rogue_locations = cfg.get_value("rogue", "locations",
-		cfg.get_value("rogue", "events", rogue_locations))
+	# A new key: older saves held 3 under "locations"/"events"; runs now use 5.
+	rogue_instances = cfg.get_value("rogue", "instance_count", rogue_instances)
 	for name: String in rogue_ai_overrides:
 		var saved: Array = cfg.get_value("rogue_ai", name, [])
 		if saved.size() >= 3:

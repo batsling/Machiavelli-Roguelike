@@ -88,7 +88,7 @@ extends Control
 ## rules — draw count, starting hand size, hand cap, jokers, energy (start,
 ## growth, cap) and lives — applying from the next match, so the run can be
 ## balanced without touching the sandbox. A run deals no starting combos: its
-## table starts with only the round-1 location's combo. Sandbox starting combos
+## table starts with only the round-1 instance's combo. Sandbox starting combos
 ## deal every player a random valid three-card group from their own deck onto
 ## the table at game start, which counts as their opening meld. Jokers (★) count as any
 ## card while in a hand; the moment one lands in a valid group on the table
@@ -124,6 +124,10 @@ var run: RunState = null
 # The enemy faced in the current rogue match (null in sandbox); drives the AI
 # profile and plants any mechanics at combat start.
 var current_enemy: Enemy = null
+## The instances the next run match uses instead of a random draw from the
+## pool, in reveal order; consumed by that match. Empty = draw at random.
+## (Tests use it; a map node or an item could too.)
+var next_instances: Array[MatchInstance] = []
 var selected: Array[Card] = []
 var highlighted := {}  # Card -> true; every card the enemies touched last round
 # While a suit-highlighter button is hovered this holds that suit; the table and
@@ -165,12 +169,12 @@ var round_label: Label
 var lives_label: Label
 ## The public top card of your deck (glass, slimed, Open Decks), beside the pile.
 var stock_top_slot: HBoxContainer
-## The match's locations (see MatchLocation), between the top bar and the felt.
-var locations_row: VBoxContainer
+## The match's instances (see MatchInstance), between the top bar and the felt.
+var instances_row: VBoxContainer
 ## The game log, laid over the left of the screen while the Log button is down.
 var log_panel: PanelContainer
 var log_btn: Button
-## "Confirm (1/2)" — settles the location choice you owe (Cycle, Gift).
+## "Confirm (1/2)" — settles the instance choice you owe (Cycle, Gift).
 var choice_btn: Button
 var status_label: Label
 var log_box: RichTextLabel
@@ -183,6 +187,8 @@ var hand_panel: PanelContainer
 var hand_box: HFlowContainer
 var hand_title: Label
 var hand_meter_slot: HBoxContainer
+## "+2 coins on End turn" in the hand header while your staged turn earns coins.
+var coin_label: Label
 ## Your energy for the turn, in the hand header (shown only when energy is on).
 var energy_slot: HBoxContainer
 var selection_label: Label
@@ -190,6 +196,11 @@ var return_btn: Button
 var undo_action_btn: Button
 var reset_btn: Button
 var end_turn_btn: Button
+## Your discard pile left of the hand (click to see it), and its pop-up.
+var discard_btn: Button
+var discard_dialog: AcceptDialog
+var discard_note: Label
+var discard_body: GridContainer
 ## Your deck pile beside the hand: click it to draw and end your turn.
 var draw_btn: Button
 ## Shown once a match is over: Back to map / New run / New game.
@@ -218,9 +229,9 @@ var _advisor: PlayAdvisor
 ## The in-progress freeform group drag, or {} when nothing is being dragged. Set
 ## by a panel's move handle (TableView), followed and finished in _input.
 var _group_drag := {}
-## Locations revealed since the last refresh whose combos have yet to fly onto
-## the felt from their location panel.
-var _location_flights: Array[MatchLocation] = []
+## Instances revealed since the last refresh whose combos have yet to fly onto
+## the felt from their instance panel.
+var _instance_flights: Array[MatchInstance] = []
 
 func _ready() -> void:
 	gm = GameManager.new()
@@ -230,10 +241,13 @@ func _ready() -> void:
 	gm.cards_drawn.connect(_on_cards_drawn)
 	gm.player_passed.connect(_on_player_passed)
 	gm.game_over.connect(_on_game_over)
-	gm.location_revealed.connect(_on_location_revealed)
+	gm.instance_revealed.connect(_on_instance_revealed)
 	gm.cards_discarded.connect(_on_cards_discarded)
 	gm.cards_given.connect(_on_cards_given)
 	gm.coins_gained.connect(_on_coins_gained)
+	gm.cards_destroyed.connect(_on_cards_destroyed)
+	gm.cards_jumbled.connect(_on_cards_jumbled)
+	gm.costs_changed.connect(_on_costs_changed)
 	_advisor = PlayAdvisor.new(gm)
 	# Seed the per-enemy AI overrides from the roster, then let any saved
 	# settings override the defaults, before the settings dialog reads them.
@@ -245,7 +259,7 @@ func _ready() -> void:
 
 func _new_game() -> void:
 	game_generation += 1
-	_location_flights.clear()
+	_instance_flights.clear()
 	selected.clear()
 	highlighted.clear()
 	ai_running = false
@@ -255,7 +269,7 @@ func _new_game() -> void:
 	var jokers_in := false
 	if game_mode == Mode.ROGUE:
 		# A run deals no starting combos: the only groups on the table at first
-		# are the locations' combos, each arriving as its location is revealed.
+		# are the instances' combos, each arriving as its instance is revealed.
 		jokers_in = settings.rogue_jokers
 		settings.apply_ai_override(current_enemy)
 		# Energy is set before the deal: setup begins the first turn, which
@@ -265,14 +279,18 @@ func _new_game() -> void:
 		gm.energy_cap = settings.rogue_energy_cap
 		gm.max_plays_per_turn = 0
 		gm.meter_max = 0
-		# The intro is logged before the deal, which reveals the round-1 location.
+		# The intro is logged before the deal, which reveals the round-1 instance.
 		_log("[b]Node %d of %d[/b] — you face %s. You have %s."
 			% [run.active_node.row + 1, run.rows.size(), current_enemy.display_name,
 				_lives_text()])
 		_log("Each card you play from hand costs 1 energy: %d on your first turn, " \
 			% settings.rogue_start_energy + "+%d each turn after. Unspent energy is lost." \
 			% settings.rogue_energy_per_turn)
-		gm.location_deck = MatchLocation.draw(settings.rogue_locations)
+		if next_instances.is_empty():
+			gm.instance_deck = MatchInstance.draw(settings.rogue_instances)
+		else:
+			gm.instance_deck = next_instances.duplicate()
+			next_instances.clear()
 		gm.setup(["You", current_enemy.display_name], settings.rogue_start_hand_size, -1,
 			settings.rogue_jokers, [null, current_enemy.build_deck(settings.rogue_jokers)])
 		gm.draw_per_turn = settings.rogue_draw_per_turn
@@ -290,7 +308,7 @@ func _new_game() -> void:
 		for i in settings.enemy_count:
 			names.append(ENEMY_NAMES[i])
 		gm.start_energy = 0
-		gm.location_deck = []
+		gm.instance_deck = []
 		gm.setup(names, settings.start_hand_size, -1, settings.include_jokers)
 		gm.draw_per_turn = settings.draw_per_turn
 		gm.max_hand_size = settings.max_hand_size
@@ -314,10 +332,10 @@ func _new_game() -> void:
 	if gm.opening_rule and not combo_start:
 		_log("Opening rule: lay down a valid group from your own hand before "
 			+ "you can touch other groups on the table.")
-	if not gm.location_deck.is_empty() or not gm.revealed_locations.is_empty():
-		_log("Locations: one is revealed at the start of rounds %s. Each affects "
-			% ", ".join(gm.location_rounds.map(func(r: int) -> String: return str(r)))
-			+ "every player — on reveal effects on each player's turn that round, "
+	if not gm.instance_deck.is_empty() or not gm.revealed_instances.is_empty():
+		_log("Instances: one is revealed at the start of rounds %s. Each affects "
+			% ", ".join(gm.instance_rounds.map(func(r: int) -> String: return str(r)))
+			+ "every player — Reveal effects on each player's turn that round, "
 			+ "ongoing effects for the rest of the match.")
 	_prompt_pending_choice()
 	_refresh()
@@ -481,8 +499,8 @@ func _refresh() -> void:
 	_refresh_buttons()
 	if log_panel.visible:
 		_fit_log_panel.call_deferred()
-	if not _location_flights.is_empty():
-		_fly_location_combos()
+	if not _instance_flights.is_empty():
+		_fly_instance_combos()
 
 func _refresh_buttons() -> void:
 	var human_turn := _is_human_turn()
@@ -490,9 +508,9 @@ func _refresh_buttons() -> void:
 	choice_btn.visible = choosing
 	if choosing:
 		var need: int = gm.pending_choice()["count"]
-		var location: MatchLocation = gm.pending_choice()["location"]
+		var instance: MatchInstance = gm.pending_choice()["instance"]
 		var picked := _selected_hand_cards().size()
-		choice_btn.text = "Confirm %s (%d/%d)" % [location.title, picked, need]
+		choice_btn.text = "Confirm %s (%d/%d)" % [instance.title, picked, need]
 		choice_btn.disabled = picked != need
 	return_btn.disabled = not human_turn or not gm.can_return_to_hand(selected)
 	undo_action_btn.disabled = not human_turn or not gm.can_undo_action()
@@ -1262,11 +1280,11 @@ func _run_ai_turns() -> void:
 			if gen != game_generation:
 				return
 			continue
-		# A location may ask this enemy for a choice before it plays.
+		# An instance may ask this enemy for a choice before it plays.
 		if gm.has_pending_choice():
-			var location: MatchLocation = gm.pending_choice()["location"]
-			GreedyAI.resolve_location_choice(gm)
-			_log("%s resolved %s." % [enemy.display_name, location.title])
+			var instance: MatchInstance = gm.pending_choice()["instance"]
+			GreedyAI.resolve_instance_choice(gm)
+			_log("%s resolved %s." % [enemy.display_name, instance.title])
 			_refresh()
 		while true:
 			var move: Dictionary = GreedyAI.plan_move(gm, profile, enemy_def)
@@ -1303,16 +1321,21 @@ func _run_ai_turns() -> void:
 		_prompt_pending_choice()
 	_refresh()
 
-# --- Locations -------------------------------------------------------------------
+# --- Instances -------------------------------------------------------------------
 
-## When you owe a location a choice, say so in the status line.
+## What the cards picked for each choosing command will have done to them.
+const CHOICE_ACTIONS := {"discard": "to discard", "give": "to give away",
+	"jumble": "to jumble", "cost": "whose cost changes"}
+
+## When you owe an instance a choice, say so in the status line.
 func _prompt_pending_choice() -> void:
 	if not gm.has_pending_choice() or gm.current_player() != gm.players[0]:
 		return
-	var location: MatchLocation = gm.pending_choice()["location"]
+	var instance: MatchInstance = gm.pending_choice()["instance"]
 	var need: int = gm.pending_choice()["count"]
-	_set_status("%s: %s Click %d card%s in your hand, then press Confirm."
-		% [location.title, location.text, need, "" if need == 1 else "s"])
+	_set_status("%s: %s Click %d card%s in your hand %s, then press Confirm."
+		% [instance.title, instance.text, need, "" if need == 1 else "s",
+			CHOICE_ACTIONS.get(gm.pending_choice_verb(), "")])
 
 ## The selected cards that are in your hand (a choice picks only from the hand).
 func _selected_hand_cards() -> Array[Card]:
@@ -1331,42 +1354,67 @@ func _on_choice_confirm_pressed() -> void:
 	selected.clear()
 	_set_status("Your turn. Drag cards onto a group or empty felt — "
 		+ "or click to select, then use \"+ New group\".")
+	# An instance can ask for a second choice (or another instance its own).
+	_prompt_pending_choice()
 	_refresh()
 
-## Log the location and its combo, light the combo up in gold like an enemy
-## move, and queue it to fly onto the felt from its location panel on the next
+## Log the instance and its combo, light the combo up in gold like an enemy
+## move, and queue it to fly onto the felt from its instance panel on the next
 ## refresh, so the new group visibly arrives on the turn it is revealed.
-func _on_location_revealed(location: MatchLocation) -> void:
-	_log("[b]Location revealed — %s[/b] (%s): %s Its combo joins the table: %s."
-		% [location.title, location.kind_label(), location.text, location.combo_label()])
-	for c in location.combo:
+func _on_instance_revealed(instance: MatchInstance) -> void:
+	_log("[b]Instance revealed — %s[/b] (%s): %s Its combo joins the table: %s."
+		% [instance.title, instance.kind_label(), instance.text, instance.combo_label()])
+	for c in instance.combo:
 		highlighted[c] = true
-	_location_flights.append(location)
+	_instance_flights.append(instance)
 
-## Fly each newly revealed location's combo from its panel in the locations row
+## Show every card in your discard pile — discarded or destroyed — in a pop-up.
+func _on_discard_pressed() -> void:
+	_clear_children(discard_body)
+	var pile := gm.players[0].deck.discards
+	discard_note.text = "Nothing in your discard pile yet." if pile.is_empty() \
+		else "%d card%s discarded or destroyed. When your deck runs dry this pile " \
+			% [pile.size(), "" if pile.size() == 1 else "s"] \
+			+ "is shuffled back in to draw from."
+	for c in Rules.display_order(pile):
+		# A plain holder, so the cost badge sits on the face instead of being
+		# stretched by the face's container layout.
+		var holder := Control.new()
+		holder.custom_minimum_size = UITheme.BOARD_CARD_SIZE
+		var face := CardRenderer.make_plain_face(c)
+		face.set_anchors_preset(Control.PRESET_FULL_RECT)
+		holder.add_child(face)
+		if gm.energy_on():
+			holder.add_child(CardRenderer.make_cost_badge(gm.card_cost(c), true))
+		discard_body.add_child(holder)
+	# Fit the pop-up to the cards (the flow would otherwise keep a stale size).
+	discard_dialog.size = Vector2i(0, 0)
+	discard_dialog.popup_centered(Vector2i(660, 0))
+
+## Fly each newly revealed instance's combo from its panel in the instances column
 ## to its group on the felt. Waits for the table to lay out first; a reveal
 ## that happens while the table isn't on screen (dealt behind the map) still
 ## flies once it is, and is dropped if a new game starts meanwhile.
-func _fly_location_combos() -> void:
+func _fly_instance_combos() -> void:
 	var gen := game_generation
 	await get_tree().process_frame
 	await get_tree().process_frame
-	if gen != game_generation or not game_root.visible or _location_flights.is_empty():
+	if gen != game_generation or not game_root.visible or _instance_flights.is_empty():
 		return
 	var cards: Array[Card] = []
 	var sources := {}
-	for location in _location_flights:
-		var panel: Control = _table.location_panels.get(location)
+	for instance in _instance_flights:
+		var panel: Control = _table.instance_panels.get(instance)
 		if panel == null or not is_instance_valid(panel):
 			continue
 		var from := panel.get_global_rect().get_center() - UITheme.BOARD_CARD_SIZE / 2.0
-		for c in location.combo:
+		for c in instance.combo:
 			cards.append(c)
 			sources[c] = from
-	_location_flights.clear()
+	_instance_flights.clear()
 	await animator.animate(cards, sources, card_nodes)
 
-## Location discards are public (they go face up to the deck's discard pile).
+## Instance discards are public (they go face up to the deck's discard pile).
 func _on_cards_discarded(p: PlayerState, cards: Array[Card]) -> void:
 	_log("%s discarded %s." % [p.display_name, _join_card_labels(cards)])
 
@@ -1382,6 +1430,47 @@ func _on_cards_given(giver: PlayerState, receiver: PlayerState, cards: Array[Car
 
 func _on_coins_gained(p: PlayerState, amount: int) -> void:
 	_log("%s earned %d coin%s." % [p.display_name, amount, "" if amount == 1 else "s"])
+	if p == gm.players[0]:
+		_pop_coins(amount)
+
+## Float a gold "+N coins" up off the coin count in the top bar and fade it out.
+func _pop_coins(amount: int) -> void:
+	var pop := Label.new()
+	pop.text = "+%d coin%s" % [amount, "" if amount == 1 else "s"]
+	pop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pop.add_theme_font_size_override("font_size", 24)
+	pop.add_theme_color_override("font_color", UITheme.COL_COIN)
+	pop.add_theme_color_override("font_outline_color", Color.BLACK)
+	pop.add_theme_constant_override("outline_size", 5)
+	anim_layer.add_child(pop)
+	var rect := lives_label.get_global_rect()
+	pop.global_position = Vector2(rect.end.x - 60.0, rect.end.y + 4.0)
+	var tw := pop.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(pop, "global_position:y", pop.global_position.y + 40.0, 1.4) \
+		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.tween_property(pop, "modulate:a", 0.0, 1.4).set_delay(0.5)
+	tw.chain().tween_callback(pop.queue_free)
+
+## Destroyed cards are public: name them and where they went.
+func _on_cards_destroyed(instance: MatchInstance, cards: Array[Card]) -> void:
+	_log("%s destroyed %s — to the discard pile." % [instance.title, _join_card_labels(cards)])
+
+## You see your own jumbled cards; an opponent's stay face down.
+func _on_cards_jumbled(p: PlayerState, cards: Array[Card], before: PackedStringArray) -> void:
+	if p == gm.players[0]:
+		_log("Jumbled: %s became %s." % [", ".join(before), _join_card_labels(cards)])
+	else:
+		_log("%s had %d card%s jumbled." % [p.display_name, cards.size(),
+			"" if cards.size() == 1 else "s"])
+
+func _on_costs_changed(p: PlayerState, cards: Array[Card], delta: int) -> void:
+	if p == gm.players[0]:
+		_log("%s now cost%s %+d energy." % [_join_card_labels(cards),
+			"s" if cards.size() == 1 else "", delta])
+	else:
+		_log("%s had %d card%s cost %+d energy." % [p.display_name, cards.size(),
+			"" if cards.size() == 1 else "s", delta])
 
 # --- Misc ----------------------------------------------------------------------
 

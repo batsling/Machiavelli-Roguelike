@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="InstanceData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/instance_data.gd" id="1_loc"]
+
+[resource]
+script = ExtResource("1_loc")
+id = &"black_hole"
+title = "Black Hole"
+kind = "reveal"
+text = "Destroy a random Combo on the board."
+effect = "destroy combo random"
+order = 12

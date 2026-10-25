@@ -72,19 +72,19 @@ func build(ui: MainUI) -> void:
 	top_bar.add_child(top_pad_right)
 	_build_game_menu(ui, top_bar)
 
-	# Middle row: the locations, left seat, the felt, right seat (hidden until a
+	# Middle row: the instances, left seat, the felt, right seat (hidden until a
 	# 4th player).
 	var mid_row := HBoxContainer.new()
 	mid_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	mid_row.add_theme_constant_override("separation", 8)
 	main_col.add_child(mid_row)
-	# Locations: the match's rule cards in a column beside the felt, face up once
+	# Instances: the match's rule cards in a column beside the felt, face up once
 	# revealed and face down (with the round they turn up on) until then.
-	# TableView fills it; hidden when the match has no locations.
-	ui.locations_row = VBoxContainer.new()
-	ui.locations_row.add_theme_constant_override("separation", 8)
-	ui.locations_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	mid_row.add_child(ui.locations_row)
+	# TableView fills it; hidden when the match has no instances.
+	ui.instances_row = VBoxContainer.new()
+	ui.instances_row.add_theme_constant_override("separation", 8)
+	ui.instances_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	mid_row.add_child(ui.instances_row)
 	ui.seat_left = _make_seat()
 	ui.seat_left.custom_minimum_size = Vector2(UITheme.SIDE_SEAT_WIDTH, 0)
 	mid_row.add_child(ui.seat_left)
@@ -197,6 +197,13 @@ func build(ui: MainUI) -> void:
 	ui.hand_meter_slot.add_theme_constant_override("separation", 6)
 	ui.hand_meter_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hand_top.add_child(ui.hand_meter_slot)
+	# The coins your staged turn will earn when you end it (combo coins, Coin
+	# Rush); refresh_hand fills it, blank while there are none.
+	ui.coin_label = Label.new()
+	ui.coin_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ui.coin_label.add_theme_font_size_override("font_size", 15)
+	ui.coin_label.add_theme_color_override("font_color", UITheme.COL_COIN)
+	hand_top.add_child(ui.coin_label)
 	# Your energy for the turn: a label + pips, filled by refresh_hand when
 	# energy is on (a roguelike run) and left empty otherwise.
 	ui.energy_slot = HBoxContainer.new()
@@ -207,6 +214,11 @@ func build(ui: MainUI) -> void:
 	var hand_row := HBoxContainer.new()
 	hand_row.add_theme_constant_override("separation", 8)
 	hand_col.add_child(hand_row)
+	# Your discard pile at the hand's left: everything discarded or destroyed
+	# from your deck. Click it to see the cards; TableView fills its count.
+	ui.discard_btn = _make_discard_pile_button()
+	ui.discard_btn.pressed.connect(ui._on_discard_pressed)
+	hand_row.add_child(ui.discard_btn)
 	ui.hand_box = HFlowContainer.new()
 	ui.hand_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ui.hand_box.add_theme_constant_override("h_separation", 4)
@@ -250,7 +262,7 @@ func build(ui: MainUI) -> void:
 	controls.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	turn_box.add_child(controls)
 
-	# Confirms the cards picked for a location's choice (Cycle, Gift); shown only
+	# Confirms the cards picked for an instance's choice (Cycle, Gift); shown only
 	# while you owe one.
 	ui.choice_btn = Button.new()
 	ui.choice_btn.visible = false
@@ -304,6 +316,7 @@ func build(ui: MainUI) -> void:
 	_build_menu(ui)
 	_build_settings_dialog(ui)
 	_build_enemy_info_dialog(ui)
+	_build_discard_dialog(ui)
 
 ## The game log, opened by the Log button: a panel laid over the left side of
 ## the screen (below the top bar, above your hand) so opening it never squeezes
@@ -445,6 +458,48 @@ func _make_seat() -> VBoxContainer:
 	seat.alignment = BoxContainer.ALIGNMENT_CENTER
 	seat.add_theme_constant_override("separation", 6)
 	return seat
+
+## Your discard pile as a face-up pile: a pale card with the count on it.
+func _make_discard_pile_button() -> Button:
+	var pile := Button.new()
+	pile.custom_minimum_size = UITheme.CARD_SIZE
+	pile.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	pile.focus_mode = Control.FOCUS_NONE
+	pile.add_theme_font_size_override("font_size", 14)
+	for state: String in ["normal", "hover", "pressed", "disabled"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = UITheme.COL_DISCARD_PILE.lightened(0.12 if state == "hover" else 0.0)
+		sb.border_color = UITheme.COL_CHIP_ACTIVE if state == "hover" \
+			else Color(1, 1, 1, 0.35)
+		sb.set_border_width_all(2)
+		sb.set_corner_radius_all(6)
+		pile.add_theme_stylebox_override(state, sb)
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
+		pile.add_theme_color_override(state, Color(1, 1, 1, 0.85))
+	return pile
+
+## The pop-up listing the cards in your discard pile, opened from the pile.
+func _build_discard_dialog(ui: MainUI) -> void:
+	ui.discard_dialog = AcceptDialog.new()
+	ui.discard_dialog.title = "Your discard pile"
+	ui.discard_dialog.ok_button_text = "Close"
+	ui.add_child(ui.discard_dialog)
+	var col := VBoxContainer.new()
+	col.custom_minimum_size = Vector2(620, 0)
+	col.add_theme_constant_override("separation", 8)
+	ui.discard_dialog.add_child(col)
+	ui.discard_note = Label.new()
+	ui.discard_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# A wrapping label needs a width, or it measures itself absurdly tall.
+	ui.discard_note.custom_minimum_size = Vector2(620, 0)
+	col.add_child(ui.discard_note)
+	# A grid, not a flow: a flow measures itself one card per row before it is
+	# laid out, which makes the pop-up far too tall.
+	ui.discard_body = GridContainer.new()
+	ui.discard_body.columns = 10
+	ui.discard_body.add_theme_constant_override("h_separation", 6)
+	ui.discard_body.add_theme_constant_override("v_separation", 6)
+	col.add_child(ui.discard_body)
 
 ## A small pop-up describing an opponent: its mechanic (in a roguelike round)
 ## and the AI brain it is running. Opened by the "Info" button on its name chip.

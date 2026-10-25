@@ -10,9 +10,9 @@ extends RefCounted
 ## refresh_seats / refresh_board / refresh_hand from its _refresh().
 
 var _ui: MainUI
-## MatchLocation -> its panel in the locations row, rebuilt each refresh, so a
-## revealed location's combo can fly onto the felt from it.
-var location_panels := {}
+## MatchInstance -> its panel in the instances column, rebuilt each refresh, so a
+## revealed instance's combo can fly onto the felt from it.
+var instance_panels := {}
 
 func setup(ui: MainUI) -> void:
 	_ui = ui
@@ -55,33 +55,33 @@ func refresh_seats() -> void:
 	_ui.round_label.text = "Round %d" % gm.round_number
 	_refresh_lives()
 	_refresh_stock_top()
-	_refresh_locations()
+	_refresh_instances()
 
-## The match's locations: a face-up panel per revealed location (an on-reveal location
-## dims once its round is over) and a face-down panel per location still to come,
-## naming the round it turns up on. Hidden when the match has no locations.
-func _refresh_locations() -> void:
+## The match's instances: a face-up panel per revealed instance (a Reveal instance
+## dims once its round is over) and a face-down panel per instance still to come,
+## naming the round it turns up on. Hidden when the match has no instances.
+func _refresh_instances() -> void:
 	var gm := _ui.gm
-	_ui._clear_children(_ui.locations_row)
-	location_panels.clear()
-	var upcoming := gm.upcoming_locations()
-	_ui.locations_row.visible = not gm.revealed_locations.is_empty() or not upcoming.is_empty()
-	for e in gm.revealed_locations:
+	_ui._clear_children(_ui.instances_row)
+	instance_panels.clear()
+	var upcoming := gm.upcoming_instances()
+	_ui.instances_row.visible = not gm.revealed_instances.is_empty() or not upcoming.is_empty()
+	for e in gm.revealed_instances:
 		var live := e.is_ongoing() or e.revealed_round == gm.round_number
-		var panel := _make_location_panel(e.title, e.kind_label(),
+		var panel := _make_instance_panel(e.title, e.kind_label(),
 			"%s Combo: %s" % [e.text, e.combo_label()],
 			UITheme.COL_CHIP_ACTIVE if live else Color(1, 1, 1, 0.15), live)
-		_ui.locations_row.add_child(panel)
-		location_panels[e] = panel
+		_ui.instances_row.add_child(panel)
+		instance_panels[e] = panel
 	for slot: Dictionary in upcoming:
-		_ui.locations_row.add_child(_make_location_panel("?", "Face down",
+		_ui.instances_row.add_child(_make_instance_panel("?", "Face down",
 			"Revealed at the start of round %d, with a combo for the table." % slot["round"],
 			Color(1, 1, 1, 0.15), false))
 
-func _make_location_panel(title: String, kind: String, body: String, edge: Color,
+func _make_instance_panel(title: String, kind: String, body: String, edge: Color,
 		live: bool) -> PanelContainer:
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = UITheme.LOCATION_PANEL_SIZE
+	panel.custom_minimum_size = UITheme.INSTANCE_PANEL_SIZE
 	var sb := CardRenderer.panel_style(UITheme.COL_CHIP_BG, 8)
 	sb.border_color = edge
 	sb.set_border_width_all(2)
@@ -99,7 +99,7 @@ func _make_location_panel(title: String, kind: String, body: String, edge: Color
 	var text := Label.new()
 	text.text = body
 	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	text.custom_minimum_size = Vector2(UITheme.LOCATION_PANEL_SIZE.x - 16, 0)
+	text.custom_minimum_size = Vector2(UITheme.INSTANCE_PANEL_SIZE.x - 16, 0)
 	text.add_theme_font_size_override("font_size", 12)
 	text.add_theme_color_override("font_color", Color(1, 1, 1, 0.85 if live else 0.45))
 	col.add_child(text)
@@ -133,6 +133,10 @@ func _refresh_draw_pile() -> void:
 	var me := gm.players[0]
 	var n := gm.draw_count()
 	_ui.draw_btn.text = "Draw\n%d left" % me.deck.size()
+	var discarded := me.deck.discards.size()
+	_ui.discard_btn.text = "Discard\n%d" % discarded
+	_ui.discard_btn.tooltip_text = "Your discard pile: every card discarded or destroyed " \
+		+ "from your deck. Click to see them."
 	_ui.draw_btn.tooltip_text = "Your deck — you only ever draw from it. Click to " \
 		+ "draw %d card%s and end your turn (any cards you laid this turn go back to " \
 		% [n, "" if n == 1 else "s"] + "your hand)."
@@ -353,7 +357,7 @@ func refresh_board() -> void:
 	# The "+ New group" click target only appears while cards are selected;
 	# drags can always land on empty felt instead. It (and the hover hint) tuck
 	# into a free patch of felt like any group, but keep no lasting spot.
-	# While you owe a location a choice, selecting picks cards for it — no zone.
+	# While you owe an instance a choice, selecting picks cards for it — no zone.
 	if not _ui.selected.is_empty() and _ui._is_human_turn() and not _ui.gm.has_pending_choice():
 		var zone := _make_new_group_zone()
 		_ui.board_flow.add_child(zone)
@@ -537,14 +541,27 @@ func _make_move_handle(panel: Control, melds: Array[CardSet]) -> Control:
 	dots.clip_text = true
 	dots.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
 	dots.add_theme_font_size_override("font_size", 11)
-	# Name where an untouched starting or location combo came from, so the
-	# groups dealt at the start of a match are told apart.
+	# Name where an untouched starting or instance combo came from, so the
+	# groups dealt at the start of a match are told apart — and flag, in gold,
+	# every group holding an instance combo card, which pays coins per card
+	# played into it.
 	var origin := group_origin(melds)
+	var coin_tag := combo_coin_tag(melds)
+	var parts := PackedStringArray()
 	if origin != "":
-		dots.text = "⠿ %s" % origin
-		if _is_location_combo(melds):
-			dots.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
-		handle.tooltip_text = "%s — drag to move this group around the felt" % origin
+		parts.append(origin)
+	if coin_tag != "":
+		parts.append(coin_tag)
+	if not parts.is_empty():
+		dots.text = "⠿ %s" % " · ".join(parts)
+		handle.tooltip_text = "%s — drag to move this group around the felt" % " · ".join(parts)
+	if coin_tag != "":
+		dots.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
+		handle.tooltip_text = "An instance combo: every card you play into it from " \
+			+ "your hand earns %d coin%s when you end your turn. Drag to move the group." \
+			% [MatchInstance.COMBO_COINS, "" if MatchInstance.COMBO_COINS == 1 else "s"]
+		handle.add_theme_stylebox_override("panel",
+			CardRenderer.panel_style(UITheme.COL_COMBO_HANDLE, 6))
 	dots.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dots.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	handle.add_child(dots)
@@ -554,15 +571,15 @@ func _make_move_handle(panel: Control, melds: Array[CardSet]) -> Control:
 			_ui.begin_group_drag(panel, melds))
 	return handle
 
-## Where a lone group came from while it is still exactly as it was dealt: a
-## location's combo ("Extra Draw combo"), or a player's starting combo ("Your
+## Where a lone group came from while it is still exactly as it was dealt: an
+## instance's combo ("Extra Draw combo"), or a player's starting combo ("Your
 ## start", "Scrap Drone's start"). "" for anything else, or once it changes.
 func group_origin(melds: Array[CardSet]) -> String:
 	if melds.size() != 1:
 		return ""
 	var gm := _ui.gm
 	var cards := melds[0].cards
-	for e in gm.revealed_locations:
+	for e in gm.revealed_instances:
 		if _same_cards(cards, e.combo):
 			return "%s combo" % e.title
 	for player_id: int in gm.starting_combos:
@@ -571,11 +588,13 @@ func group_origin(melds: Array[CardSet]) -> String:
 				else "%s's start" % gm.players[player_id].display_name
 	return ""
 
-func _is_location_combo(melds: Array[CardSet]) -> bool:
-	for e in _ui.gm.revealed_locations:
-		if melds.size() == 1 and _same_cards(melds[0].cards, e.combo):
-			return true
-	return false
+## "+1 coin/card" for a group holding an instance combo card (they pay coins for
+## every card played into them from hand), else "".
+func combo_coin_tag(melds: Array[CardSet]) -> String:
+	for m in melds:
+		if _ui.gm.meld_has_instance_card(m):
+			return "+%d coin/card" % MatchInstance.COMBO_COINS
+	return ""
 
 static func _same_cards(a: Array, b: Array) -> bool:
 	if a.size() != b.size() or a.is_empty():
@@ -845,6 +864,9 @@ func refresh_hand() -> void:
 	_ui.hand_panel.add_theme_stylebox_override("panel", sb)
 	_refresh_hand_meter()
 	_refresh_energy()
+	var coins := gm.pending_coins() if _ui._is_human_turn() else 0
+	_ui.coin_label.text = "+%d coin%s on End turn" % [coins, "" if coins == 1 else "s"] \
+		if coins > 0 else ""
 	_ui._clear_children(_ui.hand_box)
 	var hand := gm.players[0].hand
 	if gm.players[0].has_opened or not gm.opening_rule:
@@ -900,7 +922,8 @@ func _refresh_energy() -> void:
 	tag.text = "Energy %d/%d" % [left, ceiling]
 	tag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	tag.add_theme_color_override("font_color", UITheme.COL_ENERGY)
-	tag.tooltip_text = "Each card you play from hand costs 1 energy. Rearranging " \
+	tag.tooltip_text = "Each card you play from hand costs the energy in its " \
+		+ "corner circle (1 unless an instance changed it). Rearranging " \
 		+ "the table is free. Energy refills every turn (+1 each turn) and " \
 		+ "never carries over."
 	tag.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -931,6 +954,10 @@ func _make_card_button(c: Card, meld: CardSet = null) -> Button:
 	b.add_theme_font_size_override("font_size",
 		UITheme.BOARD_CARD_FONT_SIZE if on_board else UITheme.CARD_FONT_SIZE)
 	b.focus_mode = Control.FOCUS_NONE
+	# What the card costs to play, in a circle in its top-left corner (energy
+	# games only): green when cheaper than usual, red when dearer.
+	if _ui.gm.energy_on():
+		b.add_child(CardRenderer.make_cost_badge(_ui.gm.card_cost(c), on_board))
 
 	var font_col := UITheme.COL_CARD_RED if UITheme.RED_SUITS.has(c.suit) else UITheme.COL_CARD_BLACK
 	if c.is_joker:

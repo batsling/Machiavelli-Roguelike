@@ -97,7 +97,7 @@ func _affordable(cards: Array[Card]) -> bool:
 		return true
 	var cost := 0
 	for c in cards:
-		cost += c.cost
+		cost += gm.card_cost(c)
 	return cost <= gm.energy_left()
 
 ## True when `c` plus other naturals already in the hand make a valid new group —

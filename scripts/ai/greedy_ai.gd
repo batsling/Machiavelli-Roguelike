@@ -75,7 +75,7 @@ static func take_turn(gm: GameManager, profile: AIProfile = null,
 	if enemy != null and enemy.wants_control(gm):
 		enemy.run_controlled_turn(gm)
 		return
-	resolve_location_choice(gm)
+	resolve_instance_choice(gm)
 	while true:
 		var move := plan_move(gm, profile, enemy)
 		if move.is_empty():
@@ -107,6 +107,12 @@ static func take_turn(gm: GameManager, profile: AIProfile = null,
 static func plan_move(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> Dictionary:
 	var move := _plan_normal_move(gm, profile, enemy)
+	# Cards can cost more (or less) than 1 energy; the search counts cards, so a
+	# move it found may still be too dear. Staging would refuse it, so stop here
+	# rather than propose it again and again.
+	if not move.is_empty() and gm.energy_on() and move.has("cards") \
+			and gm.cost_of(move["cards"]) > gm.energy_left():
+		return {}
 	if not move.is_empty():
 		return move
 	# A designed enemy's own strategy. Each self-guards on the opening rule as it
@@ -1042,22 +1048,43 @@ static func _seems_important(c: Card, hand: Array[Card]) -> bool:
 			return true
 	return false
 
-## Settle the current player's pending location choice (Cycle's discards, Gift's
-## gifts), if any, by giving up the cards it can best spare: the ones with the
-## fewest partners in hand (jokers never, while anything else is left). Returns
-## the chosen cards (empty when there was no choice).
-static func resolve_location_choice(gm: GameManager) -> Array[Card]:
+## Settle the current player's pending instance choice (Cycle's discards, Gift's
+## gifts), if any. Cards leaving the hand, being jumbled or getting dearer are
+## the ones it can best spare: the fewest partners in hand (jokers never, while
+## anything else is left). A cost cut goes to the cards it values most. Only
+## cards that fit the command's filter are picked. Returns the chosen cards
+## (empty when there was no choice).
+static func resolve_instance_choice(gm: GameManager) -> Array[Card]:
+	var all_chosen: Array[Card] = []
+	# One instance's choice can lead to another's; settle them all.
+	for _guard in 16:
+		if not gm.has_pending_choice():
+			break
+		var chosen := _resolve_one_choice(gm)
+		if chosen.is_empty():
+			break
+		all_chosen.append_array(chosen)
+	return all_chosen
+
+static func _resolve_one_choice(gm: GameManager) -> Array[Card]:
 	var chosen: Array[Card] = []
-	if not gm.has_pending_choice():
-		return chosen
+	var choice := gm.pending_choice()
+	var eff: InstanceEffect = choice["effect"]
 	var hand := gm.current_player().hand
-	var ranked: Array[Card] = hand.duplicate()
+	var ranked: Array[Card] = []
+	for c in hand:
+		if eff.matches(c):
+			ranked.append(c)
+	var keep_best := eff.verb == InstanceEffect.Verb.COST_CHANGE and eff.amount < 0
 	ranked.sort_custom(func(a: Card, b: Card) -> bool:
-		return _spare_score(a, hand) < _spare_score(b, hand))
-	chosen.assign(ranked.slice(0, gm.pending_choice()["count"]))
+		var sa := _spare_score(a, hand)
+		var sb := _spare_score(b, hand)
+		return sa > sb if keep_best else sa < sb)
+	chosen.assign(ranked.slice(0, choice["count"]))
 	var err := gm.resolve_choice(chosen)
 	if err != "":
-		push_warning("GreedyAI could not resolve a location choice (%s)" % err)
+		push_warning("GreedyAI could not resolve an instance choice (%s)" % err)
+		chosen.clear()
 	return chosen
 
 ## How much a hand card is worth keeping: 100 for a joker, else one point per

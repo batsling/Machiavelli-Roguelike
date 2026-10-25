@@ -57,9 +57,9 @@ func _init() -> void:
 		failures += 1
 	if not _test_run_state():
 		failures += 1
-	if not _test_locations():
+	if not _test_instances():
 		failures += 1
-	if not _test_locations_sheet():
+	if not _test_instances_sheet():
 		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
@@ -105,10 +105,10 @@ func _init() -> void:
 			else AIProfile.new(0.5 * (seed_value % 3), 0.0, 1.0, seed_value, 1.0)
 		if not _play_energy_game(seed_value, profile):
 			failures += 1
-	# Location games: three random locations per match on top of the run's energy
+	# Instance games: five random instances per match on top of the run's energy
 	# rule, with every pending choice resolved by the AI.
 	for seed_value in 10:
-		if not _play_location_game(seed_value):
+		if not _play_instance_game(seed_value):
 			failures += 1
 	if failures == 0:
 		print("SMOKE TEST OK: all games completed cleanly")
@@ -1289,16 +1289,24 @@ func _test_run_state() -> bool:
 		print("run state test OK")
 	return ok
 
-## A 1v1 energy game with these locations (MatchLocation ids) in reveal order.
-func _location_gm(ids: Array, seed_value := 31) -> GameManager:
+## A 1v1 energy game with these instances in reveal order: sheet ids
+## (&"cycle") or MatchInstance objects (MatchInstance.custom for a made-up one).
+func _instance_gm(entries: Array, seed_value := 31, jokers := false,
+		rounds: Array[int] = [1, 3, 5, 7, 9]) -> GameManager:
 	var gm := GameManager.new()
 	gm.start_energy = 3
-	var deck: Array[MatchLocation] = []
-	for id_value: int in ids:
-		deck.append(MatchLocation.new(id_value))
-	gm.location_deck = deck
-	gm.setup(["P0", "P1"], 13, seed_value)
+	var deck: Array[MatchInstance] = []
+	for entry in entries:
+		deck.append(entry if entry is MatchInstance else MatchInstance.named(entry))
+	gm.instance_deck = deck
+	gm.instance_rounds = rounds
+	gm.setup(["P0", "P1"], 13, seed_value, jokers)
 	return gm
+
+## A game whose only instance waits face down (revealed on round 99), so a test
+## can set the hand up first and then reveal it with reveal_next_instance.
+func _held_instance_gm(entry: Variant, jokers := false) -> GameManager:
+	return _instance_gm([entry], 31, jokers, [99] as Array[int])
 
 ## Give the current player an opened, known hand: the given cards plus a filler.
 func _known_hand(gm: GameManager, cards: Array[Card]) -> void:
@@ -1309,200 +1317,222 @@ func _known_hand(gm: GameManager, cards: Array[Card]) -> void:
 	p.hand.append(_card(2, "clubs"))
 	gm._hand_snapshot = p.hand.duplicate()
 
-## The Locations sheet (data/locations/, from tools/Machiavelli Roguelike.xlsx)
-## against the code: every rule has a row, the pool follows the sheet, each card
-## has a name and text, the sheet's Type agrees with how the rule is written, and
-## the numbers the text promises are the numbers the rules use.
-func _test_locations_sheet() -> bool:
+## The Instances sheet (data/instances/, from tools/Machiavelli Roguelike.xlsx):
+## every row's Effect reads cleanly (so the whole sheet is in the pool), each
+## instance takes its name, Type and text from its row, and the Effect parser
+## accepts the documented forms and rejects broken ones with a reason.
+func _test_instances_sheet() -> bool:
 	var ok := true
-	var pool := MatchLocation.pool()
-	if pool.size() != MatchLocation.ID_NAMES.size():
-		printerr("locations: pool has %d locations, the code has %d rules"
-			% [pool.size(), MatchLocation.ID_NAMES.size()])
+	var pool := MatchInstance.pool()
+	if pool.size() != Instances.all().size() or pool.size() < 13:
+		printerr("instances: %d of %d sheet rows made the pool"
+			% [pool.size(), Instances.all().size()])
 		ok = false
-	for id_value: int in MatchLocation.ID_NAMES:
-		var loc := Locations.get_by_id(MatchLocation.ID_NAMES[id_value])
-		if loc == null:
-			printerr("locations: no sheet row for '%s'" % MatchLocation.ID_NAMES[id_value])
+	for data in Instances.all():
+		var e := MatchInstance.from_data(data)
+		if not e.errors.is_empty():
+			printerr("instances: %s's Effect '%s' does not read: %s"
+				% [data.title, data.effect, "; ".join(e.errors)])
 			ok = false
-			continue
-		var e := MatchLocation.new(id_value)
-		if e.title != loc.title or e.text != loc.text or e.text == "":
-			printerr("locations: '%s' did not take its name and text from the sheet" % loc.id)
+		if e.title != data.title or e.text == "" or e.kind_label() \
+				!= ("Ongoing" if data.kind == "ongoing" else "Reveal"):
+			printerr("instances: '%s' did not take its row from the sheet" % data.id)
 			ok = false
-		if loc.kind != ("ongoing" if e.is_ongoing() else "on_reveal"):
-			printerr("locations: the sheet makes %s '%s', its rule disagrees" % [loc.title, loc.kind])
+	var good := ["draw 2", "draw_joker 1", "discard choose 2; draw 2", "give random 1 suit=hearts",
+		"jumble all natural", "cost random 2 -1", "cost rank=K suit=spades 0", "cost joker 3",
+		"energy +3", "energy -1", "max_energy +2", "draw_bonus 1", "coins_per_card 2",
+		"open_decks", "destroy combo random", "Discard Random 1"]
+	for cell: String in good:
+		var parsed := InstanceEffect.parse(cell)
+		if not (parsed["errors"] as PackedStringArray).is_empty():
+			printerr("instances: '%s' should parse, got %s" % [cell, parsed["errors"]])
 			ok = false
-	var ev := MatchLocation.Id
-	var promises := {
-		ev.CYCLE: MatchLocation.CHOICE_COUNT,
-		ev.GIFT: MatchLocation.CHOICE_COUNT,
-		ev.SURGE: MatchLocation.SURGE_ENERGY,
-		ev.OVERCHARGE: MatchLocation.OVERCHARGE_ENERGY,
-	}
-	for id_value: int in promises:
-		var e := MatchLocation.new(id_value)
-		if not e.text.contains(str(promises[id_value])):
-			printerr("locations: %s's text '%s' does not say %d, the number its rule uses"
-				% [e.title, e.text, promises[id_value]])
+	var bad := ["", "fly 2", "discard 2", "discard random", "cost random 2 1", "cost rank=7",
+		"cost rank=14 0", "give choose 1 suit=stars", "draw", "open_decks now", "destroy combo",
+		"draw 2; teleport"]
+	for cell: String in bad:
+		if (InstanceEffect.parse(cell)["errors"] as PackedStringArray).is_empty():
+			printerr("instances: '%s' should be refused" % cell)
 			ok = false
+	if MatchInstance.custom("fly 2").errors.is_empty():
+		printerr("instances: a broken custom instance should carry its errors")
+		ok = false
 	if ok:
-		print("locations sheet test OK")
+		print("instances sheet test OK")
 	return ok
 
-## The eight locations: the reveal schedule (rounds 1, 3, 5), each location's rule,
-## the pending choices (blocking play until resolved, for the human-style API
-## and the AI alike), and an early reveal.
-func _test_locations() -> bool:
+## The instances: the reveal schedule (rounds 1, 3, 5, 7, 9), the combos, each
+## sheet instance's Effect at work, the pending choices (blocking play until
+## resolved, for the human-style API and the AI alike), combo coins, card costs,
+## and an early reveal.
+func _test_instances() -> bool:
 	var ok := true
-	var ev := MatchLocation.Id
-	# Schedule: one up at the deal, the rest at the start of rounds 3 and 5.
-	var gm := _location_gm([ev.OVERCHARGE, ev.EXTRA_DRAW, ev.OPEN_DECKS])
-	if gm.revealed_locations.size() != 1 or gm.upcoming_locations().size() != 2 \
-			or gm.upcoming_locations()[0]["round"] != 3 or gm.upcoming_locations()[1]["round"] != 5:
-		printerr("locations: expected 1 revealed and 2 upcoming (rounds 3, 5)")
+	# Schedule: one up at the deal, the rest at the start of rounds 3, 5, 7, 9.
+	var gm := _instance_gm([&"overcharge", &"extra_draw", &"open_decks", &"jackpot", &"surge"])
+	if gm.revealed_instances.size() != 1 or gm.upcoming_instances().size() != 4 \
+			or gm.upcoming_instances()[3]["round"] != 9:
+		printerr("instances: expected 1 revealed and 4 upcoming (rounds 3, 5, 7, 9)")
 		ok = false
 	var revealed_by_round := {}
-	while gm.round_number <= 5:
-		revealed_by_round[gm.round_number] = gm.revealed_locations.size()
+	while gm.round_number <= 9:
+		revealed_by_round[gm.round_number] = gm.revealed_instances.size()
 		gm.draw_and_end_turn()
-	if revealed_by_round != {1: 1, 2: 1, 3: 2, 4: 2, 5: 3}:
-		printerr("locations: wrong reveal schedule %s" % str(revealed_by_round))
+	if revealed_by_round != {1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3, 7: 4, 8: 4, 9: 5}:
+		printerr("instances: wrong reveal schedule %s" % str(revealed_by_round))
 		ok = false
-	# Each reveal put its combo on the table: three valid groups of fresh cards
-	# from outside both decks, counted as extra copies.
-	if gm.board.melds.size() != 3:
-		printerr("locations: 3 reveals should put 3 combos on the table, got %d"
+	# Each reveal put its combo on the table: valid groups of fresh cards from
+	# outside both decks, counted as extra copies.
+	if gm.board.melds.size() != 5:
+		printerr("instances: 5 reveals should put 5 combos on the table, got %d"
 			% gm.board.melds.size())
 		ok = false
-	for e in gm.revealed_locations:
+	for e in gm.revealed_instances:
 		var meld := gm.board.meld_of(e.combo[0])
 		if e.combo.size() != 3 or meld == null or not meld.is_valid():
-			printerr("locations: %s's combo should be a valid 3-card group on the table" % e.title)
+			printerr("instances: %s's combo should be a valid 3-card group on the table" % e.title)
 			ok = false
 		for c in e.combo:
-			if c.deck_owner != MatchLocation.NO_OWNER or c.is_joker \
+			if c.deck_owner != MatchInstance.NO_OWNER or c.is_joker \
 					or gm.players[0].deck.cards.has(c) or gm.players[1].deck.cards.has(c):
-				printerr("locations: combo cards must be fresh naturals from no one's deck")
+				printerr("instances: combo cards must be fresh naturals from no one's deck")
 				ok = false
-	var combo_card := gm.revealed_locations[0].combo[0]
+	var combo_card := gm.revealed_instances[0].combo[0]
 	var extra := 0
-	for e in gm.revealed_locations:
+	for e in gm.revealed_instances:
 		for c in e.combo:
 			if c.rank == combo_card.rank and c.suit == combo_card.suit:
 				extra += 1
 	if gm.copies_in_play(combo_card.rank, combo_card.suit) != 2 + extra:
-		printerr("locations: combo cards should count as extra copies in play")
+		printerr("instances: combo cards should count as extra copies in play")
 		ok = false
 	gm.free()
 
 	# Cycle: a choice of 2 that blocks play until resolved, then discard 2, draw 2.
-	gm = _location_gm([ev.CYCLE])
+	gm = _instance_gm([&"cycle"])
 	var p0 := gm.players[0]
-	if not gm.has_pending_choice() or gm.pending_choice()["count"] != 2:
-		printerr("locations: Cycle should ask P0 for 2 cards")
+	if not gm.has_pending_choice() or gm.pending_choice()["count"] != 2 \
+			or gm.pending_choice_verb() != "discard":
+		printerr("instances: Cycle should ask P0 to discard 2 cards")
 		ok = false
 	var three: Array[Card] = [p0.hand[0], p0.hand[1], p0.hand[2]]
 	if gm.move_cards_to_new_meld(three).find("Resolve") == -1 \
 			or gm.commit_turn().find("Resolve") == -1:
-		printerr("locations: playing before resolving Cycle should be refused")
+		printerr("instances: playing before resolving Cycle should be refused")
 		ok = false
 	gm.draw_and_end_turn()
 	if gm.current_player() != p0:
-		printerr("locations: drawing must wait for the pending choice")
+		printerr("instances: drawing must wait for the pending choice")
 		ok = false
 	if gm.resolve_choice([p0.hand[0]] as Array[Card]) == "":
-		printerr("locations: Cycle must take exactly 2 cards")
+		printerr("instances: Cycle must take exactly 2 cards")
 		ok = false
 	var gone: Array[Card] = [p0.hand[0], p0.hand[1]]
 	if gm.resolve_choice(gone) != "" or p0.hand.size() != 13 \
 			or not p0.deck.discards.has(gone[0]) or not p0.deck.discards.has(gone[1]) \
 			or gm.has_pending_choice() or gm.cards_played_this_turn() != 0:
-		printerr("locations: Cycle should discard 2, draw 2 and clear the choice")
+		printerr("instances: Cycle should discard 2, draw 2 and clear the choice")
 		ok = false
 	gm.draw_and_end_turn()
 	var p1 := gm.players[1]
-	if not gm.has_pending_choice() or GreedyAI.resolve_location_choice(gm).size() != 2 \
+	if not gm.has_pending_choice() or GreedyAI.resolve_instance_choice(gm).size() != 2 \
 			or p1.hand.size() != 13 or p1.deck.discards.size() != 2:
-		printerr("locations: P1 should owe and resolve Cycle on its turn of the round")
+		printerr("instances: P1 should owe and resolve Cycle on its turn of the round")
 		ok = false
 	gm.draw_and_end_turn()
 	if gm.has_pending_choice():
-		printerr("locations: Cycle's choice belongs to its reveal round only")
+		printerr("instances: Cycle's choice belongs to its reveal round only")
 		ok = false
 	gm.free()
 
 	# Gift: 2 cards from P0 to P1, then 2 back from P1 on its turn.
-	gm = _location_gm([ev.GIFT])
+	gm = _instance_gm([&"gift"])
 	p0 = gm.players[0]
 	p1 = gm.players[1]
 	var gift: Array[Card] = [p0.hand[3], p0.hand[4]]
 	if gm.resolve_choice(gift) != "" or p0.hand.size() != 11 or p1.hand.size() != 15 \
 			or not p1.hand.has(gift[0]):
-		printerr("locations: Gift should move 2 cards from P0 to P1")
+		printerr("instances: Gift should move 2 cards from P0 to P1")
 		ok = false
 	gm.draw_and_end_turn()
-	GreedyAI.resolve_location_choice(gm)
+	GreedyAI.resolve_instance_choice(gm)
 	if p1.hand.size() != 13 or p0.hand.size() != 14:
-		printerr("locations: P1 should gift 2 back on its turn (P0 %d, P1 %d)"
+		printerr("instances: P1 should gift 2 back on its turn (P0 %d, P1 %d)"
 			% [p0.hand.size(), p1.hand.size()])
 		ok = false
 	gm.free()
 
+	# Two choices on one turn: both are asked for, one after the other.
+	gm = _instance_gm([MatchInstance.custom("discard choose 1"),
+		MatchInstance.custom("give choose 1")], 31, false, [1, 1] as Array[int])
+	p0 = gm.players[0]
+	if gm.revealed_instances.size() != 1:
+		printerr("instances: only one instance turns up per round")
+		ok = false
+	gm.free()
+	var both := _held_instance_gm(MatchInstance.custom("discard choose 1; give choose 1"))
+	p0 = both.players[0]
+	both.reveal_next_instance()
+	if both.pending_choice_verb() != "discard" or both.resolve_choice([p0.hand[0]] as Array[Card]) != "" \
+			or both.pending_choice_verb() != "give" or both.resolve_choice([p0.hand[0]] as Array[Card]) != "" \
+			or both.has_pending_choice() or p0.hand.size() != 11:
+		printerr("instances: one instance's two choices should be asked in order")
+		ok = false
+	both.free()
+
 	# Surge: +3 energy on every player's turn of the reveal round only.
-	gm = _location_gm([ev.SURGE])
+	gm = _instance_gm([&"surge"])
 	var surge := [gm.players[0].max_energy]
 	gm.draw_and_end_turn()
 	surge.append(gm.players[1].max_energy)
 	gm.draw_and_end_turn()
 	surge.append(gm.players[0].max_energy)
 	if surge != [6, 6, 4]:
-		printerr("locations: Surge energy should read [6, 6, 4], got %s" % str(surge))
+		printerr("instances: Surge energy should read [6, 6, 4], got %s" % str(surge))
 		ok = false
 	gm.free()
 
-	# Overcharge: on reveal, +2 max energy for good, shown ahead for P1 too.
-	gm = _location_gm([ev.OVERCHARGE])
+	# Overcharge: Reveal, +2 max energy for good, shown ahead for P1 too.
+	gm = _instance_gm([&"overcharge"])
 	if gm.players[0].max_energy != 5 or gm.upcoming_energy(gm.players[1]) != 5:
-		printerr("locations: Overcharge should make the first turn 5 for everyone")
+		printerr("instances: Overcharge should make the first turn 5 for everyone")
 		ok = false
 	gm.draw_and_end_turn()
 	if gm.players[1].max_energy != 5:
-		printerr("locations: Overcharge should reach P1 on its turn of the round")
+		printerr("instances: Overcharge should reach P1 on its turn of the round")
 		ok = false
 	gm.draw_and_end_turn()
 	if gm.players[0].max_energy != 6 or gm.upcoming_energy(gm.players[1]) != 6:
-		printerr("locations: Overcharge's +2 should last (P0's second turn 6, got %d)"
+		printerr("instances: Overcharge's +2 should last (P0's second turn 6, got %d)"
 			% gm.players[0].max_energy)
 		ok = false
 	gm.free()
 
 	# Extra Draw: one more card per draw.
-	gm = _location_gm([ev.EXTRA_DRAW])
+	gm = _instance_gm([&"extra_draw"])
 	gm.draw_and_end_turn()
 	if gm.draw_count() != 2 or gm.players[0].hand.size() != 15:
-		printerr("locations: Extra Draw should draw 2 instead of 1")
+		printerr("instances: Extra Draw should draw 2 instead of 1")
 		ok = false
 	gm.free()
 
 	# Attrition: a random card discarded at the start of every turn.
-	gm = _location_gm([ev.ATTRITION])
+	gm = _instance_gm([&"attrition"])
 	if gm.players[0].hand.size() != 12 or gm.players[0].deck.discards.size() != 1:
-		printerr("locations: Attrition should discard 1 at the start of P0's turn")
+		printerr("instances: Attrition should discard 1 at the start of P0's turn")
 		ok = false
 	gm.draw_and_end_turn()
 	if gm.players[1].hand.size() != 12:
-		printerr("locations: Attrition should hit P1's turn too")
+		printerr("instances: Attrition should hit P1's turn too")
 		ok = false
 	gm.free()
 
 	# Coin Rush: each card played this round gives a coin; next round, none.
-	gm = _location_gm([ev.COIN_RUSH])
+	gm = _instance_gm([&"coin_rush"])
 	var run: Array[Card] = [_card(5, "hearts"), _card(6, "hearts"), _card(7, "hearts")]
 	_known_hand(gm, run)
 	gm.move_cards_to_new_meld(run)
-	if gm.commit_turn() != "" or gm.players[0].coins != 3:
-		printerr("locations: Coin Rush should pay 3 coins for 3 cards, got %d"
+	if gm.pending_coins() != 3 or gm.commit_turn() != "" or gm.players[0].coins != 3:
+		printerr("instances: Coin Rush should pay 3 coins for 3 cards, got %d"
 			% gm.players[0].coins)
 		ok = false
 	gm.draw_and_end_turn()
@@ -1511,80 +1541,167 @@ func _test_locations() -> bool:
 	gm.move_cards_to_new_meld(more)
 	gm.commit_turn()
 	if gm.players[0].coins != 3:
-		printerr("locations: Coin Rush pays only in its reveal round")
+		printerr("instances: Coin Rush pays only in its reveal round")
+		ok = false
+	gm.free()
+
+	# Combo coins: a card played into an instance's combo earns COMBO_COINS.
+	gm = _instance_gm([&"surge"])
+	var combo := gm.revealed_instances[0].combo
+	var extend: Card
+	if combo[0].rank == combo[1].rank:
+		var missing := Deck.SUITS.filter(func(su: String) -> bool:
+			return combo.all(func(cc: Card) -> bool: return cc.suit != su))
+		extend = _card(combo[0].rank, missing[0])
+	else:
+		var hi := combo.map(func(cc: Card) -> int: return cc.rank).max() as int
+		var lo := combo.map(func(cc: Card) -> int: return cc.rank).min() as int
+		extend = _card(hi + 1 if hi < 13 else lo - 1, combo[0].suit)
+	_known_hand(gm, [extend] as Array[Card])
+	gm.add_cards_to_meld([extend] as Array[Card], gm.board.meld_of(combo[0]))
+	if gm.pending_combo_coins() != MatchInstance.COMBO_COINS or gm.commit_turn() != "" \
+			or gm.players[0].coins != MatchInstance.COMBO_COINS:
+		printerr("instances: playing into an instance's combo should pay %d coin(s), got %d"
+			% [MatchInstance.COMBO_COINS, gm.players[0].coins])
 		ok = false
 	gm.free()
 
 	# Open Decks: every deck's top is public.
-	gm = _location_gm([ev.OPEN_DECKS])
-	var plain := _location_gm([])
+	gm = _instance_gm([&"open_decks"])
+	var plain := _instance_gm([])
 	if not gm.top_is_public(gm.players[1].deck.peek()) \
 			or plain.top_is_public(plain.players[1].deck.peek()):
-		printerr("locations: Open Decks should make plain deck tops public")
+		printerr("instances: Open Decks should make plain deck tops public")
 		ok = false
 	gm.free()
 	plain.free()
 
+	# Wild Card: a joker from your own deck into your hand.
+	gm = _held_instance_gm(&"wild_card", true)
+	_known_hand(gm, [_card(5, "hearts")] as Array[Card])
+	gm.reveal_next_instance()
+	if gm.players[0].hand.size() != 3 or not gm.players[0].hand.any(func(c: Card) -> bool:
+			return c.is_joker):
+		printerr("instances: Wild Card should put one of your jokers in your hand")
+		ok = false
+	gm.free()
+
+	# Jumble: the picked cards become naturals of a random rank and suit.
+	gm = _held_instance_gm(MatchInstance.custom("jumble all joker"))
+	var j1 := Card.new()
+	j1.is_joker = true
+	var j2 := Card.new()
+	j2.is_joker = true
+	_known_hand(gm, [j1, j2] as Array[Card])
+	gm.reveal_next_instance()
+	if j1.is_joker or j2.is_joker or j1.rank < 1 or j1.suit == "" or gm.players[0].hand.size() != 3:
+		printerr("instances: Jumble should turn the picked cards into random naturals")
+		ok = false
+	gm.free()
+
+	# Jackpot: 7s cost 0 while it is in force; everything else keeps its cost.
+	gm = _instance_gm([&"jackpot"])
+	if gm.card_cost(_card(7, "hearts")) != 0 or gm.card_cost(_card(8, "hearts")) != 1:
+		printerr("instances: Jackpot should make 7s cost 0 and leave 8s at 1")
+		ok = false
+	gm.free()
+
+	# Syphon: 2 cards -1, 2 other cards +2, for good.
+	gm = _held_instance_gm(&"syphon")
+	var five: Array[Card] = [_card(3, "hearts"), _card(4, "hearts"), _card(5, "hearts"),
+		_card(6, "hearts"), _card(7, "hearts")]
+	_known_hand(gm, five)
+	gm.reveal_next_instance()
+	var costs := {}
+	for c in gm.players[0].hand:
+		costs[c.cost] = costs.get(c.cost, 0) + 1
+	if costs != {0: 2, 3: 2, 1: 2}:
+		printerr("instances: Syphon should make 2 cards cost 0 and 2 others 3, got %s" % costs)
+		ok = false
+	# A card dearer than the energy left can't be played.
+	var dear: Array[Card] = []
+	for c in gm.players[0].hand:
+		if c.cost == 3:
+			dear.append(c)
+	gm.players[0].max_energy = 2
+	if gm.move_cards_to_new_meld([dear[0]] as Array[Card]).find("energy") == -1:
+		printerr("instances: a 3-cost card should not be playable with 2 energy")
+		ok = false
+	gm.free()
+
+	# Black Hole: a random group (its own combo included) goes to the discard piles.
+	gm = _held_instance_gm(&"black_hole")
+	gm.deal_starting_melds()
+	var before_cards := _cards_in_game(gm) + 3
+	var discards_before := gm.players[0].deck.discards.size() + gm.players[1].deck.discards.size()
+	gm.reveal_next_instance()
+	var discards_after := gm.players[0].deck.discards.size() + gm.players[1].deck.discards.size()
+	if gm.board.melds.size() != 2 or discards_after != discards_before + 3 \
+			or _cards_in_game(gm) != before_cards:
+		printerr("instances: Black Hole should send one whole group to the discard piles")
+		ok = false
+	for c in gm.players[0].deck.discards + gm.players[1].deck.discards:
+		if c.deck_owner == MatchInstance.NO_OWNER:
+			printerr("instances: a destroyed combo card should belong to a discard pile's owner")
+			ok = false
+	gm.free()
+
 	# An early reveal applies to the current player straight away.
-	gm = GameManager.new()
-	gm.start_energy = 3
-	gm.location_deck = [MatchLocation.new(ev.SURGE)] as Array[MatchLocation]
-	gm.location_rounds = [5]
-	gm.setup(["P0", "P1"], 13, 3)
-	if not gm.revealed_locations.is_empty() or not gm.reveal_next_location() \
+	gm = _held_instance_gm(&"surge")
+	if not gm.revealed_instances.is_empty() or not gm.reveal_next_instance() \
 			or gm.players[0].max_energy != 6 or gm.board.melds.size() != 1:
-		printerr("locations: an early Surge should give the current player 6 energy")
+		printerr("instances: an early Surge should give the current player 6 energy")
 		ok = false
 	gm.free()
 	if ok:
-		print("locations test OK")
+		print("instances test OK")
 	return ok
 
-## A 1v1 energy game with three random locations (seeded), driven move by move:
+## A 1v1 energy game with five random instances (seeded), driven move by move:
 ## pending choices resolved by the AI, the energy ceiling never exceeded, card
 ## conservation across hands, decks, discards and the table, and a finish.
-func _play_location_game(seed_value: int) -> bool:
+func _play_instance_game(seed_value: int) -> bool:
 	var gm := GameManager.new()
 	gm.start_energy = 3
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
-	gm.location_deck = MatchLocation.draw(3, rng)
+	gm.instance_deck = MatchInstance.draw(5, rng)
 	gm.setup(["P0", "P1"], 13, seed_value, true)
 	gm.draw_per_turn = 2
 	gm.deal_starting_melds()
 	var titles := PackedStringArray()
-	for e in gm.revealed_locations + gm.location_deck:
+	for e in gm.revealed_instances + gm.instance_deck:
 		titles.append(e.title)
 	# Each reveal adds its 3-card combo to the game.
-	var base_cards := _cards_in_game(gm) - 3 * gm.revealed_locations.size()
+	var base_cards := _cards_in_game(gm) - 3 * gm.revealed_instances.size()
 	var turns := 0
 	var profile := AIProfile.new(1.0, 0.0, 1.0, seed_value)
 	while not gm.is_game_over and turns < MAX_TURNS:
-		GreedyAI.resolve_location_choice(gm)
+		GreedyAI.resolve_instance_choice(gm)
 		while true:
 			var move := GreedyAI.plan_move(gm, profile)
 			if move.is_empty():
 				break
 			GreedyAI.apply_move(gm, move, profile)
 			if gm.energy_spent() > gm.current_player().max_energy:
-				printerr("location game %d: overspent energy" % seed_value)
+				printerr("instance game %d: overspent energy" % seed_value)
 				return false
 		if gm.cards_played_this_turn() > 0:
 			var err := gm.commit_turn()
 			if err != "":
-				printerr("location game %d: illegal turn: %s" % [seed_value, err])
+				printerr("instance game %d: illegal turn: %s" % [seed_value, err])
 				return false
 		else:
 			gm.draw_and_end_turn()
 		turns += 1
 		if not gm.board.all_valid() \
-				or _cards_in_game(gm) != base_cards + 3 * gm.revealed_locations.size():
-			printerr("location game %d: invalid table or card count after turn %d"
+				or _cards_in_game(gm) != base_cards + 3 * gm.revealed_instances.size():
+			printerr("instance game %d: invalid table or card count after turn %d"
 				% [seed_value, turns])
 			return false
 	if not gm.is_game_over:
-		printerr("location game %d: did not finish" % seed_value)
+		printerr("instance game %d: did not finish" % seed_value)
 		return false
-	print("location game %d (%s): finished in %d turns" % [seed_value, ", ".join(titles), turns])
+	print("instance game %d (%s): finished in %d turns" % [seed_value, ", ".join(titles), turns])
 	gm.free()
 	return true

@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="InstanceData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/instance_data.gd" id="1_loc"]
+
+[resource]
+script = ExtResource("1_loc")
+id = &"jackpot"
+title = "Jackpot"
+kind = "ongoing"
+text = "7s cost 0 Energy."
+effect = "cost rank=7 0"
+order = 10
