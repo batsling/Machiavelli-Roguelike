@@ -45,30 +45,30 @@ func refresh_seats() -> void:
 	_ui.round_label.text = "Round %d" % gm.round_number
 	_refresh_lives()
 	_refresh_stock_top()
-	_refresh_events()
+	_refresh_locations()
 
-## The match's events: a face-up panel per revealed event (an on-reveal event
-## dims once its round is over) and a face-down panel per event still to come,
-## naming the round it turns up on. Hidden when the match has no events.
-func _refresh_events() -> void:
+## The match's locations: a face-up panel per revealed location (an on-reveal location
+## dims once its round is over) and a face-down panel per location still to come,
+## naming the round it turns up on. Hidden when the match has no locations.
+func _refresh_locations() -> void:
 	var gm := _ui.gm
-	_ui._clear_children(_ui.events_row)
-	var upcoming := gm.upcoming_events()
-	_ui.events_row.visible = not gm.revealed_events.is_empty() or not upcoming.is_empty()
-	for e in gm.revealed_events:
+	_ui._clear_children(_ui.locations_row)
+	var upcoming := gm.upcoming_locations()
+	_ui.locations_row.visible = not gm.revealed_locations.is_empty() or not upcoming.is_empty()
+	for e in gm.revealed_locations:
 		var live := e.is_ongoing() or e.revealed_round == gm.round_number
-		_ui.events_row.add_child(_make_event_panel(e.title, e.kind_label(),
+		_ui.locations_row.add_child(_make_location_panel(e.title, e.kind_label(),
 			"%s Combo: %s" % [e.text, e.combo_label()],
 			UITheme.COL_CHIP_ACTIVE if live else Color(1, 1, 1, 0.15), live))
 	for slot: Dictionary in upcoming:
-		_ui.events_row.add_child(_make_event_panel("?", "Face down",
+		_ui.locations_row.add_child(_make_location_panel("?", "Face down",
 			"Revealed at the start of round %d, with a combo for the table." % slot["round"],
 			Color(1, 1, 1, 0.15), false))
 
-func _make_event_panel(title: String, kind: String, body: String, edge: Color,
+func _make_location_panel(title: String, kind: String, body: String, edge: Color,
 		live: bool) -> PanelContainer:
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = UITheme.EVENT_PANEL_SIZE
+	panel.custom_minimum_size = UITheme.LOCATION_PANEL_SIZE
 	var sb := CardRenderer.panel_style(UITheme.COL_CHIP_BG, 8)
 	sb.border_color = edge
 	sb.set_border_width_all(2)
@@ -86,7 +86,7 @@ func _make_event_panel(title: String, kind: String, body: String, edge: Color,
 	var text := Label.new()
 	text.text = body
 	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	text.custom_minimum_size = Vector2(UITheme.EVENT_PANEL_SIZE.x - 16, 0)
+	text.custom_minimum_size = Vector2(UITheme.LOCATION_PANEL_SIZE.x - 16, 0)
 	text.add_theme_font_size_override("font_size", 12)
 	text.add_theme_color_override("font_color", Color(1, 1, 1, 0.85 if live else 0.45))
 	col.add_child(text)
@@ -277,7 +277,7 @@ func refresh_board() -> void:
 	# The "+ New group" click target only appears while cards are selected;
 	# drags can always land on empty felt instead. It (and the hover hint) tuck
 	# into a free patch of felt like any group, but keep no lasting spot.
-	# While you owe an event a choice, selecting picks cards for it — no zone.
+	# While you owe a location a choice, selecting picks cards for it — no zone.
 	if not _ui.selected.is_empty() and _ui._is_human_turn() and not _ui.gm.has_pending_choice():
 		var zone := _make_new_group_zone()
 		_ui.board_flow.add_child(zone)

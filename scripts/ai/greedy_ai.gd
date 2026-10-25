@@ -75,7 +75,7 @@ static func take_turn(gm: GameManager, profile: AIProfile = null,
 	if enemy != null and enemy.wants_control(gm):
 		enemy.run_controlled_turn(gm)
 		return
-	resolve_event_choice(gm)
+	resolve_location_choice(gm)
 	while true:
 		var move := plan_move(gm, profile, enemy)
 		if move.is_empty():
@@ -1042,11 +1042,11 @@ static func _seems_important(c: Card, hand: Array[Card]) -> bool:
 			return true
 	return false
 
-## Settle the current player's pending event choice (Cycle's discards, Gift's
+## Settle the current player's pending location choice (Cycle's discards, Gift's
 ## gifts), if any, by giving up the cards it can best spare: the ones with the
 ## fewest partners in hand (jokers never, while anything else is left). Returns
 ## the chosen cards (empty when there was no choice).
-static func resolve_event_choice(gm: GameManager) -> Array[Card]:
+static func resolve_location_choice(gm: GameManager) -> Array[Card]:
 	var chosen: Array[Card] = []
 	if not gm.has_pending_choice():
 		return chosen
@@ -1057,7 +1057,7 @@ static func resolve_event_choice(gm: GameManager) -> Array[Card]:
 	chosen.assign(ranked.slice(0, gm.pending_choice()["count"]))
 	var err := gm.resolve_choice(chosen)
 	if err != "":
-		push_warning("GreedyAI could not resolve an event choice (%s)" % err)
+		push_warning("GreedyAI could not resolve a location choice (%s)" % err)
 	return chosen
 
 ## How much a hand card is worth keeping: 100 for a joker, else one point per

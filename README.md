@@ -22,8 +22,8 @@ this project.
 | Lives | A run starts with 3. Losing a match costs one; at 0 the run is over. |
 | Map | Slay the Spire style, three nodes in a line, one enemy each. Win to unlock the next node; lose and you may retry the same node. Beat node 3 to win the run. |
 | Enemies | Three plain opponents with no special effects, ramping up in AI skill. |
-| Events | Three random rule cards per match, revealed at the start of rounds 1, 3 and 5, each bringing a random combo to the table. Mechanics only, no theme yet. |
-| Coins | Earned only from the Coin Rush event for now; banked into the run. Nothing spends them yet. |
+| Locations | Three random rule cards per match, revealed at the start of rounds 1, 3 and 5, each bringing a random combo to the table. Mechanics only, no theme yet. |
+| Coins | Earned only from the Coin Rush location for now; banked into the run. Nothing spends them yet. |
 | Not yet | Score, combo/streak bonus, card effects, shop. See the design doc. |
 
 ## Rules
@@ -66,31 +66,32 @@ this project.
   passes ends the match and the fewest cards wins (a shared tie counts as a win
   for you).
 
-## Events
+## Locations
 
-Each match draws 3 events at random from the pool below. One is turned face up
+Each match draws 3 locations at random from the pool below. One is turned face up
 at the start of round 1, the next at round 3, the last at round 5, so at most
 three are in play. They show in a row above the table: face up once revealed
-(an on-reveal event dims after its round), face down with their round until
+(an on-reveal location dims after its round), face down with their round until
 then.
 
-Every event affects **every player**, not just whoever's turn it is:
+Every location affects **every player**, not just whoever's turn it is:
 
-- **On reveal** events act once on each player's turn of the round they are
+- **On reveal** locations act once on each player's turn of the round they are
   revealed in — that turn is "this turn" in their text.
-- **Ongoing** events stay in force for the rest of the match.
+- **Ongoing** locations stay in force for the rest of the match.
 
-Every event also brings a **combo**: a random valid three-card group (a set or
+Every location also brings a **combo**: a random valid three-card group (a set or
 a run) made of fresh cards from outside both players' decks. It lands on the
-table the moment the event is revealed, lit in gold, and anyone may build on it
-or borrow from it like any other group (after opening). The event panel names
+table the moment the location is revealed, lit in gold, and anyone may build on it
+or borrow from it like any other group (after opening). The location panel names
 its combo.
 
+Locations used to be called events; *events* will be something else.
 Names, kinds and rule text come from the **Locations** sheet of
 `tools/Machiavelli Roguelike.xlsx` (see [Content from the spreadsheet](#content-from-the-spreadsheet));
 the rules themselves are code.
 
-| Event | Kind | Rule |
+| Location | Kind | Rule |
 | --- | --- | --- |
 | Cycle | On reveal | Choose 2 cards to discard, then draw 2. |
 | Gift | On reveal | Choose 2 cards to give your opponent. |
@@ -102,10 +103,10 @@ the rules themselves are code.
 | Open Decks | Ongoing | The top card of every deck is face up. |
 
 Discards go face up to the owner's deck's discard pile, which is shuffled
-back in when that deck runs dry. When an event asks you to choose cards, the
+back in when that deck runs dry. When a location asks you to choose cards, the
 status line says so and a **Confirm** button appears: click the cards in your
 hand, then Confirm. Ending the turn and drawing wait until you do. Enemies pick
-the cards they can best spare. To stop events ending a match by themselves,
+the cards they can best spare. To stop locations ending a match by themselves,
 Gift never takes your last card and Attrition skips a one-card hand.
 
 ## The run
@@ -206,7 +207,7 @@ writes them to `user://settings.cfg` so they survive a restart.
 - Include jokers, 2 per deck (on); starting combos (on)
 - Starting energy (3), energy gained per turn (1), energy cap (10, 0 = none)
 - Lives (3)
-- Events per match (3, revealed on rounds 1, 3, 5; 0 turns them off)
+- Locations per match (3, revealed on rounds 1, 3, 5; 0 turns them off)
 - **Enemy AI** — the four dials below for each enemy on the map; an enemy left
   untouched keeps its designed personality
 
@@ -248,15 +249,15 @@ python3 tools/generate_locations.py --check   # exit 1 if data/ is out of date
 ```
 
 **Locations** (`Name | Type | Description`) are the rule cards revealed during a
-match (`MatchEvent`). The sheet decides what each is called, its kind (*On
+match (`MatchLocation`). The sheet decides what each is called, its kind (*On
 reveal* / *Ongoing*) and its card text; what it *does* is code in
 `GameManager`, matched to the row by id (the Name slugified, `Coin Rush` →
-`coin_rush`, see `MatchEvent.ID_NAMES`). So:
+`coin_rush`, see `MatchLocation.ID_NAMES`). So:
 
 - **Rename or reword** a location: edit the sheet and regenerate.
 - **Remove** one from the game: delete its row and regenerate.
 - **Add** one: add the row; it stays out of the pool, with a warning, until its
-  rule is written and added to `MatchEvent.Id` / `ID_NAMES` / `RULE_KINDS`.
+  rule is written and added to `MatchLocation.Id` / `ID_NAMES` / `RULE_KINDS`.
 
 `smoke_test.gd` holds the two together: every rule needs a row, the sheet's
 Type must match how the rule is written, and the numbers the text promises
@@ -283,12 +284,12 @@ Scripts are grouped by layer: `scripts/engine/` (rules and game state, no UI),
   `play_budget`, `upcoming_energy`), commit validation, draw/pass, win
   detection; emits the signals the UI listens to. Also the layout moves
   (pictures, plays off pictures, crossings) kept from v1
-- `match_event.gd` — `MatchEvent`: an event's id, kind (on reveal / ongoing),
+- `match_location.gd` — `MatchLocation`: a location's id, kind (on reveal / ongoing),
   title and rule text (read from the Locations sheet's data), the pool and a
   random draw. The rules themselves live in
-  `GameManager` (`event_deck`, `event_rounds`, `revealed_events`,
-  `is_event_active`, `pending_choice` / `resolve_choice`, `draw_count`,
-  `top_is_public`, `reveal_next_event`)
+  `GameManager` (`location_deck`, `location_rounds`, `revealed_locations`,
+  `is_location_active`, `pending_choice` / `resolve_choice`, `draw_count`,
+  `top_is_public`, `reveal_next_location`)
 - `run_state.gd` — `RunState`: one run's lives, coins and map (rows of `MapNode`s,
   each with an enemy and links to the next row); `available_nodes`, `begin`,
   `record_win`, `record_loss`, `is_won`, `is_lost`. `RunState.linear` builds
@@ -350,16 +351,16 @@ godot --headless --path . --script res://tests/layout_check.gd       # crossings
 godot --headless --path . --script res://tests/opponent_view_check.gd # glass/slime reveal, green cap
 ```
 
-`smoke_test.gd` covers every event (the reveal schedule, each rule, choices
+`smoke_test.gd` covers every location (the reveal schedule, each rule, choices
 blocking play until resolved, an early reveal) and ten full games with three
-random events each, plus per-player decks (dealing, ownership, draws, custom
+random locations each, plus per-player decks (dealing, ownership, draws, custom
 decks, deck-out passes), energy (start, growth, cap, no carry-over, refunds,
 free rearranging, energy off in sandbox), the AI staying inside its energy
 (including trimming a long meld), the run map (lives, retry, unlock, win, loss),
 the joker rules, and full AI-vs-AI games — including six 1v1 games under run
 rules that check every single AI move against the mover's energy.
 `ui_mode_check.gd` walks a whole run through the UI: map, locked nodes, the
-events row, an event choice through the Confirm button, coins banking into the
+locations row, a location choice through the Confirm button, coins banking into the
 run, the
 first match's rules, the energy display and green-cap gating, win → next node
 under changed settings, loss → life lost and retry, out of lives → new run,

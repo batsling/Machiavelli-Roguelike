@@ -1,28 +1,28 @@
-class_name MatchEvent
+class_name MatchLocation
 extends RefCounted
 
-## A board event: a rule card revealed face up during a match, Marvel Snap
-## location style. Events are mechanics only for now (no theme). Each match draws
-## a few from the pool (GameManager.event_deck) and reveals one at the start of
-## each round in GameManager.event_rounds, so at most that many are active.
+## A location: a rule card revealed face up during a match, in the style of
+## Marvel Snap's locations. Locations are mechanics only for now (no theme).
+## Each match draws a few from the pool (GameManager.location_deck) and reveals one at the start of
+## each round in GameManager.location_rounds, so at most that many are active.
 ##
-## Every event affects every player, not just whoever's turn it is:
-##  - ON_REVEAL events act once per player, on each player's turn in the round
-##    the event is revealed (that turn is "this turn" in their text). A choice
+## Every location affects every player, not just whoever's turn it is:
+##  - ON_REVEAL locations act once per player, on each player's turn in the round
+##    the location is revealed (that turn is "this turn" in their text). A choice
 ##    ("choose 2 cards ...") becomes a pending choice the player resolves before
 ##    they play (GameManager.pending_choice / resolve_choice).
-##  - ONGOING events stay in force for the rest of the match.
-## Every event also comes with a combo: a random valid three-card group built
+##  - ONGOING locations stay in force for the rest of the match.
+## Every location also comes with a combo: a random valid three-card group built
 ## from fresh cards that belong to neither player's deck (Card.deck_owner -1).
-## It joins the table the moment the event is revealed, for anyone to build on.
+## It joins the table the moment the location is revealed, for anyone to build on.
 ## GameManager applies the rules; this class names and describes them and
 ## builds the combos.
 ##
 ## The NAMES, kinds and rule text come from the `Locations` sheet of
 ## tools/Machiavelli Roguelike.xlsx (via data/locations/, see Locations); the
 ## rules themselves are code, matched to a sheet row by ID_NAMES. The pool is
-## the rows that have a rule: delete a row and that event leaves the game; add a
-## row with no rule yet and it waits, with a warning, until one is written.
+## the rows that have a rule: delete a row and that location leaves the game;
+## add a row with no rule yet and it waits, with a warning, until one is written.
 
 enum Kind { ON_REVEAL, ONGOING }
 
@@ -62,7 +62,7 @@ const RULE_KINDS := {
 	Id.OPEN_DECKS: Kind.ONGOING,
 }
 
-## Cards chosen by the CYCLE and GIFT events.
+## Cards chosen by the CYCLE and GIFT locations.
 const CHOICE_COUNT := 2
 ## Bonus energy SURGE gives on the reveal turn.
 const SURGE_ENERGY := 3
@@ -75,10 +75,10 @@ var id: Id = Id.CYCLE
 var kind: Kind = Kind.ON_REVEAL
 var title := ""
 var text := ""
-## The round this event was revealed in, or 0 while it is still face down.
+## The round this location was revealed in, or 0 while it is still face down.
 var revealed_round := 0
-## The combo this event puts on the table when revealed (built then, so it
-## stays secret while the event is face down); empty until revealed.
+## The combo this location puts on the table when revealed (built then, so it
+## stays secret while the location is face down); empty until revealed.
 var combo: Array[Card] = []
 
 func _init(id_value: Id = Id.CYCLE) -> void:
@@ -86,13 +86,13 @@ func _init(id_value: Id = Id.CYCLE) -> void:
 	kind = RULE_KINDS[id]
 	var loc := Locations.get_by_id(ID_NAMES[id])
 	if loc == null:
-		push_warning("[MatchEvent] no '%s' row in the Locations sheet" % ID_NAMES[id])
+		push_warning("[MatchLocation] no '%s' row in the Locations sheet" % ID_NAMES[id])
 		title = String(ID_NAMES[id]).capitalize()
 		return
 	title = loc.title
 	text = loc.text
 	if loc.kind != _kind_name(kind):
-		push_error("[MatchEvent] the sheet makes %s '%s', but its rule is written as '%s'"
+		push_error("[MatchLocation] the sheet makes %s '%s', but its rule is written as '%s'"
 			% [title, loc.kind, _kind_name(kind)])
 
 static func _kind_name(kind_value: Kind) -> String:
@@ -111,11 +111,11 @@ func is_revealed() -> bool:
 func is_ongoing() -> bool:
 	return kind == Kind.ONGOING
 
-## "On reveal" / "Ongoing", for the event panel and the log.
+## "On reveal" / "Ongoing", for the location panel and the log.
 func kind_label() -> String:
 	return "Ongoing" if is_ongoing() else "On reveal"
 
-## "7♥ 8♥ 9♥" — the combo's cards, for the event panel and the log.
+## "7♥ 8♥ 9♥" — the combo's cards, for the location panel and the log.
 func combo_label() -> String:
 	var parts := PackedStringArray()
 	for c in combo:
@@ -151,29 +151,29 @@ static func _combo_card(rank: int, suit: String) -> Card:
 	c.deck_owner = NO_OWNER
 	return c
 
-## A fresh copy of every event in the pool: each sheet row with a rule behind
+## A fresh copy of every location in the pool: each sheet row with a rule behind
 ## it, in sheet order.
-static func pool() -> Array[MatchEvent]:
-	var out: Array[MatchEvent] = []
+static func pool() -> Array[MatchLocation]:
+	var out: Array[MatchLocation] = []
 	for loc in Locations.all():
 		var id_value := id_for(loc.id)
 		if id_value < 0:
-			push_warning("[MatchEvent] location '%s' has no rule in code yet; left out of the pool"
+			push_warning("[MatchLocation] location '%s' has no rule in code yet; left out of the pool"
 				% loc.title)
 			continue
-		out.append(MatchEvent.new(id_value))
+		out.append(MatchLocation.new(id_value))
 	return out
 
-## `count` distinct events drawn at random from the pool, fresh for one match.
+## `count` distinct locations drawn at random from the pool, fresh for one match.
 ## Pass an rng for a reproducible draw.
-static func draw(count: int, rng: RandomNumberGenerator = null) -> Array[MatchEvent]:
+static func draw(count: int, rng: RandomNumberGenerator = null) -> Array[MatchLocation]:
 	var all := pool()
 	for i in range(all.size() - 1, 0, -1):
 		var j := rng.randi_range(0, i) if rng != null else randi_range(0, i)
 		var tmp := all[i]
 		all[i] = all[j]
 		all[j] = tmp
-	var out: Array[MatchEvent] = []
+	var out: Array[MatchLocation] = []
 	for i in mini(count, all.size()):
 		out.append(all[i])
 	return out

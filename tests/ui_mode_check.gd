@@ -50,12 +50,12 @@ func _init() -> void:
 		printerr("run rules wrong: draw %d, plays %d, hand cap %d, meter %d"
 			% [gm.draw_per_turn, gm.max_plays_per_turn, gm.max_hand_size, gm.meter_max])
 		ok = false
-	# 3 energy on the first turn, plus whatever the round-1 event adds.
+	# 3 energy on the first turn, plus whatever the round-1 location adds.
 	var first_energy := 3
-	if gm.revealed_events[0].id == MatchEvent.Id.OVERCHARGE:
-		first_energy += MatchEvent.OVERCHARGE_ENERGY
-	if gm.revealed_events[0].id == MatchEvent.Id.SURGE:
-		first_energy += MatchEvent.SURGE_ENERGY
+	if gm.revealed_locations[0].id == MatchLocation.Id.OVERCHARGE:
+		first_energy += MatchLocation.OVERCHARGE_ENERGY
+	if gm.revealed_locations[0].id == MatchLocation.Id.SURGE:
+		first_energy += MatchLocation.SURGE_ENERGY
 	if not gm.energy_on() or gm.players[0].max_energy != first_energy \
 			or gm.energy_left() != first_energy:
 		printerr("the first turn should start with %d energy" % first_energy)
@@ -77,7 +77,7 @@ func _init() -> void:
 		if jokers != 2:
 			printerr("%s's deck should hold 2 jokers, found %d" % [p.display_name, jokers])
 			ok = false
-	# Two starting combos plus the round-1 event's combo.
+	# Two starting combos plus the round-1 location's combo.
 	if gm.board.melds.size() != 3 or not gm.players[0].has_opened:
 		printerr("starting combos should open both players with a meld each")
 		ok = false
@@ -99,21 +99,21 @@ func _init() -> void:
 		printerr("mid-match the button should read Restart run, got '%s'" % ui.new_game_btn.text)
 		ok = false
 
-	# --- Events: three per match, one face up at the deal ------------------------
-	if gm.revealed_events.size() != 1 or gm.upcoming_events().size() != 2 \
-			or ui.events_row.get_child_count() != 3 or not ui.events_row.visible:
-		printerr("a match should show 3 events, 1 revealed at the deal")
+	# --- Locations: three per match, one face up at the deal ------------------------
+	if gm.revealed_locations.size() != 1 or gm.upcoming_locations().size() != 2 \
+			or ui.locations_row.get_child_count() != 3 or not ui.locations_row.visible:
+		printerr("a match should show 3 locations, 1 revealed at the deal")
 		ok = false
 	# Settle any choice the random deal asked for, then reveal a Cycle early and
 	# work its choice through the Confirm button.
 	if gm.has_pending_choice():
-		GreedyAI.resolve_event_choice(gm)
-	gm.event_deck = [MatchEvent.new(MatchEvent.Id.CYCLE)] as Array[MatchEvent]
-	gm.reveal_next_event()
+		GreedyAI.resolve_location_choice(gm)
+	gm.location_deck = [MatchLocation.new(MatchLocation.Id.CYCLE)] as Array[MatchLocation]
+	gm.reveal_next_location()
 	ui._refresh()
 	if not ui.choice_btn.visible or not ui.choice_btn.disabled or not ui.end_turn_btn.disabled \
 			or not ui.draw_btn.disabled:
-		printerr("an event choice should show a disabled Confirm and block ending the turn")
+		printerr("a location choice should show a disabled Confirm and block ending the turn")
 		ok = false
 	var hand_before: int = gm.players[0].hand.size()
 	ui.selected.assign([gm.players[0].hand[0], gm.players[0].hand[1]])
@@ -147,7 +147,7 @@ func _init() -> void:
 	ui.settings.rogue_draw_per_turn = 3
 	ui.settings.rogue_start_hand_size = 10
 	ui.settings.rogue_start_energy = 4
-	ui.settings.rogue_events = 0  # no events next match, so its energy is exactly 4
+	ui.settings.rogue_locations = 0  # no locations next match, so its energy is exactly 4
 	gm.players[0].coins = 4
 	gm._end_game([gm.players[0]])
 	ui._refresh()
@@ -171,10 +171,10 @@ func _init() -> void:
 	ui.settings.rogue_draw_per_turn = 2
 	ui.settings.rogue_start_hand_size = 13
 	ui.settings.rogue_start_energy = 3
-	if ui.events_row.visible:
-		printerr("a match with 0 events should hide the events row")
+	if ui.locations_row.visible:
+		printerr("a match with 0 locations should hide the locations row")
 		ok = false
-	ui.settings.rogue_events = 3
+	ui.settings.rogue_locations = 3
 
 	# --- Loss: a life lost, the node stays open ----------------------------------
 	gm._end_game([gm.players[1]])
@@ -226,8 +226,8 @@ func _init() -> void:
 	if gm.players.size() != 4 or gm.max_plays_per_turn != 12 or gm.draw_per_turn != 1:
 		printerr("sandbox game should use sandbox settings")
 		ok = false
-	if gm.energy_on() or ui.lives_label.visible or ui.events_row.visible:
-		printerr("sandbox games have no energy, lives or events")
+	if gm.energy_on() or ui.lives_label.visible or ui.locations_row.visible:
+		printerr("sandbox games have no energy, lives or locations")
 		ok = false
 	if gm.meter_gain != 2 or not gm.meter_per_card or gm.meter_max != 20:
 		printerr("sandbox game should use sandbox meter settings: max %d gain %d per_card %s"

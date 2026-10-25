@@ -22,12 +22,12 @@ extends Node
 ##    own meld unlocks table play immediately (even mid-turn), and once a
 ##    turn containing such a meld is committed the player stays open for the
 ##    rest of the game. This applies to every player, human and AI.
-##  - Events (optional, see MatchEvent): rule cards in event_deck are revealed
-##    one at the start of each round listed in event_rounds and affect every
+##  - Locations (optional, see MatchLocation): rule cards in location_deck are revealed
+##    one at the start of each round listed in location_rounds and affect every
 ##    player — once on each player's turn of the reveal round (on reveal) or for
-##    the rest of the match (ongoing). A choice an event asks for is a pending
+##    the rest of the match (ongoing). A choice a location asks for is a pending
 ##    choice the current player resolves (resolve_choice) before playing. Each
-##    event also puts a random three-card combo of fresh cards (from no one's
+##    location also puts a random three-card combo of fresh cards (from no one's
 ##    deck) on the table when it is revealed.
 ##  - First player to empty their hand wins. A player who cannot draw (their
 ##    deck is empty or their hand is at the cap) passes; if every player passes
@@ -52,13 +52,13 @@ signal cards_drawn(player: PlayerState, cards: Array[Card])
 signal turn_committed(player: PlayerState, cards_played: int)
 signal player_passed(player: PlayerState)
 signal game_over(winners: Array)
-## An event was turned face up (see MatchEvent).
-signal event_revealed(event: MatchEvent)
-## Cards left a player's hand for their deck's discard pile because of an event.
+## A location was turned face up (see MatchLocation).
+signal location_revealed(location: MatchLocation)
+## Cards left a player's hand for their deck's discard pile because of a location.
 signal cards_discarded(player: PlayerState, cards: Array[Card])
-## A player handed cards from their hand to another player's hand (the Gift event).
+## A player handed cards from their hand to another player's hand (the Gift location).
 signal cards_given(giver: PlayerState, receiver: PlayerState, cards: Array[Card])
-## A player earned coins (the Coin Rush event).
+## A player earned coins (the Coin Rush location).
 signal coins_gained(player: PlayerState, amount: int)
 ## Fired when a committed hand charges a player's ultimate meter. `amount` is
 ## how much the meter actually rose (0 is never emitted), and `now_full` is
@@ -104,16 +104,16 @@ var meter_per_card := false
 var start_energy := 0
 var energy_per_turn := 1
 var energy_cap := 10
-## Events still face down, in reveal order. Set before setup (like the energy
-## rules); setup resets every event to face down. Empty = no events (sandbox).
-var event_deck: Array[MatchEvent] = []
-## The rounds an event is revealed on, one per round in order; the next face-down
-## event turns up at the start of each listed round.
-var event_rounds: Array[int] = [1, 3, 5]
-## Events turned face up this match, in reveal order.
-var revealed_events: Array[MatchEvent] = []
-# The choice the current player owes an on-reveal event this turn, or {} for
-# none: {"event": MatchEvent, "count": int}. Staging, committing and drawing
+## Locations still face down, in reveal order. Set before setup (like the energy
+## rules); setup resets every location to face down. Empty = no locations (sandbox).
+var location_deck: Array[MatchLocation] = []
+## The rounds a location is revealed on, one per round in order; the next face-down
+## location turns up at the start of each listed round.
+var location_rounds: Array[int] = [1, 3, 5]
+## Locations turned face up this match, in reveal order.
+var revealed_locations: Array[MatchLocation] = []
+# The choice the current player owes an on-reveal location this turn, or {} for
+# none: {"location": MatchLocation, "count": int}. Staging, committing and drawing
 # wait until resolve_choice settles it.
 var _pending_choice := {}
 
@@ -153,8 +153,8 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 	is_game_over = false
 	_consecutive_passes = 0
 	_pending_choice = {}
-	revealed_events.clear()
-	for e in event_deck:
+	revealed_locations.clear()
+	for e in location_deck:
 		e.revealed_round = 0
 		e.combo.clear()
 	for i in player_names.size():
@@ -711,7 +711,7 @@ func _staged_open_meld_exists() -> bool:
 			return true
 	return false
 
-## Why moving these cards is blocked right now — an event choice is still owed,
+## Why moving these cards is blocked right now — a location choice is still owed,
 ## or they would overrun the turn's play cap or energy (only the cards leaving
 ## the hand count) — or "" when the move may go ahead.
 func _stage_block_error(cards_to_move: Array[Card]) -> String:
@@ -807,8 +807,8 @@ func upcoming_energy(p: PlayerState) -> int:
 	var ceiling := _energy_ceiling(p.turns_taken + 1) + p.bonus_energy
 	# An Overcharge revealed this round still adds its bonus on p's turn if that
 	# turn has yet to come this round.
-	if p.player_id > turn_index and _revealed_this_round(MatchEvent.Id.OVERCHARGE):
-		ceiling += MatchEvent.OVERCHARGE_ENERGY
+	if p.player_id > turn_index and _revealed_this_round(MatchLocation.Id.OVERCHARGE):
+		ceiling += MatchLocation.OVERCHARGE_ENERGY
 	return ceiling
 
 func _energy_error(cost: int) -> String:
@@ -817,7 +817,7 @@ func _energy_error(cost: int) -> String:
 
 ## Set the current player's energy ceiling as their turn begins: start_energy on
 ## their first turn, energy_per_turn more each turn after, capped at energy_cap,
-## plus any event bonus (Overcharge's +2 for good, Surge's +3 on its reveal
+## plus any location bonus (Overcharge's +2 for good, Surge's +3 on its reveal
 ## turn — bonuses may go past the cap).
 func _refill_energy(p: PlayerState) -> void:
 	p.turns_taken += 1
@@ -825,8 +825,8 @@ func _refill_energy(p: PlayerState) -> void:
 		p.max_energy = 0
 		return
 	p.max_energy = _energy_ceiling(p.turns_taken) + p.bonus_energy
-	if _revealed_this_round(MatchEvent.Id.SURGE):
-		p.max_energy += MatchEvent.SURGE_ENERGY
+	if _revealed_this_round(MatchLocation.Id.SURGE):
+		p.max_energy += MatchLocation.SURGE_ENERGY
 
 ## The base energy ceiling on a player's `turn`-th turn (1 = their first).
 func _energy_ceiling(turn: int) -> int:
@@ -851,7 +851,7 @@ func commit_turn() -> String:
 	var played := cards_played_this_turn()
 	turn_committed.emit(p, played)
 	_charge_meter(p, played)
-	if played > 0 and _revealed_this_round(MatchEvent.Id.COIN_RUSH):
+	if played > 0 and _revealed_this_round(MatchLocation.Id.COIN_RUSH):
 		p.coins += played
 		coins_gained.emit(p, played)
 	if p.hand.is_empty():
@@ -906,7 +906,7 @@ func spend_meter() -> void:
 ## Why the current turn can't be committed, or "" if it is legal. Split out so
 ## commit_turn keeps a single success path (the guard clauses live here).
 func _commit_error(p: PlayerState) -> String:
-	# An owed event choice comes first. Overrunning the cap or energy is normally
+	# An owed location choice comes first. Overrunning the cap or energy is normally
 	# unreachable (staging enforces both), but the cap can be lowered mid-turn
 	# from the settings dialog.
 	var blocked := _commit_block_error(p)
@@ -925,7 +925,7 @@ func _commit_error(p: PlayerState) -> String:
 			+ "built only from your own hand."
 	return ""
 
-## Why the staged turn can't commit yet — an event choice is still owed, or it
+## Why the staged turn can't commit yet — a location choice is still owed, or it
 ## has played more than the play cap or energy allows — or "".
 func _commit_block_error(p: PlayerState) -> String:
 	if has_pending_choice():
@@ -946,7 +946,7 @@ func _commit_block_error(p: PlayerState) -> String:
 ## player can rework the board and still draw. Any other staging (a partial
 ## play, or a table left invalid mid-edit) is abandoned first, as before.
 func draw_and_end_turn() -> void:
-	# An event's choice comes first; the driver resolves it (resolve_choice).
+	# A location's choice comes first; the driver resolves it (resolve_choice).
 	if has_pending_choice():
 		return
 	if cards_played_this_turn() != 0 or not _kept_rearrangement():
@@ -977,54 +977,54 @@ func draw_and_end_turn() -> void:
 			return
 	_advance()
 
-# --- Events -------------------------------------------------------------------
-# See MatchEvent. Rule changes are read where they apply (energy refill, draw
+# --- Locations -------------------------------------------------------------------
+# See MatchLocation. Rule changes are read where they apply (energy refill, draw
 # count, commit, the AI's view of deck tops); the turn-start effects and the
 # pending choices live here.
 
-## True while an ongoing event of this id is face up.
-func is_event_active(id: MatchEvent.Id) -> bool:
-	for e in revealed_events:
+## True while an ongoing location of this id is face up.
+func is_location_active(id: MatchLocation.Id) -> bool:
+	for e in revealed_locations:
 		if e.id == id and e.is_ongoing():
 			return true
 	return false
 
-## Events still face down, each paired with the round it turns up on:
-## [{"event": MatchEvent, "round": int}], in order. Rounds past the end of
-## event_rounds never come, so those events are left out.
-func upcoming_events() -> Array[Dictionary]:
+## Locations still face down, each paired with the round it turns up on:
+## [{"location": MatchLocation, "round": int}], in order. Rounds past the end of
+## location_rounds never come, so those locations are left out.
+func upcoming_locations() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
-	for i in event_deck.size():
-		var slot := revealed_events.size() + i
-		if slot < event_rounds.size():
-			out.append({"event": event_deck[i], "round": event_rounds[slot]})
+	for i in location_deck.size():
+		var slot := revealed_locations.size() + i
+		if slot < location_rounds.size():
+			out.append({"location": location_deck[i], "round": location_rounds[slot]})
 	return out
 
 ## Cards a player draws when they draw: draw_per_turn, +1 while Extra Draw is in
 ## force.
 func draw_count() -> int:
-	return draw_per_turn + (1 if is_event_active(MatchEvent.Id.EXTRA_DRAW) else 0)
+	return draw_per_turn + (1 if is_location_active(MatchLocation.Id.EXTRA_DRAW) else 0)
 
 ## True when `card` — the top of some player's deck — can be seen by everyone:
 ## a glass card always, any card while Open Decks is in force.
 func top_is_public(card: Card) -> bool:
-	return card != null and (card.is_glass() or is_event_active(MatchEvent.Id.OPEN_DECKS))
+	return card != null and (card.is_glass() or is_location_active(MatchLocation.Id.OPEN_DECKS))
 
-## Turn the next face-down event up right now and apply it to the current player
+## Turn the next face-down location up right now and apply it to the current player
 ## as if it had been revealed at the start of their turn (other players get it on
 ## their turn this round). Returns false when there is nothing left to reveal or
-## the current player has already staged moves. Rounds in event_rounds reveal on
+## the current player has already staged moves. Rounds in location_rounds reveal on
 ## their own; this is for effects (and tests) that reveal one early.
-func reveal_next_event() -> bool:
-	if event_deck.is_empty() or not _undo_stack.is_empty():
+func reveal_next_location() -> bool:
+	if location_deck.is_empty() or not _undo_stack.is_empty():
 		return false
-	var e := _reveal(event_deck.pop_front())
+	var e := _reveal(location_deck.pop_front())
 	var p := current_player()
 	_apply_reveal(p, e)
-	if e.id == MatchEvent.Id.SURGE and energy_on():
-		p.max_energy += MatchEvent.SURGE_ENERGY
-	elif e.id == MatchEvent.Id.OVERCHARGE and energy_on():
-		p.max_energy += MatchEvent.OVERCHARGE_ENERGY
+	if e.id == MatchLocation.Id.SURGE and energy_on():
+		p.max_energy += MatchLocation.SURGE_ENERGY
+	elif e.id == MatchLocation.Id.OVERCHARGE and energy_on():
+		p.max_energy += MatchLocation.OVERCHARGE_ENERGY
 	_hand_snapshot = p.hand.duplicate()
 	board_changed.emit()
 	return true
@@ -1032,8 +1032,8 @@ func reveal_next_event() -> bool:
 func has_pending_choice() -> bool:
 	return not _pending_choice.is_empty()
 
-## The choice the current player owes an event before playing, or {} for none:
-## {"event": MatchEvent, "count": int} — pick `count` cards from hand.
+## The choice the current player owes a location before playing, or {} for none:
+## {"location": MatchLocation, "count": int} — pick `count` cards from hand.
 func pending_choice() -> Dictionary:
 	return _pending_choice
 
@@ -1042,9 +1042,9 @@ func pending_choice() -> Dictionary:
 ## them to the next player. Returns "" on success or the reason it is refused.
 func resolve_choice(cards: Array[Card]) -> String:
 	if not has_pending_choice():
-		return "There is no event choice to make."
+		return "There is no location choice to make."
 	var p := current_player()
-	var e: MatchEvent = _pending_choice["event"]
+	var e: MatchLocation = _pending_choice["location"]
 	var count: int = _pending_choice["count"]
 	var unique := {}
 	for c in cards:
@@ -1056,7 +1056,7 @@ func resolve_choice(cards: Array[Card]) -> String:
 	_pending_choice = {}
 	for c in cards:
 		p.hand.erase(c)
-	if e.id == MatchEvent.Id.GIFT:
+	if e.id == MatchLocation.Id.GIFT:
 		var receiver := players[(turn_index + 1) % players.size()]
 		receiver.hand.append_array(cards)
 		cards_given.emit(p, receiver, cards)
@@ -1078,67 +1078,67 @@ func resolve_choice(cards: Array[Card]) -> String:
 	return ""
 
 func _pending_choice_error() -> String:
-	var e: MatchEvent = _pending_choice["event"]
-	return "Resolve the %s event first: %s" % [e.title, e.text]
+	var e: MatchLocation = _pending_choice["location"]
+	return "Resolve the %s location first: %s" % [e.title, e.text]
 
 ## Turn `e` face up and put its combo on the table: a random valid group of
 ## fresh cards from outside every deck (built now, from the first player's deck
 ## rng so a seeded game replays exactly), counted into copies_in_play.
-func _reveal(e: MatchEvent) -> MatchEvent:
+func _reveal(e: MatchLocation) -> MatchLocation:
 	e.revealed_round = round_number
-	revealed_events.append(e)
+	revealed_locations.append(e)
 	if e.combo.is_empty():
-		e.combo = MatchEvent.random_combo(players[0].deck.rng)
+		e.combo = MatchLocation.random_combo(players[0].deck.rng)
 	var meld := CardSet.new()
 	for c in e.combo:
 		meld.add_card(c)
 		var key := "%d,%s" % [c.rank, c.suit]
 		_copies[key] = _copies.get(key, 0) + 1
 	board.melds.append(meld)
-	event_revealed.emit(e)
+	location_revealed.emit(e)
 	board_changed.emit()
 	return e
 
-## True when an on-reveal event of this id was revealed this round — its "this
+## True when an on-reveal location of this id was revealed this round — its "this
 ## turn" covers every player's turn in the round.
-func _revealed_this_round(id: MatchEvent.Id) -> bool:
-	for e in revealed_events:
+func _revealed_this_round(id: MatchLocation.Id) -> bool:
+	for e in revealed_locations:
 		if e.id == id and not e.is_ongoing() and e.revealed_round == round_number:
 			return true
 	return false
 
-## Event effects at the start of `p`'s turn: a new round may turn the next event
-## up, Attrition discards a random card, and an event revealed this round asks
-## for its choice. A choice never takes a player's last card, so no event can end
+## Location effects at the start of `p`'s turn: a new round may turn the next location
+## up, Attrition discards a random card, and a location revealed this round asks
+## for its choice. A choice never takes a player's last card, so no location can end
 ## a match on its own (and Attrition leaves a one-card hand alone).
-func _start_of_turn_events(p: PlayerState) -> void:
-	if turn_index == 0 and not event_deck.is_empty() \
-			and revealed_events.size() < event_rounds.size() \
-			and event_rounds[revealed_events.size()] <= round_number:
-		_reveal(event_deck.pop_front())
-	if is_event_active(MatchEvent.Id.ATTRITION) and p.hand.size() > 1:
+func _start_of_turn_locations(p: PlayerState) -> void:
+	if turn_index == 0 and not location_deck.is_empty() \
+			and revealed_locations.size() < location_rounds.size() \
+			and location_rounds[revealed_locations.size()] <= round_number:
+		_reveal(location_deck.pop_front())
+	if is_location_active(MatchLocation.Id.ATTRITION) and p.hand.size() > 1:
 		var lost := p.hand[p.deck.rng.randi_range(0, p.hand.size() - 1)]
 		p.hand.erase(lost)
 		p.deck.discard(lost)
 		var discarded: Array[Card] = [lost]
 		cards_discarded.emit(p, discarded)
-	for e in revealed_events:
+	for e in revealed_locations:
 		if not e.is_ongoing() and e.revealed_round == round_number:
 			_apply_reveal(p, e)
 
-## The once-per-player part of an on-reveal event: Overcharge raises the
+## The once-per-player part of an on-reveal location: Overcharge raises the
 ## player's max energy for good, Cycle and Gift queue a choice (Surge and Coin
 ## Rush are read where they apply).
-func _apply_reveal(p: PlayerState, e: MatchEvent) -> void:
-	if e.id == MatchEvent.Id.OVERCHARGE:
-		p.bonus_energy += MatchEvent.OVERCHARGE_ENERGY
+func _apply_reveal(p: PlayerState, e: MatchLocation) -> void:
+	if e.id == MatchLocation.Id.OVERCHARGE:
+		p.bonus_energy += MatchLocation.OVERCHARGE_ENERGY
 	var count := 0
-	if e.id == MatchEvent.Id.CYCLE:
-		count = mini(MatchEvent.CHOICE_COUNT, p.hand.size())
-	elif e.id == MatchEvent.Id.GIFT:
-		count = mini(MatchEvent.CHOICE_COUNT, p.hand.size() - 1)
+	if e.id == MatchLocation.Id.CYCLE:
+		count = mini(MatchLocation.CHOICE_COUNT, p.hand.size())
+	elif e.id == MatchLocation.Id.GIFT:
+		count = mini(MatchLocation.CHOICE_COUNT, p.hand.size() - 1)
 	if count > 0:
-		_pending_choice = {"event": e, "count": count}
+		_pending_choice = {"location": e, "count": count}
 
 # --- Mechanic-driven turns ---------------------------------------------------
 # Primitives a designed enemy uses to drive a turn that isn't an ordinary
@@ -1262,7 +1262,7 @@ func _restore_locks(locks: Dictionary) -> void:
 func _begin_turn() -> void:
 	var p := current_player()
 	_pending_choice = {}
-	_start_of_turn_events(p)
+	_start_of_turn_locations(p)
 	_refill_energy(p)
 	_hand_snapshot = p.hand.duplicate()
 	_undo_stack.clear()

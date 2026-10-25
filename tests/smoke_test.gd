@@ -57,7 +57,7 @@ func _init() -> void:
 		failures += 1
 	if not _test_run_state():
 		failures += 1
-	if not _test_events():
+	if not _test_locations():
 		failures += 1
 	if not _test_locations_sheet():
 		failures += 1
@@ -105,10 +105,10 @@ func _init() -> void:
 			else AIProfile.new(0.5 * (seed_value % 3), 0.0, 1.0, seed_value, 1.0)
 		if not _play_energy_game(seed_value, profile):
 			failures += 1
-	# Event games: three random events per match on top of the run's energy
+	# Location games: three random locations per match on top of the run's energy
 	# rule, with every pending choice resolved by the AI.
 	for seed_value in 10:
-		if not _play_event_game(seed_value):
+		if not _play_location_game(seed_value):
 			failures += 1
 	if failures == 0:
 		print("SMOKE TEST OK: all games completed cleanly")
@@ -1289,14 +1289,14 @@ func _test_run_state() -> bool:
 		print("run state test OK")
 	return ok
 
-## A 1v1 energy game with these events (MatchEvent ids) in reveal order.
-func _event_gm(ids: Array, seed_value := 31) -> GameManager:
+## A 1v1 energy game with these locations (MatchLocation ids) in reveal order.
+func _location_gm(ids: Array, seed_value := 31) -> GameManager:
 	var gm := GameManager.new()
 	gm.start_energy = 3
-	var deck: Array[MatchEvent] = []
+	var deck: Array[MatchLocation] = []
 	for id_value: int in ids:
-		deck.append(MatchEvent.new(id_value))
-	gm.event_deck = deck
+		deck.append(MatchLocation.new(id_value))
+	gm.location_deck = deck
 	gm.setup(["P0", "P1"], 13, seed_value)
 	return gm
 
@@ -1315,33 +1315,33 @@ func _known_hand(gm: GameManager, cards: Array[Card]) -> void:
 ## the numbers the text promises are the numbers the rules use.
 func _test_locations_sheet() -> bool:
 	var ok := true
-	var pool := MatchEvent.pool()
-	if pool.size() != MatchEvent.ID_NAMES.size():
-		printerr("locations: pool has %d events, the code has %d rules"
-			% [pool.size(), MatchEvent.ID_NAMES.size()])
+	var pool := MatchLocation.pool()
+	if pool.size() != MatchLocation.ID_NAMES.size():
+		printerr("locations: pool has %d locations, the code has %d rules"
+			% [pool.size(), MatchLocation.ID_NAMES.size()])
 		ok = false
-	for id_value: int in MatchEvent.ID_NAMES:
-		var loc := Locations.get_by_id(MatchEvent.ID_NAMES[id_value])
+	for id_value: int in MatchLocation.ID_NAMES:
+		var loc := Locations.get_by_id(MatchLocation.ID_NAMES[id_value])
 		if loc == null:
-			printerr("locations: no sheet row for '%s'" % MatchEvent.ID_NAMES[id_value])
+			printerr("locations: no sheet row for '%s'" % MatchLocation.ID_NAMES[id_value])
 			ok = false
 			continue
-		var e := MatchEvent.new(id_value)
+		var e := MatchLocation.new(id_value)
 		if e.title != loc.title or e.text != loc.text or e.text == "":
 			printerr("locations: '%s' did not take its name and text from the sheet" % loc.id)
 			ok = false
 		if loc.kind != ("ongoing" if e.is_ongoing() else "on_reveal"):
 			printerr("locations: the sheet makes %s '%s', its rule disagrees" % [loc.title, loc.kind])
 			ok = false
-	var ev := MatchEvent.Id
+	var ev := MatchLocation.Id
 	var promises := {
-		ev.CYCLE: MatchEvent.CHOICE_COUNT,
-		ev.GIFT: MatchEvent.CHOICE_COUNT,
-		ev.SURGE: MatchEvent.SURGE_ENERGY,
-		ev.OVERCHARGE: MatchEvent.OVERCHARGE_ENERGY,
+		ev.CYCLE: MatchLocation.CHOICE_COUNT,
+		ev.GIFT: MatchLocation.CHOICE_COUNT,
+		ev.SURGE: MatchLocation.SURGE_ENERGY,
+		ev.OVERCHARGE: MatchLocation.OVERCHARGE_ENERGY,
 	}
 	for id_value: int in promises:
-		var e := MatchEvent.new(id_value)
+		var e := MatchLocation.new(id_value)
 		if not e.text.contains(str(promises[id_value])):
 			printerr("locations: %s's text '%s' does not say %d, the number its rule uses"
 				% [e.title, e.text, promises[id_value]])
@@ -1350,159 +1350,159 @@ func _test_locations_sheet() -> bool:
 		print("locations sheet test OK")
 	return ok
 
-## The eight events: the reveal schedule (rounds 1, 3, 5), each event's rule,
+## The eight locations: the reveal schedule (rounds 1, 3, 5), each location's rule,
 ## the pending choices (blocking play until resolved, for the human-style API
 ## and the AI alike), and an early reveal.
-func _test_events() -> bool:
+func _test_locations() -> bool:
 	var ok := true
-	var ev := MatchEvent.Id
+	var ev := MatchLocation.Id
 	# Schedule: one up at the deal, the rest at the start of rounds 3 and 5.
-	var gm := _event_gm([ev.OVERCHARGE, ev.EXTRA_DRAW, ev.OPEN_DECKS])
-	if gm.revealed_events.size() != 1 or gm.upcoming_events().size() != 2 \
-			or gm.upcoming_events()[0]["round"] != 3 or gm.upcoming_events()[1]["round"] != 5:
-		printerr("events: expected 1 revealed and 2 upcoming (rounds 3, 5)")
+	var gm := _location_gm([ev.OVERCHARGE, ev.EXTRA_DRAW, ev.OPEN_DECKS])
+	if gm.revealed_locations.size() != 1 or gm.upcoming_locations().size() != 2 \
+			or gm.upcoming_locations()[0]["round"] != 3 or gm.upcoming_locations()[1]["round"] != 5:
+		printerr("locations: expected 1 revealed and 2 upcoming (rounds 3, 5)")
 		ok = false
 	var revealed_by_round := {}
 	while gm.round_number <= 5:
-		revealed_by_round[gm.round_number] = gm.revealed_events.size()
+		revealed_by_round[gm.round_number] = gm.revealed_locations.size()
 		gm.draw_and_end_turn()
 	if revealed_by_round != {1: 1, 2: 1, 3: 2, 4: 2, 5: 3}:
-		printerr("events: wrong reveal schedule %s" % str(revealed_by_round))
+		printerr("locations: wrong reveal schedule %s" % str(revealed_by_round))
 		ok = false
 	# Each reveal put its combo on the table: three valid groups of fresh cards
 	# from outside both decks, counted as extra copies.
 	if gm.board.melds.size() != 3:
-		printerr("events: 3 reveals should put 3 combos on the table, got %d"
+		printerr("locations: 3 reveals should put 3 combos on the table, got %d"
 			% gm.board.melds.size())
 		ok = false
-	for e in gm.revealed_events:
+	for e in gm.revealed_locations:
 		var meld := gm.board.meld_of(e.combo[0])
 		if e.combo.size() != 3 or meld == null or not meld.is_valid():
-			printerr("events: %s's combo should be a valid 3-card group on the table" % e.title)
+			printerr("locations: %s's combo should be a valid 3-card group on the table" % e.title)
 			ok = false
 		for c in e.combo:
-			if c.deck_owner != MatchEvent.NO_OWNER or c.is_joker \
+			if c.deck_owner != MatchLocation.NO_OWNER or c.is_joker \
 					or gm.players[0].deck.cards.has(c) or gm.players[1].deck.cards.has(c):
-				printerr("events: combo cards must be fresh naturals from no one's deck")
+				printerr("locations: combo cards must be fresh naturals from no one's deck")
 				ok = false
-	var combo_card := gm.revealed_events[0].combo[0]
+	var combo_card := gm.revealed_locations[0].combo[0]
 	var extra := 0
-	for e in gm.revealed_events:
+	for e in gm.revealed_locations:
 		for c in e.combo:
 			if c.rank == combo_card.rank and c.suit == combo_card.suit:
 				extra += 1
 	if gm.copies_in_play(combo_card.rank, combo_card.suit) != 2 + extra:
-		printerr("events: combo cards should count as extra copies in play")
+		printerr("locations: combo cards should count as extra copies in play")
 		ok = false
 	gm.free()
 
 	# Cycle: a choice of 2 that blocks play until resolved, then discard 2, draw 2.
-	gm = _event_gm([ev.CYCLE])
+	gm = _location_gm([ev.CYCLE])
 	var p0 := gm.players[0]
 	if not gm.has_pending_choice() or gm.pending_choice()["count"] != 2:
-		printerr("events: Cycle should ask P0 for 2 cards")
+		printerr("locations: Cycle should ask P0 for 2 cards")
 		ok = false
 	var three: Array[Card] = [p0.hand[0], p0.hand[1], p0.hand[2]]
 	if gm.move_cards_to_new_meld(three).find("Resolve") == -1 \
 			or gm.commit_turn().find("Resolve") == -1:
-		printerr("events: playing before resolving Cycle should be refused")
+		printerr("locations: playing before resolving Cycle should be refused")
 		ok = false
 	gm.draw_and_end_turn()
 	if gm.current_player() != p0:
-		printerr("events: drawing must wait for the pending choice")
+		printerr("locations: drawing must wait for the pending choice")
 		ok = false
 	if gm.resolve_choice([p0.hand[0]] as Array[Card]) == "":
-		printerr("events: Cycle must take exactly 2 cards")
+		printerr("locations: Cycle must take exactly 2 cards")
 		ok = false
 	var gone: Array[Card] = [p0.hand[0], p0.hand[1]]
 	if gm.resolve_choice(gone) != "" or p0.hand.size() != 13 \
 			or not p0.deck.discards.has(gone[0]) or not p0.deck.discards.has(gone[1]) \
 			or gm.has_pending_choice() or gm.cards_played_this_turn() != 0:
-		printerr("events: Cycle should discard 2, draw 2 and clear the choice")
+		printerr("locations: Cycle should discard 2, draw 2 and clear the choice")
 		ok = false
 	gm.draw_and_end_turn()
 	var p1 := gm.players[1]
-	if not gm.has_pending_choice() or GreedyAI.resolve_event_choice(gm).size() != 2 \
+	if not gm.has_pending_choice() or GreedyAI.resolve_location_choice(gm).size() != 2 \
 			or p1.hand.size() != 13 or p1.deck.discards.size() != 2:
-		printerr("events: P1 should owe and resolve Cycle on its turn of the round")
+		printerr("locations: P1 should owe and resolve Cycle on its turn of the round")
 		ok = false
 	gm.draw_and_end_turn()
 	if gm.has_pending_choice():
-		printerr("events: Cycle's choice belongs to its reveal round only")
+		printerr("locations: Cycle's choice belongs to its reveal round only")
 		ok = false
 	gm.free()
 
 	# Gift: 2 cards from P0 to P1, then 2 back from P1 on its turn.
-	gm = _event_gm([ev.GIFT])
+	gm = _location_gm([ev.GIFT])
 	p0 = gm.players[0]
 	p1 = gm.players[1]
 	var gift: Array[Card] = [p0.hand[3], p0.hand[4]]
 	if gm.resolve_choice(gift) != "" or p0.hand.size() != 11 or p1.hand.size() != 15 \
 			or not p1.hand.has(gift[0]):
-		printerr("events: Gift should move 2 cards from P0 to P1")
+		printerr("locations: Gift should move 2 cards from P0 to P1")
 		ok = false
 	gm.draw_and_end_turn()
-	GreedyAI.resolve_event_choice(gm)
+	GreedyAI.resolve_location_choice(gm)
 	if p1.hand.size() != 13 or p0.hand.size() != 14:
-		printerr("events: P1 should gift 2 back on its turn (P0 %d, P1 %d)"
+		printerr("locations: P1 should gift 2 back on its turn (P0 %d, P1 %d)"
 			% [p0.hand.size(), p1.hand.size()])
 		ok = false
 	gm.free()
 
 	# Surge: +3 energy on every player's turn of the reveal round only.
-	gm = _event_gm([ev.SURGE])
+	gm = _location_gm([ev.SURGE])
 	var surge := [gm.players[0].max_energy]
 	gm.draw_and_end_turn()
 	surge.append(gm.players[1].max_energy)
 	gm.draw_and_end_turn()
 	surge.append(gm.players[0].max_energy)
 	if surge != [6, 6, 4]:
-		printerr("events: Surge energy should read [6, 6, 4], got %s" % str(surge))
+		printerr("locations: Surge energy should read [6, 6, 4], got %s" % str(surge))
 		ok = false
 	gm.free()
 
 	# Overcharge: on reveal, +2 max energy for good, shown ahead for P1 too.
-	gm = _event_gm([ev.OVERCHARGE])
+	gm = _location_gm([ev.OVERCHARGE])
 	if gm.players[0].max_energy != 5 or gm.upcoming_energy(gm.players[1]) != 5:
-		printerr("events: Overcharge should make the first turn 5 for everyone")
+		printerr("locations: Overcharge should make the first turn 5 for everyone")
 		ok = false
 	gm.draw_and_end_turn()
 	if gm.players[1].max_energy != 5:
-		printerr("events: Overcharge should reach P1 on its turn of the round")
+		printerr("locations: Overcharge should reach P1 on its turn of the round")
 		ok = false
 	gm.draw_and_end_turn()
 	if gm.players[0].max_energy != 6 or gm.upcoming_energy(gm.players[1]) != 6:
-		printerr("events: Overcharge's +2 should last (P0's second turn 6, got %d)"
+		printerr("locations: Overcharge's +2 should last (P0's second turn 6, got %d)"
 			% gm.players[0].max_energy)
 		ok = false
 	gm.free()
 
 	# Extra Draw: one more card per draw.
-	gm = _event_gm([ev.EXTRA_DRAW])
+	gm = _location_gm([ev.EXTRA_DRAW])
 	gm.draw_and_end_turn()
 	if gm.draw_count() != 2 or gm.players[0].hand.size() != 15:
-		printerr("events: Extra Draw should draw 2 instead of 1")
+		printerr("locations: Extra Draw should draw 2 instead of 1")
 		ok = false
 	gm.free()
 
 	# Attrition: a random card discarded at the start of every turn.
-	gm = _event_gm([ev.ATTRITION])
+	gm = _location_gm([ev.ATTRITION])
 	if gm.players[0].hand.size() != 12 or gm.players[0].deck.discards.size() != 1:
-		printerr("events: Attrition should discard 1 at the start of P0's turn")
+		printerr("locations: Attrition should discard 1 at the start of P0's turn")
 		ok = false
 	gm.draw_and_end_turn()
 	if gm.players[1].hand.size() != 12:
-		printerr("events: Attrition should hit P1's turn too")
+		printerr("locations: Attrition should hit P1's turn too")
 		ok = false
 	gm.free()
 
 	# Coin Rush: each card played this round gives a coin; next round, none.
-	gm = _event_gm([ev.COIN_RUSH])
+	gm = _location_gm([ev.COIN_RUSH])
 	var run: Array[Card] = [_card(5, "hearts"), _card(6, "hearts"), _card(7, "hearts")]
 	_known_hand(gm, run)
 	gm.move_cards_to_new_meld(run)
 	if gm.commit_turn() != "" or gm.players[0].coins != 3:
-		printerr("events: Coin Rush should pay 3 coins for 3 cards, got %d"
+		printerr("locations: Coin Rush should pay 3 coins for 3 cards, got %d"
 			% gm.players[0].coins)
 		ok = false
 	gm.draw_and_end_turn()
@@ -1511,16 +1511,16 @@ func _test_events() -> bool:
 	gm.move_cards_to_new_meld(more)
 	gm.commit_turn()
 	if gm.players[0].coins != 3:
-		printerr("events: Coin Rush pays only in its reveal round")
+		printerr("locations: Coin Rush pays only in its reveal round")
 		ok = false
 	gm.free()
 
 	# Open Decks: every deck's top is public.
-	gm = _event_gm([ev.OPEN_DECKS])
-	var plain := _event_gm([])
+	gm = _location_gm([ev.OPEN_DECKS])
+	var plain := _location_gm([])
 	if not gm.top_is_public(gm.players[1].deck.peek()) \
 			or plain.top_is_public(plain.players[1].deck.peek()):
-		printerr("events: Open Decks should make plain deck tops public")
+		printerr("locations: Open Decks should make plain deck tops public")
 		ok = false
 	gm.free()
 	plain.free()
@@ -1528,63 +1528,63 @@ func _test_events() -> bool:
 	# An early reveal applies to the current player straight away.
 	gm = GameManager.new()
 	gm.start_energy = 3
-	gm.event_deck = [MatchEvent.new(ev.SURGE)] as Array[MatchEvent]
-	gm.event_rounds = [5]
+	gm.location_deck = [MatchLocation.new(ev.SURGE)] as Array[MatchLocation]
+	gm.location_rounds = [5]
 	gm.setup(["P0", "P1"], 13, 3)
-	if not gm.revealed_events.is_empty() or not gm.reveal_next_event() \
+	if not gm.revealed_locations.is_empty() or not gm.reveal_next_location() \
 			or gm.players[0].max_energy != 6 or gm.board.melds.size() != 1:
-		printerr("events: an early Surge should give the current player 6 energy")
+		printerr("locations: an early Surge should give the current player 6 energy")
 		ok = false
 	gm.free()
 	if ok:
-		print("events test OK")
+		print("locations test OK")
 	return ok
 
-## A 1v1 energy game with three random events (seeded), driven move by move:
+## A 1v1 energy game with three random locations (seeded), driven move by move:
 ## pending choices resolved by the AI, the energy ceiling never exceeded, card
 ## conservation across hands, decks, discards and the table, and a finish.
-func _play_event_game(seed_value: int) -> bool:
+func _play_location_game(seed_value: int) -> bool:
 	var gm := GameManager.new()
 	gm.start_energy = 3
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
-	gm.event_deck = MatchEvent.draw(3, rng)
+	gm.location_deck = MatchLocation.draw(3, rng)
 	gm.setup(["P0", "P1"], 13, seed_value, true)
 	gm.draw_per_turn = 2
 	gm.deal_starting_melds()
 	var titles := PackedStringArray()
-	for e in gm.revealed_events + gm.event_deck:
+	for e in gm.revealed_locations + gm.location_deck:
 		titles.append(e.title)
 	# Each reveal adds its 3-card combo to the game.
-	var base_cards := _cards_in_game(gm) - 3 * gm.revealed_events.size()
+	var base_cards := _cards_in_game(gm) - 3 * gm.revealed_locations.size()
 	var turns := 0
 	var profile := AIProfile.new(1.0, 0.0, 1.0, seed_value)
 	while not gm.is_game_over and turns < MAX_TURNS:
-		GreedyAI.resolve_event_choice(gm)
+		GreedyAI.resolve_location_choice(gm)
 		while true:
 			var move := GreedyAI.plan_move(gm, profile)
 			if move.is_empty():
 				break
 			GreedyAI.apply_move(gm, move, profile)
 			if gm.energy_spent() > gm.current_player().max_energy:
-				printerr("event game %d: overspent energy" % seed_value)
+				printerr("location game %d: overspent energy" % seed_value)
 				return false
 		if gm.cards_played_this_turn() > 0:
 			var err := gm.commit_turn()
 			if err != "":
-				printerr("event game %d: illegal turn: %s" % [seed_value, err])
+				printerr("location game %d: illegal turn: %s" % [seed_value, err])
 				return false
 		else:
 			gm.draw_and_end_turn()
 		turns += 1
 		if not gm.board.all_valid() \
-				or _cards_in_game(gm) != base_cards + 3 * gm.revealed_events.size():
-			printerr("event game %d: invalid table or card count after turn %d"
+				or _cards_in_game(gm) != base_cards + 3 * gm.revealed_locations.size():
+			printerr("location game %d: invalid table or card count after turn %d"
 				% [seed_value, turns])
 			return false
 	if not gm.is_game_over:
-		printerr("event game %d: did not finish" % seed_value)
+		printerr("location game %d: did not finish" % seed_value)
 		return false
-	print("event game %d (%s): finished in %d turns" % [seed_value, ", ".join(titles), turns])
+	print("location game %d (%s): finished in %d turns" % [seed_value, ", ".join(titles), turns])
 	gm.free()
 	return true

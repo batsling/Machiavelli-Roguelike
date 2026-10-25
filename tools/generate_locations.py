@@ -7,7 +7,7 @@ tools/Machiavelli Roguelike.xlsx into data/locations/.
 
   Name         the location's name, shown on its card. Required. Its id is the
                name slugified ("Coin Rush" -> coin_rush), and the id is how the
-               game finds the rule that makes it work (MatchEvent.ID_NAMES).
+               game finds the rule that makes it work (MatchLocation.ID_NAMES).
   Type         "On reveal" or "Ongoing". Required.
   Description  the rule text on the card. Required. A full stop is added if
                missing, since the game prints it inside sentences.

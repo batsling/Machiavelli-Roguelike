@@ -67,13 +67,13 @@ func build(ui: MainUI) -> void:
 	ui.stock_top_slot = HBoxContainer.new()
 	stock_box.add_child(ui.stock_top_slot)
 
-	# Events: the match's rule cards, face up once revealed and face down (with
+	# Locations: the match's rule cards, face up once revealed and face down (with
 	# the round they turn up on) until then. TableView fills it; hidden when the
-	# match has no events.
-	ui.events_row = HBoxContainer.new()
-	ui.events_row.add_theme_constant_override("separation", 8)
-	ui.events_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	ui.game_root.add_child(ui.events_row)
+	# match has no locations.
+	ui.locations_row = HBoxContainer.new()
+	ui.locations_row.add_theme_constant_override("separation", 8)
+	ui.locations_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	ui.game_root.add_child(ui.locations_row)
 
 	# Middle row: left seat, the felt, right seat (hidden until a 4th player).
 	var mid_row := HBoxContainer.new()
@@ -220,7 +220,7 @@ func build(ui: MainUI) -> void:
 	ui.selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	actions.add_child(ui.selection_label)
 
-	# Confirms the cards picked for an event's choice (Cycle, Gift); shown only
+	# Confirms the cards picked for a location's choice (Cycle, Gift); shown only
 	# while you owe one.
 	ui.choice_btn = Button.new()
 	ui.choice_btn.visible = false

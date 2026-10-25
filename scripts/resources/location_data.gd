@@ -1,7 +1,7 @@
 class_name LocationData
 extends Resource
 
-## ONE LOCATION: a rule card revealed face up during a match (see MatchEvent,
+## ONE LOCATION: a rule card revealed face up during a match (see MatchLocation,
 ## which is a location in play). This holds what the card SAYS — its name, kind
 ## and rule text; what it DOES is code in GameManager, keyed by `id`.
 ##
@@ -10,7 +10,7 @@ extends Resource
 ## sheet, not these.
 
 ## The sheet's Name, slugified ("Coin Rush" -> &"coin_rush"). Matches a rule in
-## MatchEvent.ID_NAMES; a row with no rule behind it stays out of the pool.
+## MatchLocation.ID_NAMES; a row with no rule behind it stays out of the pool.
 @export var id: StringName
 @export var title: String = ""
 ## "on_reveal" or "ongoing" (the sheet's Type).
