@@ -29,8 +29,8 @@ func build(ui: MainUI) -> void:
 	ui.game_root.offset_bottom = -10
 	ui.add_child(ui.game_root)
 
-	# Top row: the first enemy's seat, centered directly opposite you, with the
-	# stock count tucked into the corner.
+	# Top row: the first enemy's seat, centered directly opposite you, with your
+	# deck count tucked into the corner.
 	var top_bar := HBoxContainer.new()
 	top_bar.add_theme_constant_override("separation", 8)
 	ui.game_root.add_child(top_bar)
@@ -41,6 +41,12 @@ func build(ui: MainUI) -> void:
 	ui.round_label.add_theme_font_size_override("font_size", 18)
 	ui.round_label.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	top_bar.add_child(ui.round_label)
+	# Lives and map progress beside it during a run; refresh_seats fills it.
+	ui.lives_label = Label.new()
+	ui.lives_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	ui.lives_label.add_theme_font_size_override("font_size", 18)
+	ui.lives_label.add_theme_color_override("font_color", UITheme.COL_LIFE)
+	top_bar.add_child(ui.lives_label)
 	var top_pad_left := Control.new()
 	top_pad_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(top_pad_left)
@@ -49,8 +55,8 @@ func build(ui: MainUI) -> void:
 	var top_pad_right := Control.new()
 	top_pad_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(top_pad_right)
-	# Stock corner: the count, plus the top card of the stock when it is glass
-	# (a glass top is public — everyone can see the next draw).
+	# Deck corner: how many cards are left in your own deck, plus its top card
+	# when that card's status is public (a glass top shows your next draw).
 	var stock_box := HBoxContainer.new()
 	stock_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	stock_box.add_theme_constant_override("separation", 6)
@@ -60,11 +66,14 @@ func build(ui: MainUI) -> void:
 	stock_box.add_child(ui.stock_label)
 	ui.stock_top_slot = HBoxContainer.new()
 	stock_box.add_child(ui.stock_top_slot)
-	# The face-up discard pile sits just after the stock, appearing only once a
-	# card has been discarded (the Billionaire's Riichi).
-	ui.discard_slot = HBoxContainer.new()
-	ui.discard_slot.add_theme_constant_override("separation", 6)
-	stock_box.add_child(ui.discard_slot)
+
+	# Events: the match's rule cards, face up once revealed and face down (with
+	# the round they turn up on) until then. TableView fills it; hidden when the
+	# match has no events.
+	ui.events_row = HBoxContainer.new()
+	ui.events_row.add_theme_constant_override("separation", 8)
+	ui.events_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	ui.game_root.add_child(ui.events_row)
 
 	# Middle row: left seat, the felt, right seat (hidden until a 4th player).
 	var mid_row := HBoxContainer.new()
@@ -167,6 +176,12 @@ func build(ui: MainUI) -> void:
 	ui.hand_meter_slot.add_theme_constant_override("separation", 6)
 	ui.hand_meter_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hand_top.add_child(ui.hand_meter_slot)
+	# Your energy for the turn: a label + pips, filled by refresh_hand when
+	# energy is on (a roguelike run) and left empty otherwise.
+	ui.energy_slot = HBoxContainer.new()
+	ui.energy_slot.add_theme_constant_override("separation", 4)
+	ui.energy_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hand_top.add_child(ui.energy_slot)
 
 	# Hand sort buttons: the hand keeps whatever order you give it, but these lay
 	# it out the two plain ways players read a hand — by rank (increasing, left to
@@ -205,6 +220,13 @@ func build(ui: MainUI) -> void:
 	ui.selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	actions.add_child(ui.selection_label)
 
+	# Confirms the cards picked for an event's choice (Cycle, Gift); shown only
+	# while you owe one.
+	ui.choice_btn = Button.new()
+	ui.choice_btn.visible = false
+	ui.choice_btn.pressed.connect(ui._on_choice_confirm_pressed)
+	actions.add_child(ui.choice_btn)
+
 	ui.return_btn = Button.new()
 	ui.return_btn.text = "Return to hand"
 	ui.return_btn.tooltip_text = "Put the selected cards you played this turn back in your hand"
@@ -235,7 +257,7 @@ func build(ui: MainUI) -> void:
 
 	ui.settings_btn = Button.new()
 	ui.settings_btn.text = "Settings"
-	ui.settings_btn.tooltip_text = "Enemy AI, enemy count, draw count, hand cap, play cap and jokers"
+	ui.settings_btn.tooltip_text = "Sandbox and roguelike-run rules"
 	ui.settings_btn.pressed.connect(ui._on_settings_pressed)
 	actions.add_child(ui.settings_btn)
 
@@ -271,7 +293,9 @@ func build(ui: MainUI) -> void:
 
 	_build_opponent_hand_overlay(ui)
 
-	# The menu sits above everything (including in-flight card animations).
+	# The map and the menu sit above everything (including in-flight card
+	# animations).
+	_build_map(ui)
 	_build_menu(ui)
 	_build_settings_dialog(ui)
 	_build_enemy_info_dialog(ui)
@@ -295,6 +319,15 @@ func _build_enemy_info_dialog(ui: MainUI) -> void:
 	ui.enemy_info_body.fit_content = true
 	ui.enemy_info_body.custom_minimum_size = Vector2(440, 120)
 	ui.enemy_info_dialog.add_child(ui.enemy_info_body)
+
+## The run map, hidden until a run starts. Like the menu it owns no game state:
+## picking a node or Menu is handed straight to the controller.
+func _build_map(ui: MainUI) -> void:
+	ui.map_layer = MapScreen.new()
+	ui.map_layer.visible = false
+	ui.add_child(ui.map_layer)
+	ui.map_layer.node_chosen.connect(ui._on_map_node_chosen)
+	ui.map_layer.menu_requested.connect(ui._show_menu)
 
 ## Instantiate the menu scene and wire each button's intent signal to the
 ## controller. The menu itself owns no game state.

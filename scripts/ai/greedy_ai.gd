@@ -20,8 +20,10 @@ extends RefCounted
 ##     (not for weak AI).
 ## Steps 2-4 respect the opening rule: until the AI has laid down a valid
 ## meld purely from its own hand, it will not touch other melds on the table.
-## Every move also respects the play cap (GameManager.max_plays_per_turn):
-## moves that would play more hand cards than the turn has left are skipped.
+## Every move also respects the turn's play budget (GameManager.play_budget —
+## the play cap and energy): moves that would play more hand cards than the
+## turn can afford are skipped, and a complete meld too big to afford is
+## trimmed to the largest valid part that fits (_fit_meld).
 ##
 ## Style hooks: a conservative AI sits on its opening meld until the meld is
 ## big enough (or the game forces its hand) and won't lay off cards that
@@ -68,11 +70,12 @@ const MAX_PLAN_NODES := 600
 
 static func take_turn(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> void:
-	# A designed enemy may drive its whole turn itself (the Billionaire's Riichi
-	# draw), bypassing ordinary play entirely.
+	# A designed enemy may drive its whole turn itself, bypassing ordinary play
+	# entirely.
 	if enemy != null and enemy.wants_control(gm):
 		enemy.run_controlled_turn(gm)
 		return
+	resolve_event_choice(gm)
 	while true:
 		var move := plan_move(gm, profile, enemy)
 		if move.is_empty():
@@ -105,87 +108,31 @@ static func plan_move(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> Dictionary:
 	var move := _plan_normal_move(gm, profile, enemy)
 	if not move.is_empty():
-		# Defense: if an opponent has declared Riichi, don't hand them the card
-		# they are waiting on. Cards already played safely this turn stand; the
-		# player just stops short of feeding (folds to a draw if nothing is safe).
-		# A move that empties our own hand wins first, so it is always taken.
-		if _feeds_riichi(gm, move):
-			return {}
 		return move
-	# A designed enemy's own strategy (the slime guarding, the Billionaire shaping
-	# a Riichi hand). Each self-guards on the opening rule as it needs to — the
-	# slime only rearranges once open, the Billionaire opens with his first shed.
+	# A designed enemy's own strategy. Each self-guards on the opening rule as it
+	# needs to.
 	if enemy != null:
 		return enemy.plan_strategy_move(gm)
 	return {}
 
-## True when this move would lay one of a Riichi opponent's wait cards onto the
-## table (feeding their ron) without itself going out. The wait is self-contained
-## in their hand, so the danger set is read from what we can see of that hand —
-## their glass-visible cards — meaning opaque waits still leak, but the obvious
-## see-through feeds are avoided. A move that empties our own hand wins first, so
-## it is never held back.
-static func _feeds_riichi(gm: GameManager, move: Dictionary) -> bool:
-	var danger := _riichi_danger(gm)
-	if danger.is_empty():
-		return false
-	if _move_goes_out(gm, move):
-		return false
-	var hand := gm.current_player().hand
-	for c: Card in move["cards"]:
-		# Only a card leaving our hand for the table can feed; a pure table
-		# rearrangement plays no new card.
-		if hand.has(c) and not c.is_joker and danger.has("%d,%s" % [c.rank, c.suit]):
-			return true
-	return false
-
-## The wait cards ("rank,suit" keys) a Riichi opponent could be waiting on, read
-## from their glass-visible hand cards (their wait is self-contained in hand).
-## Empty (and cheap) whenever no opponent has declared Riichi.
-static func _riichi_danger(gm: GameManager) -> Dictionary:
-	var out := {}
-	for p in gm.players:
-		if p == gm.current_player() or not p.declared_riichi:
-			continue
-		var pool: Array[Card] = []
-		for c in p.hand:
-			if c.is_glass():
-				pool.append(c)
-		for w in Tiling.wait_cards(pool):
-			out["%d,%s" % [w["rank"], w["suit"]]] = true
-	return out
-
-## True when this move plays every card left in the current player's hand — it
-## empties the hand, so it wins outright and outranks any Riichi-feed caution.
-static func _move_goes_out(gm: GameManager, move: Dictionary) -> bool:
-	var hand := gm.current_player().hand
-	var from_hand := 0
-	for c: Card in move["cards"]:
-		if hand.has(c):
-			from_hand += 1
-	return from_hand > 0 and from_hand == hand.size()
-
 ## The AI's ordinary move search (complete melds, lay-offs, rearrangements),
 ## independent of any enemy strategy. See plan_move for the return shape. A
 ## designed enemy (when given) may veto individual candidates via avoids_play —
-## the Billionaire holding his developing tenpai together.
+## holding a hand it is shaping together, say.
 static func _plan_normal_move(gm: GameManager, profile: AIProfile = null,
 		enemy: Enemy = null) -> Dictionary:
 	if profile != null and profile.uses_smart_brain():
 		return _plan_smart_move(gm, profile, enemy)
-	# Cards still playable under the play cap this turn (-1 = unlimited).
-	# Every planned move stays within it, or staging would reject the move.
-	var budget := -1
-	if gm.max_plays_per_turn > 0:
-		budget = gm.max_plays_per_turn - gm.cards_played_this_turn()
-		if budget <= 0:
-			return {}
+	# Cards still affordable this turn under the play cap and energy (-1 =
+	# unlimited). Every planned move stays within it, or staging would reject it.
+	var budget := gm.play_budget()
+	if budget == 0:
+		return {}
 	var hand := gm.current_player().hand
 	# 1. Complete meld straight from hand. An oblivious AI never fumbles this —
 	# the blunder roll only covers the table-reading plays below.
-	var meld := _find_meld(hand)
-	if not meld.is_empty() and (budget < 0 or meld.size() <= budget) \
-			and _will_lay_meld(gm, meld, profile):
+	var meld := _fit_meld(_find_meld(hand), budget)
+	if not meld.is_empty() and _will_lay_meld(gm, meld, profile):
 		return {"cards": meld, "dest": null,
 			"text": "lays down %s" % _cards_text(meld)}
 	# Not yet opened (no valid own meld on the table): the rules forbid
@@ -276,11 +223,9 @@ static func _plan_normal_move(gm: GameManager, profile: AIProfile = null,
 ## candidates instead of taking the first.
 static func _plan_smart_move(gm: GameManager, profile: AIProfile,
 		enemy: Enemy = null) -> Dictionary:
-	var budget := -1
-	if gm.max_plays_per_turn > 0:
-		budget = gm.max_plays_per_turn - gm.cards_played_this_turn()
-		if budget <= 0:
-			return {}
+	var budget := gm.play_budget()
+	if budget == 0:
+		return {}
 	var hand := gm.current_player().hand
 	# The blunder roll covers only the table-reading plays (steps 2-5 below); an
 	# oblivious AI still lays a group straight from hand every time. On a miss it
@@ -294,9 +239,8 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile,
 	var candidates: Array[Dictionary] = []
 	# 1. Complete meld straight from hand. Conservative AIs sit on a small
 	# opening meld — unless a finish is in reach, in which case they lay it.
-	var meld := _find_meld(hand)
-	if not meld.is_empty() and (budget < 0 or meld.size() <= budget) \
-			and (race or _will_lay_meld(gm, meld, profile)):
+	var meld := _fit_meld(_find_meld(hand), budget)
+	if not meld.is_empty() and (race or _will_lay_meld(gm, meld, profile)):
 		candidates.append({"cards": meld, "dest": null,
 			"text": "lays down %s" % _cards_text(meld)})
 	if gm.current_player_is_open() and not oblivious:
@@ -390,9 +334,9 @@ static func _plan_smart_move(gm: GameManager, profile: AIProfile,
 	var best: Dictionary = {}
 	var best_score := 0.0  # hold and draw rather than play a net-negative move
 	for cand in candidates:
-		# A designed enemy's strategy may veto a candidate outright — the
-		# Billionaire refusing to break up the hand he is shaping toward a Riichi
-		# tenpai. Racing to finish overrides the strategy (endgame is endgame).
+		# A designed enemy's strategy may veto a candidate outright — refusing
+		# to break up a hand it is shaping, say. Racing to finish overrides the
+		# strategy (endgame is endgame).
 		if enemy != null and not race and enemy.avoids_play(gm, cand):
 			continue
 		var score := _score_move(gm, cand, hand, race)
@@ -470,11 +414,9 @@ static func _plan_rearrange_move(gm: GameManager, profile: AIProfile) -> Diction
 	var budget := mini(profile.plan_budget(), MAX_PLAN_DEPTH)
 	if budget < 1:
 		return {}
-	var play_cap := -1
-	if gm.max_plays_per_turn > 0:
-		play_cap = gm.max_plays_per_turn - gm.cards_played_this_turn()
-		if play_cap <= 0:
-			return {}
+	var play_cap := gm.play_budget()
+	if play_cap == 0:
+		return {}
 	var hand := gm.current_player().hand
 	var immovable := _immovable_cards(gm)
 	var best: Dictionary = {}
@@ -848,8 +790,8 @@ static func _worth_holding(gm: GameManager, c: Card, rest: Array[Card]) -> bool:
 	if c.is_joker:
 		return true
 	var partners: Array[Card] = rest.duplicate()
-	var top := gm.deck.peek()
-	if top != null and top.is_glass() and not top.is_joker:
+	var top := gm.current_player().deck.peek()
+	if gm.top_is_public(top) and not top.is_joker:
 		partners.append(top)
 	for o in partners:
 		if o == c or o.is_joker:
@@ -912,7 +854,7 @@ static func _can_go_out_this_turn(gm: GameManager, hand: Array[Card], budget: in
 ## The endgame is close enough that a smart AI stops sandbagging and denying and
 ## races to go out. Notices earlier than the baseline _under_pressure.
 static func _under_pressure_smart(gm: GameManager) -> bool:
-	if gm.deck.size() <= gm.players.size() * 3:
+	if gm.current_player().deck.size() <= 3:
 		return true
 	for p in gm.players:
 		if p != gm.current_player() and p.hand.size() <= 5:
@@ -1006,9 +948,9 @@ static func _safer_rep(a: Dictionary, b: Dictionary) -> bool:
 		return a["rank"] < b["rank"]
 	return a["suit"] < b["suit"]
 
-## Copies of the exact card that could still sit in an opponent's hand or the
-## stock: 2 in the double deck, minus those visible on the table and those
-## the current player holds.
+## Copies of the exact card that could still sit in an opponent's hand or a
+## deck: every copy the players brought (GameManager.copies_in_play), minus those
+## visible on the table and those the current player holds.
 static func _unseen_copies(gm: GameManager, rank: int, suit: String) -> int:
 	var seen := 0
 	for m in gm.board.melds:
@@ -1018,7 +960,7 @@ static func _unseen_copies(gm: GameManager, rank: int, suit: String) -> int:
 	for c in gm.current_player().hand:
 		if not c.is_joker and c.rank == rank and c.suit == suit:
 			seen += 1
-	return maxi(2 - seen, 0)
+	return maxi(gm.copies_in_play(rank, suit) - seen, 0)
 
 # --- Glass (Clear) awareness -------------------------------------------------
 # A glass card is visible from the back: everyone can see it in any player's
@@ -1041,8 +983,8 @@ static func _glass_copies_in_other_hands(gm: GameManager, rank: int, suit: Strin
 ## Whether the top of the stock is a glass card of exactly this rank and suit —
 ## public knowledge of the next card anyone draws.
 static func _glass_top_matches(gm: GameManager, rank: int, suit: String) -> bool:
-	var top := gm.deck.peek()
-	return top != null and top.is_glass() and not top.is_joker \
+	var top := gm.current_player().deck.peek()
+	return gm.top_is_public(top) and not top.is_joker \
 		and top.rank == rank and top.suit == suit
 
 ## Copies the current player could still realistically obtain: the unseen
@@ -1078,7 +1020,7 @@ static func _will_lay_meld(gm: GameManager, meld: Array[Card], profile: AIProfil
 ## The endgame is close: the stock is nearly dry or someone is nearly out of
 ## cards. A conservative AI stops sandbagging at this point.
 static func _under_pressure(gm: GameManager) -> bool:
-	if gm.deck.size() <= gm.players.size() * 2:
+	if gm.current_player().deck.size() <= 2:
 		return true
 	for p in gm.players:
 		if p != gm.current_player() and p.hand.size() <= 4:
@@ -1100,6 +1042,39 @@ static func _seems_important(c: Card, hand: Array[Card]) -> bool:
 			return true
 	return false
 
+## Settle the current player's pending event choice (Cycle's discards, Gift's
+## gifts), if any, by giving up the cards it can best spare: the ones with the
+## fewest partners in hand (jokers never, while anything else is left). Returns
+## the chosen cards (empty when there was no choice).
+static func resolve_event_choice(gm: GameManager) -> Array[Card]:
+	var chosen: Array[Card] = []
+	if not gm.has_pending_choice():
+		return chosen
+	var hand := gm.current_player().hand
+	var ranked: Array[Card] = hand.duplicate()
+	ranked.sort_custom(func(a: Card, b: Card) -> bool:
+		return _spare_score(a, hand) < _spare_score(b, hand))
+	chosen.assign(ranked.slice(0, gm.pending_choice()["count"]))
+	var err := gm.resolve_choice(chosen)
+	if err != "":
+		push_warning("GreedyAI could not resolve an event choice (%s)" % err)
+	return chosen
+
+## How much a hand card is worth keeping: 100 for a joker, else one point per
+## other hand card it could group with (same rank in another suit, or the same
+## suit within two ranks). Lower = easier to give up.
+static func _spare_score(c: Card, hand: Array[Card]) -> int:
+	if c.is_joker:
+		return 100
+	var score := 0
+	for o in hand:
+		if o == c or o.is_joker:
+			continue
+		if (o.rank == c.rank and o.suit != c.suit) \
+				or (o.suit == c.suit and absi(o.rank - c.rank) <= 2):
+			score += 1
+	return score
+
 ## Importance for a pair lay-off is judged against the hand WITHOUT the pair:
 ## two cards that only back each other up are fine to play together.
 static func _pair_seems_important(a: Card, b: Card, hand: Array[Card]) -> bool:
@@ -1107,6 +1082,25 @@ static func _pair_seems_important(a: Card, b: Card, hand: Array[Card]) -> bool:
 	rest.erase(a)
 	rest.erase(b)
 	return _seems_important(a, rest) or _seems_important(b, rest)
+
+## `meld` cut down to fit `budget` hand cards (-1 = no limit): the meld itself
+## when it fits, else the first valid run of `budget` cards along its display
+## order (any three-plus cards of a set, or a shorter stretch of a run, are
+## still a meld), or [] when no valid part fits — fewer than three cards never
+## make a meld. Keeps an energy-limited turn from passing up a long meld it
+## could still partly lay down.
+static func _fit_meld(meld: Array[Card], budget: int) -> Array[Card]:
+	if meld.is_empty() or budget < 0 or meld.size() <= budget:
+		return meld
+	var none: Array[Card] = []
+	if budget < 3:
+		return none
+	var ordered := Rules.display_order(meld)
+	for start in ordered.size() - budget + 1:
+		var part: Array[Card] = ordered.slice(start, start + budget)
+		if Rules.is_valid_meld(part):
+			return part
+	return none
 
 ## Largest complete meld (set or run) that can be formed from the given cards.
 ## Prefers all-natural melds; falls back to completing one with jokers.

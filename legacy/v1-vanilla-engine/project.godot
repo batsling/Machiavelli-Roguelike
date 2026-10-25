@@ -1,0 +1,23 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are meant to be edited using the UI.
+
+config_version=5
+
+[application]
+
+config/name="Machiavelli"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.6", "Forward Plus")
+config/icon="res://icon.svg"
+
+[display]
+
+window/size/viewport_width=1760
+window/size/viewport_height=1000
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[layout]
+
+default_gui_embed_subwindows=true

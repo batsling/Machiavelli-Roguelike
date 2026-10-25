@@ -1,7 +1,8 @@
 class_name MenuScreen
 extends PanelContainer
 
-## The main menu that fronts the table: title, subtitle and the five buttons.
+## The main menu that fronts the table: title, subtitle and the five buttons
+## (Resume, New run, Vanilla sandbox, Settings, Quit).
 ## Built entirely in code (its .tscn is just this script on a root
 ## PanelContainer). Each button emits an intent signal; the controller
 ## (main_ui) decides what each does and toggles this menu's visibility. The
@@ -40,9 +41,9 @@ func _ready() -> void:
 	gap.custom_minimum_size = Vector2(0, 18)
 	col.add_child(gap)
 
-	_resume_btn = _make_button("Resume game", func() -> void: resume_requested.emit())
+	_resume_btn = _make_button("Resume", func() -> void: resume_requested.emit())
 	col.add_child(_resume_btn)
-	col.add_child(_make_button("Roguelike run", func() -> void: play_rogue_requested.emit()))
+	col.add_child(_make_button("New run", func() -> void: play_rogue_requested.emit()))
 	col.add_child(_make_button("Vanilla sandbox", func() -> void: play_vanilla_requested.emit()))
 	col.add_child(_make_button("Settings", func() -> void: settings_requested.emit()))
 	col.add_child(_make_button("Quit", func() -> void: quit_requested.emit()))

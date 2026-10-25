@@ -9,10 +9,12 @@ extends SceneTree
 ##   godot --headless --path . --script res://tests/balance_stats.gd -- --combo
 ## With a different starting hand size (default 13):
 ##   godot --headless --path . --script res://tests/balance_stats.gd -- --hand=15
+## Without energy (cards free, as in vanilla Machiavelli):
+##   godot --headless --path . --script res://tests/balance_stats.gd -- --no-energy
 ##
-## Plays seeded 1v1 games — a simulated player against the basic enemy and
-## against each designed enemy — and prints the numbers two roguelike systems
-## need:
+## Plays seeded 1v1 games under the run's rules (own decks, 2 jokers each,
+## draw 2, energy 3 +1 per turn up to 10) — a simulated player against each
+## enemy on the run map — and prints the numbers two roguelike systems need:
 ##  - Gold for winning fast: how long games run in *rounds* (turns the player
 ##    takes), split into wins and losses, with suggested 3-tier cutoffs taken
 ##    from the terciles of the rounds-to-win distribution.
@@ -22,7 +24,7 @@ extends SceneTree
 ##
 ## The player seat is driven by the same AI as the enemies, on a fixed strong
 ## profile, so lengths reflect competent play; enemies use their own designed
-## profiles and mechanics (slime, glass), exactly as a rogue round would.
+## profiles, exactly as a run's match would.
 
 const DEFAULT_GAMES := 30
 const MAX_TURNS := 2000
@@ -37,6 +39,9 @@ const PLAYER_ATTENTION := 1.0
 var start_combo := false
 ## --hand=N: cards dealt to each player at the start (default 13).
 var hand_size := GameManager.DEFAULT_HAND_SIZE
+## --no-energy: play without energy (cards free). Energy is on by default, at
+## the run's defaults.
+var use_energy := true
 
 func _init() -> void:
 	var games := DEFAULT_GAMES
@@ -47,20 +52,19 @@ func _init() -> void:
 			start_combo = true
 		elif arg.begins_with("--hand="):
 			hand_size = clampi(int(arg.get_slice("=", 1)), 3, 21)
-	var matchups: Array[Dictionary] = [
-		{"label": "Basic enemy (no jokers)",
-			"make": func() -> Enemy: return Enemy.new(), "jokers": false},
-		{"label": "Basic enemy (jokers)",
-			"make": func() -> Enemy: return Enemy.new(), "jokers": true},
-		{"label": "The Cute Slime",
-			"make": func() -> Enemy: return CuteSlime.new(), "jokers": true},
-		{"label": "The Sadistic Billionaire",
-			"make": func() -> Enemy: return SadisticBillionaire.new(), "jokers": true},
-	]
+		elif arg == "--no-energy":
+			use_energy = false
+	# One matchup per enemy on the run map, in map order.
+	var matchups: Array[Dictionary] = []
+	for i in Enemy.roster().size():
+		var idx := i
+		matchups.append({"label": Enemy.roster()[i].display_name,
+			"make": func() -> Enemy: return Enemy.roster()[idx], "jokers": true})
 	print("Balance stats: %d games per matchup, 1v1, %d-card hands, player profile "
 		% [games, hand_size]
 		+ "strength=%.1f style=%.1f attention=%.1f%s" % [PLAYER_STRENGTH, PLAYER_STYLE,
-			PLAYER_ATTENTION, ", starting combos dealt" if start_combo else ""])
+			PLAYER_ATTENTION, ", starting combos dealt" if start_combo else ""]
+		+ (", energy 3 (+1/turn, cap 10)" if use_energy else ", no energy"))
 	var failures := 0
 	var all: Array[Dictionary] = []
 	var per_matchup: Array[Dictionary] = []
@@ -89,7 +93,13 @@ func _init() -> void:
 func _play_game(matchup: Dictionary, seed_value: int) -> Dictionary:
 	var gm := GameManager.new()
 	var enemy: Enemy = matchup["make"].call()
-	gm.setup(["You", enemy.display_name], hand_size, seed_value, matchup["jokers"])
+	if use_energy:
+		gm.start_energy = 3
+		gm.energy_per_turn = 1
+		gm.energy_cap = 10
+	gm.setup(["You", enemy.display_name], hand_size, seed_value, matchup["jokers"],
+		[null, enemy.build_deck(matchup["jokers"])])
+	gm.draw_per_turn = 2
 	enemy.on_combat_start(gm)
 	if start_combo:
 		gm.deal_starting_melds()
