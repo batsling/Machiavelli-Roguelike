@@ -319,6 +319,15 @@ func refresh_board() -> void:
 		empty.position = Vector2(UITheme.BOARD_PAD, UITheme.BOARD_PAD)
 		empty.size = empty.get_combined_minimum_size()
 		_ui.board_flow.add_child(empty)
+	# A fresh layout (the deal, Sort, Randomize: no group has a spot yet) is
+	# packed in reading order and then centered on the felt as one block; after
+	# that, each new group takes the free spot nearest the middle.
+	var fresh := true
+	for m in gm.board.melds:
+		if m.is_placed():
+			fresh = false
+			break
+	var laid: Array[Dictionary] = []
 	for cluster in BoardGrid.clusters(gm.board):
 		var melds: Array[CardSet] = cluster["melds"]
 		var panel: Control
@@ -327,7 +336,20 @@ func refresh_board() -> void:
 		else:
 			panel = _make_cluster_panel(cluster)
 		_ui.board_flow.add_child(panel)
-		_place_panel(panel, melds, placed, width)
+		if fresh:
+			_shelf_place(panel, melds, placed, width)
+			laid.append({"panel": panel, "melds": melds})
+		else:
+			_place_panel(panel, melds, placed, width)
+	if fresh and not laid.is_empty():
+		_center_block(laid, placed, width)
+		# Before the felt has its real size (the table not yet on screen) the
+		# middle is only a guess: show it, but keep the groups unplaced so the
+		# next refresh centers them properly.
+		if not _felt_laid_out():
+			for entry in laid:
+				for m: CardSet in entry["melds"]:
+					m.board_pos = CardSet.UNPLACED
 	# The "+ New group" click target only appears while cards are selected;
 	# drags can always land on empty felt instead. It (and the hover hint) tuck
 	# into a free patch of felt like any group, but keep no lasting spot.
@@ -376,12 +398,74 @@ func _needs_replacing(rect: Rect2, placed: Array[Rect2], width: float) -> bool:
 		return true
 	return rect.size.x <= width and rect.position.x + rect.size.x > width
 
+## Pack a panel of a fresh layout into the next shelf spot (reading order) and
+## remember it on its melds; _center_block then moves the whole block.
+func _shelf_place(panel: Control, melds: Array[CardSet], placed: Array[Rect2],
+		width: float) -> void:
+	var size := panel.get_combined_minimum_size()
+	panel.size = size
+	var pos := _shelf_spot(size, placed, width)
+	panel.position = pos
+	for m in melds:
+		m.board_pos = pos
+	placed.append(Rect2(pos, size))
+
+## Slide a freshly packed layout so the block of groups sits in the middle of
+## the felt (never past its top-left padding), storing the moved spots.
+func _center_block(laid: Array[Dictionary], placed: Array[Rect2], width: float) -> void:
+	var box: Rect2 = placed[0]
+	for r in placed:
+		box = box.merge(r)
+	var pad := float(UITheme.BOARD_PAD)
+	var target := Vector2(width, _canvas_height()) / 2.0 - box.size / 2.0
+	var shift := (Vector2(maxf(target.x, pad), maxf(target.y, pad)) - box.position).floor()
+	for i in placed.size():
+		placed[i].position += shift
+	for entry in laid:
+		var panel: Control = entry["panel"]
+		panel.position += shift
+		for m: CardSet in entry["melds"]:
+			m.board_pos = panel.position
+
+## The open spot for a new panel of `size` nearest the middle of the felt: the
+## middle itself, or a spot beside, above or below a group already there (lined
+## up with its edges, so groups settle into tidy rows) that overlaps nothing and
+## stays on the felt. Sideways distance counts for less than vertical, since the
+## felt is wide. Falls back to the shelf spot when nothing near the middle fits.
+func _free_spot(size: Vector2, placed: Array[Rect2], width: float) -> Vector2:
+	var pad := float(UITheme.BOARD_PAD)
+	var center := Vector2(width, _canvas_height()) / 2.0
+	var cands: Array[Vector2] = [center - size / 2.0]
+	for r in placed:
+		var right := r.end.x + pad
+		var left := r.position.x - pad - size.x
+		var below := r.end.y + pad
+		var above := r.position.y - pad - size.y
+		var flush_right := r.end.x - size.x
+		cands.append_array([Vector2(right, r.position.y), Vector2(left, r.position.y),
+			Vector2(r.position.x, below), Vector2(r.position.x, above),
+			Vector2(flush_right, below), Vector2(flush_right, above)])
+	var best := Vector2.INF
+	var best_d := INF
+	for c in cands:
+		c = c.floor()
+		if c.x < pad or c.y < pad or c.x + size.x > width - pad:
+			continue
+		if _overlaps_any(Rect2(c, size), placed):
+			continue
+		var off := c + size / 2.0 - center
+		var d := off.x * off.x * 0.4 + off.y * off.y
+		if d < best_d:
+			best_d = d
+			best = c
+	return best if best != Vector2.INF else _shelf_spot(size, placed, width)
+
 ## The next open spot for a panel of `size`: the topmost-then-leftmost candidate
 ## corner (the felt's top-left, plus the right and bottom edges every placed
 ## panel opens up) that neither overlaps a placed panel nor overflows `width`.
 ## Placing every group this way packs them into tidy shelves that let a tall
 ## vertical group and a short horizontal one share a row with no wasted gap.
-func _free_spot(size: Vector2, placed: Array[Rect2], width: float) -> Vector2:
+func _shelf_spot(size: Vector2, placed: Array[Rect2], width: float) -> Vector2:
 	var pad := float(UITheme.BOARD_PAD)
 	var cand_x: Array[float] = [pad]
 	var cand_y: Array[float] = [pad]
@@ -416,6 +500,16 @@ func _overlaps_any(rect: Rect2, placed: Array[Rect2]) -> bool:
 func _canvas_width() -> float:
 	var w := _ui.board_flow.size.x
 	return w if w > 100.0 else 820.0
+
+func _felt_laid_out() -> bool:
+	return _ui.board_flow.is_visible_in_tree() and _ui.board_flow.size.x > 100.0 \
+		and (_ui.board_flow.get_parent() as Control).size.y > 100.0
+
+## The felt's visible height (its scroll area), or a sensible default before
+## layout has run.
+func _canvas_height() -> float:
+	var h := (_ui.board_flow.get_parent() as Control).size.y
+	return h if h > 100.0 else 420.0
 
 ## Grow the canvas tall enough to hold every placed panel, so the scroll area
 ## can reach a group parked near the bottom of the felt.

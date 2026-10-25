@@ -77,9 +77,9 @@ func _init() -> void:
 		if jokers != 2:
 			printerr("%s's deck should hold 2 jokers, found %d" % [p.display_name, jokers])
 			ok = false
-	# Two starting combos plus the round-1 location's combo.
-	if gm.board.melds.size() != 3 or not gm.players[0].has_opened:
-		printerr("starting combos should open both players with a meld each")
+	# No starting combos in a run: only the round-1 location's combo is out.
+	if gm.board.melds.size() != 1 or gm.players[0].has_opened or not gm.starting_combos.is_empty():
+		printerr("a run should deal no starting combos, only the round-1 location's combo")
 		ok = false
 	if ui.energy_slot.get_child_count() != 1 + first_energy:
 		printerr("the hand header should show the energy label and %d pips" % first_energy)
@@ -113,13 +113,9 @@ func _init() -> void:
 	var origins := PackedStringArray()
 	for m: CardSet in gm.board.melds:
 		origins.append(ui._table.group_origin([m] as Array[CardSet]))
-	var want_origins := ["%s combo" % gm.revealed_locations[0].title, "Your start",
-		"%s's start" % gm.players[1].display_name]
-	for o in want_origins:
-		if not origins.has(o):
-			printerr("the dealt groups should be labelled %s, got %s" % [want_origins, origins])
-			ok = false
-			break
+	if origins != PackedStringArray(["%s combo" % gm.revealed_locations[0].title]):
+		printerr("the location's combo should be labelled with its name, got %s" % origins)
+		ok = false
 	if not ui._table.location_panels.has(gm.revealed_locations[0]):
 		printerr("a revealed location's panel should be registered for its combo's flight")
 		ok = false
@@ -153,6 +149,8 @@ func _init() -> void:
 		ok = false
 
 	# --- Energy gates the green playable cap -------------------------------------
+	# A run deals no starting combos, so open the player by hand for the lay-off.
+	gm.players[0].has_opened = true
 	var run_meld := CardSet.new()
 	run_meld.cards.assign([_card(5, "hearts"), _card(6, "hearts"), _card(7, "hearts")])
 	gm.board.melds.append(run_meld)

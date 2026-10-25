@@ -56,10 +56,11 @@ this project.
   it; the choice is final when your turn ends.
 - **Opening rule** (everyone, human and AI): until you have laid down at least
   one valid group built *only* from your own hand, you may not add cards to
-  other groups or take cards from them. Runs deal **starting combos** by default:
-  every player begins with a random valid three-card group from their own deck
-  on the table, which counts as opening. Each starting combo's grip strip is
-  labelled (**Your start**, **Scrap Drone's start**) until it is changed.
+  other groups or take cards from them. A run deals no starting combos: its
+  table starts with only the round-1 location's combo. The sandbox can deal
+  **starting combos** (off by default): every player begins with a random valid
+  three-card group from their own deck on the table, which counts as opening,
+  labelled **Your start** / **Rosso's start** until it is changed.
 - **Max hand size** (optional): drawing stops at the cap, so a draw on a full
   hand is a pass.
 - **Winning a match.** First to empty their hand wins. A player who cannot draw
@@ -87,9 +88,8 @@ table the moment the location is revealed, flying in from the location's panel a
 lit in gold, and anyone may build on it or borrow from it like any other group
 (after opening). The location panel names its combo, and the group's grip strip
 reads **<Location> combo** until it is changed. The round-1 location is revealed
-as the match is dealt, so a run's opening table holds three groups: your starting
-combo, the enemy's, and that location's combo; the next two arrive on rounds 3
-and 5.
+as the match is dealt, so its combo is the only group on a run's opening table;
+the next two arrive on rounds 3 and 5.
 
 Locations used to be called events; *events* will be something else.
 Names, kinds and rule text come from the **Locations** sheet of
@@ -109,7 +109,7 @@ the rules themselves are code.
 
 Discards go face up to the owner's deck's discard pile, which is shuffled
 back in when that deck runs dry. When a location asks you to choose cards, the
-status line says so and a **Confirm** button appears: click the cards in your
+status line (top of the side panel) says so and a **Confirm** button appears: click the cards in your
 hand, then Confirm. Ending the turn and drawing wait until you do. Enemies pick
 the cards they can best spare. To stop locations ending a match by themselves,
 Gift never takes your last card and Attrition skips a one-card hand.
@@ -132,7 +132,8 @@ Click the lit node to play a 1v1 match against its enemy. When the match ends:
 During a match the top bar shows your lives and which node you are on, the hand
 header shows your energy (`Energy 2/4` plus a pip per point), each enemy's
 name chip shows their energy, and every player's deck sits beside their cards
-(yours at the left of your hand). The **☰ Menu** in the top-left corner offers
+(yours at the right of your hand, beside **End turn**). The locations stand in a
+column left of the felt. The **☰ Menu** in the top-left corner offers
 **Settings**, **Restart run** and **Main menu** (which keeps the run; **Resume**
 returns to the match, or to the map between matches).
 
@@ -140,11 +141,11 @@ The enemies (`Enemy.roster()`), all plain opponents with standard decks:
 
 | Node | Enemy | AI | Strong simulated player wins* |
 | --- | --- | --- | --- |
-| 1 | Scrap Drone | capable, quick, distractible, short-sighted | 100% |
-| 2 | Rust Raider | strong, quick, attentive, a measured planner | 83% |
-| 3 (boss) | Belt Warden | cutthroat, balanced, attentive, an expert planner | 33% |
+| 1 | Scrap Drone | capable, quick, distractible, short-sighted | 92% |
+| 2 | Rust Raider | strong, quick, attentive, a measured planner | 58% |
+| 3 (boss) | Belt Warden | cutthroat, balanced, attentive, an expert planner | 25% |
 
-\* 12 seeded games each from `tests/balance_stats.gd -- --games=12 --combo`
+\* 12 seeded games each from `tests/balance_stats.gd -- --games=12`
 under run rules. The simulated player is the AI at full strength, so these are
 upper bounds for a human.
 
@@ -166,6 +167,9 @@ their cards. The top-left corner shows the **round** counter (one lap of the
 table). Each opponent's name chip carries an **Info** button with its
 description and AI, and their deck sits beside their card backs with the
 cards left (its top card face up when that card is public: glass, Open Decks).
+The **side panel** on the right holds the status line (what to do now, boxed
+in gold) over the game log; **▶** folds it to a slim strip to give the table
+the room, **◀** opens it again.
 
 On your turn:
 
@@ -179,24 +183,28 @@ On your turn:
    opened.
 3. Cards you laid down this turn can go back: drag them onto your hand, or select
    them and press **Return to hand** (this refunds their energy).
-4. **End turn** validates the table and commits; it lights up once you have
-   played at least one card from your hand. **Undo action** takes back just
-   the last staged move; **Undo turn** puts the whole turn back.
-5. If you can't or won't play, click **your deck** (the **Draw** pile at the left
-   of your hand) to draw and end your turn. A partial or invalid staged play is
+4. **End turn** (the big gold button right of your hand) validates the table
+   and commits; it lights up once you have played at least one card from your
+   hand. **Undo action** takes back just the last staged move; **Undo turn**
+   puts the whole turn back.
+5. If you can't or won't play, click **your deck** (the **Draw** pile just left
+   of End turn) to draw and end your turn. A partial or invalid staged play is
    abandoned first, but a *valid* table rearrangement that laid no card from
    your hand is kept.
 
 Right-clicking anything that isn't a re-pointable joker clears the selection.
 
-The felt is **freeform**: drag a group by the grip (**⠿**) along its top to
-place it anywhere; **⟳** stands a group upright or lays it flat. The table
-header's **Sort** and **Randomize** re-place the groups (purely visual), and the
+The felt is **freeform**: groups start out centered on it (a new group takes
+the free spot nearest the middle), and you can drag a group by the grip (**⠿**)
+along its top to place it anywhere; **⟳** stands a group upright or lays it flat. The table
+header's **Sort** and **Randomize** re-place the groups as a centered block
+(purely visual), and the
 **suit highlighter** (♥ ♦ ♣ ♠) outlines every card of the hovered suit across
 the table and your hand.
 
 Your hand keeps whatever order you give it (drag a card onto another to slot
-it before or after), with **Sort: rank** and **Sort: suit** buttons. A card you
+it before or after), with two small sort buttons at its left edge: **A–K** (by rank) and **♥♠** (by
+suit). A card you
 can play this instant, with no rearranging and within your energy, wears a
 slim **green cap**; hovering it spotlights where it goes, and **double-clicking**
 it plays it there (a lay-off if one exists, otherwise the fresh group it
@@ -214,7 +222,7 @@ writes them to `user://settings.cfg` so they survive a restart.
 **Roguelike run** (applies from the next match; lives from the next run):
 
 - Cards drawn per turn (default 2), starting hand size (13), max hand size (none)
-- Include jokers, 2 per deck (on); starting combos (on)
+- Include jokers, 2 per deck (on)
 - Starting energy (3), energy gained per turn (1), energy cap (10, 0 = none)
 - Lives (3)
 - Locations per match (3, revealed on rounds 1, 3, 5; 0 turns them off)
@@ -337,10 +345,12 @@ Scripts are grouped by layer: `scripts/engine/` (rules and game state, no UI),
   for the run
 - `map_screen.gd` — `MapScreen`: the run map, built in code; emits
   `node_chosen` and `menu_requested`
-- `main_ui_builder.gd` — builds the widget tree once (☰ Menu, table, hand with
-  your Draw pile, action row, lives label, energy slot, map, menu, dialogs)
+- `main_ui_builder.gd` — builds the widget tree once (☰ Menu, locations column,
+  table, hand with its sort icons, your Draw pile and turn controls, the
+  status/log side panel, map, menu, dialogs)
 - `table_view.gd` — renders seats (energy, each opponent's deck pile), the felt
-  (with starting/location combo labels), the hand and its energy pips
+  (centered placement, starting/location combo labels), the hand and its
+  energy pips
 - `play_advisor.gd` — "what can this hand card do right now": hover hints, the
   green cap and double-click play, all energy-aware
 - `menu_screen.gd`, `settings_dialog.gd`, `game_settings.gd`, `card_renderer.gd`,

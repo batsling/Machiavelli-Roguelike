@@ -190,13 +190,6 @@ func _build_rogue_settings() -> VBoxContainer:
 		func(on: bool) -> void: _settings.rogue_jokers = on)
 	col.add_child(joker_check)
 
-	var combo_check := _make_check_row("Starting combos",
-		"Deal every player a random valid opening group from their own deck onto "
-		+ "the table, so nobody starts locked out on a hand that can't lay a group.",
-		_settings.rogue_start_combo,
-		func(on: bool) -> void: _settings.rogue_start_combo = on)
-	col.add_child(combo_check)
-
 	col.add_child(HSeparator.new())
 	col.add_child(_make_section("Energy and lives",
 		"Every card played from hand costs 1 energy. Energy refills each turn and "

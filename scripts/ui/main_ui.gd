@@ -84,12 +84,12 @@ extends Control
 ## leaving your hand count, rearranging the table is free; applies
 ## immediately, and binds the AI too), the joker toggle (next game) and the
 ## starting-combo toggle (next game). "Roguelike run" holds the run's own
-## rules — draw count, starting hand size, hand cap, jokers, starting combos,
-## energy (start, growth, cap) and lives — applying from the next match, so the
-## run can be balanced without touching the sandbox. Starting combos deal
-## every player a random valid three-card group from their own deck onto the table
-## at game start, which counts as their opening meld — nobody sits locked out
-## of the table on a hand that can't lay a group. Jokers (★) count as any
+## rules — draw count, starting hand size, hand cap, jokers, energy (start,
+## growth, cap) and lives — applying from the next match, so the run can be
+## balanced without touching the sandbox. A run deals no starting combos: its
+## table starts with only the round-1 location's combo. Sandbox starting combos
+## deal every player a random valid three-card group from their own deck onto
+## the table at game start, which counts as their opening meld. Jokers (★) count as any
 ## card while in a hand; the moment one lands in a valid group on the table
 ## it locks to the card it stands for (e.g. ★7♥) and is treated as exactly
 ## that card — no longer a wildcard, even when the group is rearranged or
@@ -152,7 +152,8 @@ var opponent_backs := {}
 # the Settings dialog edits it and _new_game reads it.
 var settings := GameSettings.new()
 
-var game_root: VBoxContainer
+## The whole match screen: the table column plus the side panel.
+var game_root: HBoxContainer
 var menu_layer: MenuScreen
 var map_layer: MapScreen
 var seat_top: VBoxContainer
@@ -164,7 +165,12 @@ var lives_label: Label
 ## The public top card of your deck (glass, slimed, Open Decks), beside the pile.
 var stock_top_slot: HBoxContainer
 ## The match's locations (see MatchLocation), between the top bar and the felt.
-var locations_row: HBoxContainer
+var locations_row: VBoxContainer
+## The side panel on the right (status line over the log), and its fold button.
+var side_panel: PanelContainer
+var side_title: Label
+var side_body: VBoxContainer
+var side_toggle_btn: Button
 ## "Confirm (1/2)" — settles the location choice you owe (Cycle, Gift).
 var choice_btn: Button
 var status_label: Label
@@ -249,7 +255,8 @@ func _new_game() -> void:
 	var combo_start := false
 	var jokers_in := false
 	if game_mode == Mode.ROGUE:
-		combo_start = settings.rogue_start_combo
+		# A run deals no starting combos: the only groups on the table at first
+		# are the locations' combos, each arriving as its location is revealed.
 		jokers_in = settings.rogue_jokers
 		settings.apply_ai_override(current_enemy)
 		# Energy is set before the deal: setup begins the first turn, which
@@ -259,6 +266,13 @@ func _new_game() -> void:
 		gm.energy_cap = settings.rogue_energy_cap
 		gm.max_plays_per_turn = 0
 		gm.meter_max = 0
+		# The intro is logged before the deal, which reveals the round-1 location.
+		_log("[b]Node %d of %d[/b] — you face %s. You have %s."
+			% [run.active_node.row + 1, run.rows.size(), current_enemy.display_name,
+				_lives_text()])
+		_log("Each card you play from hand costs 1 energy: %d on your first turn, " \
+			% settings.rogue_start_energy + "+%d each turn after. Unspent energy is lost." \
+			% settings.rogue_energy_per_turn)
 		gm.location_deck = MatchLocation.draw(settings.rogue_locations)
 		gm.setup(["You", current_enemy.display_name], settings.rogue_start_hand_size, -1,
 			settings.rogue_jokers, [null, current_enemy.build_deck(settings.rogue_jokers)])
@@ -266,12 +280,6 @@ func _new_game() -> void:
 		gm.max_hand_size = settings.rogue_max_hand_size
 		# Let the enemy plant its mechanics on the freshly dealt game.
 		current_enemy.on_combat_start(gm)
-		_log("[b]Node %d of %d[/b] — you face %s. You have %s."
-			% [run.active_node.row + 1, run.rows.size(), current_enemy.display_name,
-				_lives_text()])
-		_log("Each card you play from hand costs 1 energy: %d on your first turn, " \
-			% settings.rogue_start_energy + "+%d each turn after. Unspent energy is lost." \
-			% settings.rogue_energy_per_turn)
 		var intro := current_enemy.mechanic_intro()
 		if intro != "":
 			_log(intro)
@@ -361,6 +369,11 @@ func _show_game() -> void:
 	map_layer.visible = false
 	game_root.visible = true
 	_refresh()
+	# Once the table has laid out at its real size, refresh again so a fresh
+	# felt centers its groups for that size.
+	await get_tree().process_frame
+	if game_root.visible and not ai_running:
+		_refresh()
 
 ## Show the run map (between matches).
 func _show_map() -> void:
@@ -993,6 +1006,20 @@ func _on_new_game_pressed() -> void:
 		_on_play_rogue_pressed()
 	else:
 		_show_map()
+
+## Fold the side panel down to a slim strip (or open it back up), giving the
+## table the room.
+func _on_side_toggle_pressed() -> void:
+	var open := not side_body.visible
+	side_body.visible = open
+	side_title.visible = open
+	side_panel.custom_minimum_size.x = UITheme.SIDE_PANEL_WIDTH if open else 0.0
+	side_toggle_btn.text = "▶" if open else "◀"
+	side_toggle_btn.tooltip_text = "Hide the log" if open else "Show the status and log"
+	if not ai_running:
+		# The felt changed width: re-place any group now past its edge.
+		await get_tree().process_frame
+		_refresh()
 
 ## The ☰ Menu: Settings, restart (the whole run, or a fresh sandbox game) and
 ## back to the main menu (the game is kept).

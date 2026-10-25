@@ -39,7 +39,6 @@ var rogue_draw_per_turn := 2
 var rogue_start_hand_size := GameManager.DEFAULT_HAND_SIZE
 var rogue_max_hand_size := 0
 var rogue_jokers := true
-var rogue_start_combo := true
 # Energy: every card costs 1. Start with rogue_start_energy on your first turn,
 # gain rogue_energy_per_turn each turn up to rogue_energy_cap (0 = no cap).
 var rogue_start_energy := 3
@@ -133,7 +132,6 @@ func save() -> void:
 	cfg.set_value("rogue", "start_hand_size", rogue_start_hand_size)
 	cfg.set_value("rogue", "max_hand_size", rogue_max_hand_size)
 	cfg.set_value("rogue", "jokers", rogue_jokers)
-	cfg.set_value("rogue", "start_combo", rogue_start_combo)
 	cfg.set_value("rogue", "start_energy", rogue_start_energy)
 	cfg.set_value("rogue", "energy_per_turn", rogue_energy_per_turn)
 	cfg.set_value("rogue", "energy_cap", rogue_energy_cap)
@@ -170,7 +168,6 @@ func load_saved() -> void:
 	rogue_start_hand_size = cfg.get_value("rogue", "start_hand_size", rogue_start_hand_size)
 	rogue_max_hand_size = cfg.get_value("rogue", "max_hand_size", rogue_max_hand_size)
 	rogue_jokers = cfg.get_value("rogue", "jokers", rogue_jokers)
-	rogue_start_combo = cfg.get_value("rogue", "start_combo", rogue_start_combo)
 	rogue_start_energy = cfg.get_value("rogue", "start_energy", rogue_start_energy)
 	rogue_energy_per_turn = cfg.get_value("rogue", "energy_per_turn", rogue_energy_per_turn)
 	rogue_energy_cap = cfg.get_value("rogue", "energy_cap", rogue_energy_cap)
