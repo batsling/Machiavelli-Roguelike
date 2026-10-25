@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="LocationData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/location_data.gd" id="1_loc"]
+
+[resource]
+script = ExtResource("1_loc")
+id = &"extra_draw"
+title = "Extra Draw"
+kind = "ongoing"
+text = "Draw 1 more card whenever you draw."
+order = 5

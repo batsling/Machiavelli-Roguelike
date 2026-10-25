@@ -59,6 +59,8 @@ func _init() -> void:
 		failures += 1
 	if not _test_events():
 		failures += 1
+	if not _test_locations_sheet():
+		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
 			failures += 1
@@ -1306,6 +1308,47 @@ func _known_hand(gm: GameManager, cards: Array[Card]) -> void:
 	p.hand.append_array(cards)
 	p.hand.append(_card(2, "clubs"))
 	gm._hand_snapshot = p.hand.duplicate()
+
+## The Locations sheet (data/locations/, from tools/Machiavelli Roguelike.xlsx)
+## against the code: every rule has a row, the pool follows the sheet, each card
+## has a name and text, the sheet's Type agrees with how the rule is written, and
+## the numbers the text promises are the numbers the rules use.
+func _test_locations_sheet() -> bool:
+	var ok := true
+	var pool := MatchEvent.pool()
+	if pool.size() != MatchEvent.ID_NAMES.size():
+		printerr("locations: pool has %d events, the code has %d rules"
+			% [pool.size(), MatchEvent.ID_NAMES.size()])
+		ok = false
+	for id_value: int in MatchEvent.ID_NAMES:
+		var loc := Locations.get_by_id(MatchEvent.ID_NAMES[id_value])
+		if loc == null:
+			printerr("locations: no sheet row for '%s'" % MatchEvent.ID_NAMES[id_value])
+			ok = false
+			continue
+		var e := MatchEvent.new(id_value)
+		if e.title != loc.title or e.text != loc.text or e.text == "":
+			printerr("locations: '%s' did not take its name and text from the sheet" % loc.id)
+			ok = false
+		if loc.kind != ("ongoing" if e.is_ongoing() else "on_reveal"):
+			printerr("locations: the sheet makes %s '%s', its rule disagrees" % [loc.title, loc.kind])
+			ok = false
+	var ev := MatchEvent.Id
+	var promises := {
+		ev.CYCLE: MatchEvent.CHOICE_COUNT,
+		ev.GIFT: MatchEvent.CHOICE_COUNT,
+		ev.SURGE: MatchEvent.SURGE_ENERGY,
+		ev.OVERCHARGE: MatchEvent.OVERCHARGE_ENERGY,
+	}
+	for id_value: int in promises:
+		var e := MatchEvent.new(id_value)
+		if not e.text.contains(str(promises[id_value])):
+			printerr("locations: %s's text '%s' does not say %d, the number its rule uses"
+				% [e.title, e.text, promises[id_value]])
+			ok = false
+	if ok:
+		print("locations sheet test OK")
+	return ok
 
 ## The eight events: the reveal schedule (rounds 1, 3, 5), each event's rule,
 ## the pending choices (blocking play until resolved, for the human-style API

@@ -17,6 +17,12 @@ extends RefCounted
 ## It joins the table the moment the event is revealed, for anyone to build on.
 ## GameManager applies the rules; this class names and describes them and
 ## builds the combos.
+##
+## The NAMES, kinds and rule text come from the `Locations` sheet of
+## tools/Machiavelli Roguelike.xlsx (via data/locations/, see Locations); the
+## rules themselves are code, matched to a sheet row by ID_NAMES. The pool is
+## the rows that have a rule: delete a row and that event leaves the game; add a
+## row with no rule yet and it waits, with a warning, until one is written.
 
 enum Kind { ON_REVEAL, ONGOING }
 
@@ -29,6 +35,31 @@ enum Id {
 	ATTRITION,    # ongoing: discard 1 random card at the start of your turn
 	COIN_RUSH,    # on reveal: this turn each card played gives +1 coin
 	OPEN_DECKS,   # ongoing: the top card of every deck is face up
+}
+
+## Each rule's location id: the sheet's Name, slugified.
+const ID_NAMES := {
+	Id.CYCLE: &"cycle",
+	Id.GIFT: &"gift",
+	Id.SURGE: &"surge",
+	Id.OVERCHARGE: &"overcharge",
+	Id.EXTRA_DRAW: &"extra_draw",
+	Id.ATTRITION: &"attrition",
+	Id.COIN_RUSH: &"coin_rush",
+	Id.OPEN_DECKS: &"open_decks",
+}
+## The kind each rule is written as. GameManager reads ongoing rules every turn
+## and on-reveal rules only in their reveal round, so the code decides; a sheet
+## Type that disagrees is reported and overridden.
+const RULE_KINDS := {
+	Id.CYCLE: Kind.ON_REVEAL,
+	Id.GIFT: Kind.ON_REVEAL,
+	Id.SURGE: Kind.ON_REVEAL,
+	Id.OVERCHARGE: Kind.ON_REVEAL,
+	Id.EXTRA_DRAW: Kind.ONGOING,
+	Id.ATTRITION: Kind.ONGOING,
+	Id.COIN_RUSH: Kind.ON_REVEAL,
+	Id.OPEN_DECKS: Kind.ONGOING,
 }
 
 ## Cards chosen by the CYCLE and GIFT events.
@@ -52,32 +83,27 @@ var combo: Array[Card] = []
 
 func _init(id_value: Id = Id.CYCLE) -> void:
 	id = id_value
-	match id:
-		Id.CYCLE:
-			_describe(Kind.ON_REVEAL, "Cycle",
-				"Choose %d cards to discard, then draw %d." % [CHOICE_COUNT, CHOICE_COUNT])
-		Id.GIFT:
-			_describe(Kind.ON_REVEAL, "Gift",
-				"Choose %d cards to give to your opponent." % CHOICE_COUNT)
-		Id.SURGE:
-			_describe(Kind.ON_REVEAL, "Surge", "Gain +%d energy this turn." % SURGE_ENERGY)
-		Id.OVERCHARGE:
-			_describe(Kind.ON_REVEAL, "Overcharge",
-				"+%d max energy for the rest of the match." % OVERCHARGE_ENERGY)
-		Id.EXTRA_DRAW:
-			_describe(Kind.ONGOING, "Extra Draw", "Draw 1 more card whenever you draw.")
-		Id.ATTRITION:
-			_describe(Kind.ONGOING, "Attrition",
-				"Discard 1 random card at the start of your turn.")
-		Id.COIN_RUSH:
-			_describe(Kind.ON_REVEAL, "Coin Rush", "This turn, each card played gives +1 coin.")
-		Id.OPEN_DECKS:
-			_describe(Kind.ONGOING, "Open Decks", "The top card of every deck is face up.")
+	kind = RULE_KINDS[id]
+	var loc := Locations.get_by_id(ID_NAMES[id])
+	if loc == null:
+		push_warning("[MatchEvent] no '%s' row in the Locations sheet" % ID_NAMES[id])
+		title = String(ID_NAMES[id]).capitalize()
+		return
+	title = loc.title
+	text = loc.text
+	if loc.kind != _kind_name(kind):
+		push_error("[MatchEvent] the sheet makes %s '%s', but its rule is written as '%s'"
+			% [title, loc.kind, _kind_name(kind)])
 
-func _describe(kind_value: Kind, title_value: String, text_value: String) -> void:
-	kind = kind_value
-	title = title_value
-	text = text_value
+static func _kind_name(kind_value: Kind) -> String:
+	return "ongoing" if kind_value == Kind.ONGOING else "on_reveal"
+
+## The rule behind a location id, or -1 if no code implements it yet.
+static func id_for(location_id: StringName) -> int:
+	for id_value: int in ID_NAMES:
+		if ID_NAMES[id_value] == location_id:
+			return id_value
+	return -1
 
 func is_revealed() -> bool:
 	return revealed_round > 0
@@ -125,10 +151,16 @@ static func _combo_card(rank: int, suit: String) -> Card:
 	c.deck_owner = NO_OWNER
 	return c
 
-## A fresh copy of every event in the pool.
+## A fresh copy of every event in the pool: each sheet row with a rule behind
+## it, in sheet order.
 static func pool() -> Array[MatchEvent]:
 	var out: Array[MatchEvent] = []
-	for id_value in Id.values():
+	for loc in Locations.all():
+		var id_value := id_for(loc.id)
+		if id_value < 0:
+			push_warning("[MatchEvent] location '%s' has no rule in code yet; left out of the pool"
+				% loc.title)
+			continue
 		out.append(MatchEvent.new(id_value))
 	return out
 

@@ -86,12 +86,16 @@ table the moment the event is revealed, lit in gold, and anyone may build on it
 or borrow from it like any other group (after opening). The event panel names
 its combo.
 
+Names, kinds and rule text come from the **Locations** sheet of
+`tools/Machiavelli Roguelike.xlsx` (see [Content from the spreadsheet](#content-from-the-spreadsheet));
+the rules themselves are code.
+
 | Event | Kind | Rule |
 | --- | --- | --- |
 | Cycle | On reveal | Choose 2 cards to discard, then draw 2. |
-| Gift | On reveal | Choose 2 cards to give to your opponent. |
-| Surge | On reveal | Gain +3 energy this turn (may go past the cap). |
-| Coin Rush | On reveal | This turn, each card played gives +1 coin. |
+| Gift | On reveal | Choose 2 cards to give your opponent. |
+| Surge | On reveal | +3 energy this turn (may go past the cap). |
+| Coin Rush | On reveal | +1 coin per card played this turn. |
 | Overcharge | On reveal | +2 max energy for the rest of the match (may go past the cap). |
 | Extra Draw | Ongoing | Draw 1 more card whenever you draw. |
 | Attrition | Ongoing | Discard 1 random card at the start of your turn. |
@@ -225,6 +229,40 @@ The four AI dials:
 - **Planning** (short-sighted → expert planner) — how many board relocations the
   AI chains to open up a hand play: 1, 3, or as many as it needs.
 
+## Content from the spreadsheet
+
+`tools/Machiavelli Roguelike.xlsx` is upstream of `data/`, the way
+`Roguelikes.xlsx` is in Roguelike-like: edit the sheet, run its generator, and
+commit the sheet and the regenerated `.tres` together. Never hand-edit a
+generated `.tres`, and never save the workbook from a script (openpyxl drops
+what it does not understand); generators only read it.
+
+| Sheet | Generator | Output | Schema | Loaded by |
+| --- | --- | --- | --- | --- |
+| Locations | `tools/generate_locations.py` | `data/locations/*.tres` | `LocationData` | `Locations` |
+
+```sh
+python3 tools/generate_locations.py           # write data/locations/*.tres
+python3 tools/generate_locations.py --list    # print what the sheet parses to
+python3 tools/generate_locations.py --check   # exit 1 if data/ is out of date
+```
+
+**Locations** (`Name | Type | Description`) are the rule cards revealed during a
+match (`MatchEvent`). The sheet decides what each is called, its kind (*On
+reveal* / *Ongoing*) and its card text; what it *does* is code in
+`GameManager`, matched to the row by id (the Name slugified, `Coin Rush` →
+`coin_rush`, see `MatchEvent.ID_NAMES`). So:
+
+- **Rename or reword** a location: edit the sheet and regenerate.
+- **Remove** one from the game: delete its row and regenerate.
+- **Add** one: add the row; it stays out of the pool, with a warning, until its
+  rule is written and added to `MatchEvent.Id` / `ID_NAMES` / `RULE_KINDS`.
+
+`smoke_test.gd` holds the two together: every rule needs a row, the sheet's
+Type must match how the rule is written, and the numbers the text promises
+(Cycle and Gift's 2, Surge's 3, Overcharge's 2) must be the numbers the code
+uses — change one and the other has to follow.
+
 ## Layout
 
 Scripts are grouped by layer: `scripts/engine/` (rules and game state, no UI),
@@ -246,7 +284,8 @@ Scripts are grouped by layer: `scripts/engine/` (rules and game state, no UI),
   detection; emits the signals the UI listens to. Also the layout moves
   (pictures, plays off pictures, crossings) kept from v1
 - `match_event.gd` — `MatchEvent`: an event's id, kind (on reveal / ongoing),
-  title and rule text, the pool and a random draw. The rules themselves live in
+  title and rule text (read from the Locations sheet's data), the pool and a
+  random draw. The rules themselves live in
   `GameManager` (`event_deck`, `event_rounds`, `revealed_events`,
   `is_event_active`, `pending_choice` / `resolve_choice`, `draw_count`,
   `top_is_public`, `reveal_next_event`)
@@ -258,6 +297,13 @@ Scripts are grouped by layer: `scripts/engine/` (rules and game state, no UI),
   assignment and stand-in choices, display order, grid-line reading
 - `card_set.gd`, `board.gd`, `board_grid.gd` — table groups, the board with
   snapshot/restore, and the grid math for crossings and pictures
+
+### Data — `scripts/resources/` + `data/`
+
+- `location_data.gd` — `LocationData`: one row of the Locations sheet (id,
+  title, kind, text, sheet order)
+- `locations.gd` — `Locations`: loads `data/locations/` once and serves it by
+  id (`get_by_id`) or in sheet order (`all`)
 
 ### AI — `scripts/ai/`
 
