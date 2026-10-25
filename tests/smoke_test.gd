@@ -4,8 +4,9 @@ extends SceneTree
 ##   godot --headless --path . --import        (first time, builds the class cache)
 ##   godot --headless --path . --script res://tests/smoke_test.gd
 ## Plays full AI-vs-AI games from fixed seeds (plain, with jokers, with AI
-## profiles, with multi-card draws) and asserts core invariants after every
-## single turn, plus unit tests for joker rules and the joker swap.
+## profiles, with multi-card draws, with energy) and asserts core invariants
+## after every single turn, plus unit tests for joker rules and the joker swap,
+## per-player decks, energy and the run map.
 
 const GAMES := 25
 const MAX_TURNS := 2000
@@ -36,14 +37,6 @@ func _init() -> void:
 		failures += 1
 	if not _test_slime_free_move():
 		failures += 1
-	if not _test_slime_setup():
-		failures += 1
-	if not _test_slime_strategy():
-		failures += 1
-	if not _test_slime_guards_on_draw():
-		failures += 1
-	if not _test_glass_setup():
-		failures += 1
 	if not _test_glass_counting():
 		failures += 1
 	if not _test_glass_worth_holding():
@@ -55,6 +48,14 @@ func _init() -> void:
 	if not _test_starting_melds():
 		failures += 1
 	if not _test_deep_planner():
+		failures += 1
+	if not _test_own_decks():
+		failures += 1
+	if not _test_energy():
+		failures += 1
+	if not _test_energy_ai():
+		failures += 1
+	if not _test_run_state():
 		failures += 1
 	for seed_value in GAMES:
 		if not _play_game(seed_value, "game"):
@@ -93,20 +94,12 @@ func _init() -> void:
 	for seed_value in 5:
 		if not _play_game(seed_value, "starting-combo game", true, null, 1, 0, 0, true):
 			failures += 1
-	# Slimed tables: the Cute Slime coats hearts and jokers, so the AI must
-	# handle sticky clusters (never borrowing a card that drags its cluster) and
-	# still finish with a valid table.
-	for seed_value in 8:
-		if not _play_slime_game(seed_value):
-			failures += 1
-	# Glass tables: the Sadistic Billionaire turns his whole deck (half the cards
-	# in play) to glass, so the smart brain runs its glass counting every turn.
-	for seed_value in 8:
-		if not _play_glass_game(seed_value):
-			failures += 1
-	# Glass and slime together on one table (and on the same cards).
-	for seed_value in 4:
-		if not _play_glass_slime_game(seed_value):
+	# Energy games: the roguelike's rule — every card costs 1, energy starts at
+	# 3 and grows by 1 a turn — must still play out cleanly, at every AI tier.
+	for seed_value in 6:
+		var profile: AIProfile = null if seed_value < 2 \
+			else AIProfile.new(0.5 * (seed_value % 3), 0.0, 1.0, seed_value, 1.0)
+		if not _play_energy_game(seed_value, profile):
 			failures += 1
 	if failures == 0:
 		print("SMOKE TEST OK: all games completed cleanly")
@@ -394,52 +387,6 @@ func _test_slime_free_move() -> bool:
 		print("slime free move test OK")
 	return ok
 
-## The Cute Slime coats every card in HER OWN deck at combat start — one copy of
-## each, since the combined stock holds one copy per player. So every card she
-## owns is slimed (all four suits, and her 2 of the 4 jokers), and nothing from
-## the player's deck is.
-func _test_slime_setup() -> bool:
-	var gm := GameManager.new()
-	var ok := true
-	gm.setup(["You", "The Cute Slime"], 13, 6, true)
-	CuteSlime.new().on_combat_start(gm)
-	var own := gm.players[1].player_id
-	var all_cards: Array[Card] = gm.deck.cards.duplicate()
-	for p in gm.players:
-		all_cards.append_array(p.hand)
-	var slimed_hers := 0     # her own cards that carry slime (should be all of them)
-	var her_cards := 0       # every card from her deck
-	var stray := 0           # slimed cards from someone else's deck (should be none)
-	for c in all_cards:
-		if c.deck_owner == own:
-			her_cards += 1
-			if c.is_sticky():
-				slimed_hers += 1
-		elif c.is_sticky():
-			stray += 1
-	if slimed_hers != her_cards:
-		printerr("slime setup: expected all %d of her cards slimed, got %d"
-			% [her_cards, slimed_hers])
-		ok = false
-	# One full deck per player: 52 naturals + her half of the jokers.
-	var expected := 52 + Deck.JOKER_COUNT / 2
-	if her_cards != expected:
-		printerr("slime setup: expected %d cards from her deck, got %d"
-			% [expected, her_cards])
-		ok = false
-	if stray != 0:
-		printerr("slime setup: %d cards were slimed that shouldn't be (not from her deck)"
-			% stray)
-		ok = false
-	# She marks her own seat immune so she moves slimed cards freely.
-	if not gm.players[1].ignores_sticky:
-		printerr("slime setup: the slime's seat should ignore sticky")
-		ok = false
-	gm.free()
-	if ok:
-		print("slime setup test OK")
-	return ok
-
 ## The slime legally combines slimed cards to guard her most valuable ones,
 ## The deep-rearrangement planner (the planning dial): an expert planner chains
 ## board relocations to lay down a hand play no borrow reaches, while the
@@ -494,184 +441,6 @@ func _append_meld(gm: GameManager, cards: Array) -> void:
 		cs.add_card(c)
 	gm.board.melds.append(cs)
 
-## keeping every group valid with no leftover cards, and does nothing when no
-## legal combine helps.
-func _test_slime_strategy() -> bool:
-	var gm := GameManager.new()
-	var ok := true
-	gm.setup(["You", "The Cute Slime"], 13, 6, true)
-	gm.current_player().has_opened = true
-	# A run whose joker sits (by default high extension) at the 8♥ slot with a
-	# plain 7♥ neighbour — exposed.
-	var joker := _sticky(_joker())
-	var meld_a := CardSet.new()
-	meld_a.cards.assign([_card(6, "hearts"), _card(7, "hearts"), joker])
-	Rules.assign_jokers(meld_a.cards)
-	# A slimed 9♥ parked in a set of nines, free to leave (three nines remain).
-	var nine_h := _sticky(_card(9, "hearts"))
-	var meld_b := CardSet.new()
-	meld_b.cards.assign([nine_h, _card(9, "spades"), _card(9, "clubs"), _card(9, "diamonds")])
-	gm.board.melds.append(meld_a)
-	gm.board.melds.append(meld_b)
-	var slime := CuteSlime.new()
-	var move := slime.plan_strategy_move(gm)
-	if move.is_empty():
-		printerr("slime strategy: expected a guarding move, got none")
-		ok = false
-	elif not _same(move["cards"], [nine_h]):
-		printerr("slime strategy: should relocate the slimed 9♥, moved %s"
-			% _labels(move["cards"]))
-		ok = false
-	elif move["dest"] != meld_a:
-		printerr("slime strategy: should ooze the 9♥ onto the joker's group to seal it")
-		ok = false
-	else:
-		# The combine is legal and leaves no unmatched card: the group she oozes
-		# onto stays a valid meld, and the one she takes from stays valid.
-		var grown: Array[Card] = meld_a.cards.duplicate()
-		grown.append(nine_h)
-		var rest: Array[Card] = meld_b.cards.duplicate()
-		rest.erase(nine_h)
-		if not Rules.is_valid_meld(grown):
-			printerr("slime strategy: the guarded group should stay a valid meld")
-			ok = false
-		elif not Rules.is_valid_meld(rest):
-			printerr("slime strategy: the source group should stay valid, no orphans")
-			ok = false
-	# Versatility ranking: joker over the middle ranks 4-8, and those over the
-	# edge ranks (aces and faces rate no higher than any other plain card).
-	if slime._importance(_joker()) <= slime._importance(_card(6, "hearts")) \
-			or slime._importance(_card(6, "hearts")) <= slime._importance(_card(1, "hearts")) \
-			or slime._importance(_card(1, "hearts")) != slime._importance(_card(13, "hearts")):
-		printerr("slime strategy: importance should rank joker > 4-8 > edge ranks")
-		ok = false
-	# A lone group offers no second group to bring a bodyguard from: no move.
-	if ok:
-		var gm2 := GameManager.new()
-		gm2.setup(["You", "The Cute Slime"], 13, 6, true)
-		gm2.current_player().has_opened = true
-		var solo := CardSet.new()
-		solo.cards.assign([_card(6, "hearts"), _card(7, "hearts"), _sticky(_joker())])
-		gm2.board.melds.append(solo)
-		Rules.assign_jokers(solo.cards)
-		if not slime.plan_strategy_move(gm2).is_empty():
-			printerr("slime strategy: a lone group offers no bodyguard to move")
-			ok = false
-		gm2.free()
-	gm.free()
-	if ok:
-		print("slime strategy test OK")
-	return ok
-
-## The reported bug: with no ordinary play in hand, the slime used to just draw
-## and skip her guard. Now a turn that only reworks the table (relocating a
-## slimed card to seal it next to another) still happens — she draws AND keeps
-## the rearrangement. Here a slimed 8♦ sitting in a set of four 8s can slide
-## next to a slimed 9♦ in a diamond run, sealing both; her hand can't play.
-func _test_slime_guards_on_draw() -> bool:
-	var gm := GameManager.new()
-	var ok := true
-	gm.setup(["The Cute Slime", "P1"], 13, 12)
-	var p := gm.current_player()
-	p.has_opened = true
-	p.ignores_sticky = true
-	# A junk hand: no meld, no lay-off, no borrow against the board below.
-	p.hand.assign([_card(2, "spades"), _card(5, "clubs"), _card(7, "spades"),
-		_card(13, "hearts")])
-	gm._hand_snapshot = p.hand.duplicate()
-	# A set of four 8s holding the slimed 8♦ (free to leave — three 8s remain).
-	var eight_d := _sticky(_card(8, "diamonds"))
-	var set_meld := CardSet.new()
-	set_meld.cards.assign([eight_d, _card(8, "spades"), _card(8, "clubs"),
-		_card(8, "hearts")])
-	# A diamond run holding a slimed 9♦; adding the 8♦ seals the two together.
-	var nine_d := _sticky(_card(9, "diamonds"))
-	var run_meld := CardSet.new()
-	run_meld.cards.assign([nine_d, _card(10, "diamonds"), _card(11, "diamonds")])
-	gm.board.melds.append(set_meld)
-	gm.board.melds.append(run_meld)
-	var slime := CuteSlime.new()
-	var stock_before := gm.deck.size()
-	GreedyAI.take_turn(gm, null, slime)
-	# She reworked the felt: the 8♦ now rides in the run, the set is down to
-	# three, and both groups are still valid.
-	if not run_meld.cards.has(eight_d):
-		printerr("slime guards on draw: the 8♦ should have oozed into the run, run = %s"
-			% _labels(run_meld.cards))
-		ok = false
-	elif set_meld.cards.size() != 3 or set_meld.cards.has(eight_d):
-		printerr("slime guards on draw: the set should be down to three 8s, got %s"
-			% _labels(set_meld.cards))
-		ok = false
-	elif not gm.board.all_valid():
-		printerr("slime guards on draw: the kept rearrangement left an invalid group")
-		ok = false
-	# And she still drew (the turn ended in a draw, not a commit) and passed play on.
-	elif gm.deck.size() != stock_before - 1:
-		printerr("slime guards on draw: she should have drawn one card, stock %d -> %d"
-			% [stock_before, gm.deck.size()])
-		ok = false
-	elif gm.current_player() == p:
-		printerr("slime guards on draw: the turn should have ended")
-		ok = false
-	gm.free()
-	if ok:
-		print("slime guards on draw test OK")
-	return ok
-
-## The Sadistic Billionaire turns every card in HIS OWN deck — all 52 naturals
-## and both his jokers — to glass at combat start. The combined stock holds one
-## copy of each card per player, so exactly his half (54 of 108) goes glass, only
-## his 2 of the 4 jokers, and nothing from the player's deck. Glass is pure
-## information, so it stacks with slime on the same card; and the rogue roster
-## now offers both designed enemies.
-func _test_glass_setup() -> bool:
-	var gm := GameManager.new()
-	var ok := true
-	gm.setup(["You", "The Sadistic Billionaire"], 13, 6, true)
-	SadisticBillionaire.new().on_combat_start(gm)
-	var own := gm.players[1].player_id
-	var all_cards: Array[Card] = gm.deck.cards.duplicate()
-	for p in gm.players:
-		all_cards.append_array(p.hand)
-	var glass := 0
-	var glass_jokers := 0
-	var total_jokers := 0
-	var stray := 0        # glass cards from the wrong (player's) deck
-	for c in all_cards:
-		if c.is_glass():
-			glass += 1
-			if c.deck_owner != own:
-				stray += 1
-		if c.is_joker:
-			total_jokers += 1
-			if c.is_glass():
-				glass_jokers += 1
-	# All 52 naturals + 2 jokers of his own deck: 54 of the 108 cards.
-	if all_cards.size() != 108 or glass != 54:
-		printerr("glass setup: expected 54 of 108 cards glass, got %d of %d"
-			% [glass, all_cards.size()])
-		ok = false
-	if stray != 0:
-		printerr("glass setup: %d glass cards came from the player's deck" % stray)
-		ok = false
-	if glass_jokers != 2 or total_jokers != Deck.JOKER_COUNT:
-		printerr("glass setup: expected only his 2 of %d jokers glass, got %d"
-			% [Deck.JOKER_COUNT, glass_jokers])
-		ok = false
-	var both := _glass(_sticky(_card(5, "hearts")))
-	if not (both.is_glass() and both.is_sticky()):
-		printerr("glass setup: a card should be able to be both glass and slimed")
-		ok = false
-	if Enemy.roster().size() != 2:
-		printerr("glass setup: roster should hold the slime and the billionaire, got %d"
-			% Enemy.roster().size())
-		ok = false
-	gm.free()
-	if ok:
-		print("glass setup test OK")
-	return ok
-
 ## The AI's glass counting reads only public information: glass cards in other
 ## players' hands and a glass top of the stock — never a face-down card.
 func _test_glass_counting() -> bool:
@@ -689,11 +458,11 @@ func _test_glass_counting() -> bool:
 		printerr("glass counting: a non-glass hand card must stay hidden")
 		ok = false
 	# The top of the stock is public only when the card there is glass.
-	gm.deck.cards.append(_card(12, "spades"))
+	gm.players[0].deck.cards.append(_card(12, "spades"))
 	if GreedyAI._glass_top_matches(gm, 12, "spades"):
 		printerr("glass counting: a face-down stock top must not be readable")
 		ok = false
-	gm.deck.cards.append(_glass(_card(11, "clubs")))
+	gm.players[0].deck.cards.append(_glass(_card(11, "clubs")))
 	if not GreedyAI._glass_top_matches(gm, 11, "clubs"):
 		printerr("glass counting: a glass stock top should be readable")
 		ok = false
@@ -728,7 +497,7 @@ func _test_glass_worth_holding() -> bool:
 	if GreedyAI._worth_holding(gm, five, none):
 		printerr("glass hold: a lone 5♥ with no partner is not worth holding")
 		ok = false
-	gm.deck.cards.append(_glass(_card(6, "hearts")))
+	gm.players[0].deck.cards.append(_glass(_card(6, "hearts")))
 	if not GreedyAI._worth_holding(gm, five, none):
 		printerr("glass hold: the glass 6♥ atop the stock should make 5♥ worth holding")
 		ok = false
@@ -775,7 +544,7 @@ func _test_glass_exposure() -> bool:
 	if held != 5:
 		printerr("glass exposure: the glass 8♥ in P1's hand should add 1, got %d" % held)
 		ok = false
-	gm.deck.cards.append(_glass(_card(4, "hearts")))
+	gm.players[0].deck.cards.append(_glass(_card(4, "hearts")))
 	var topped := GreedyAI._open_end_exposure(gm, run)
 	if topped != 6:
 		printerr("glass exposure: the glass 4♥ atop the stock should add 1, got %d" % topped)
@@ -1168,13 +937,11 @@ func _reassign_and_swap(gm: GameManager, hand_card: Card, joker: Card) -> bool:
 	return gm.swap_joker(hand_card, joker, gm.board.melds[0]) == ""
 
 ## deal_starting_melds gives every player a valid three-card meld of naturals
-## pulled from the stock, marks them opened, and conserves every card. On a
-## slimed deck the pulled cards keep their slime.
+## pulled from their own deck, marks them opened, and conserves every card.
 func _test_starting_melds() -> bool:
 	var gm := GameManager.new()
 	var ok := true
 	gm.setup(["P0", "P1", "P2"], 13, 5, true)
-	CuteSlime.new().on_combat_start(gm)
 	gm.deal_starting_melds()
 	if gm.board.melds.size() != 3:
 		printerr("starting melds: expected 3 melds on the table, got %d"
@@ -1197,122 +964,26 @@ func _test_starting_melds() -> bool:
 			printerr("starting melds: hands must stay untouched, %s has %d cards"
 				% [p.display_name, p.hand.size()])
 			ok = false
-	var count := gm.deck.size() + gm.board.all_cards().size()
+		if p.deck.size() != 54 - 13 - 3:
+			printerr("starting melds: %s's meld should come from their own deck"
+				% p.display_name)
+			ok = false
+	for m in gm.board.melds:
+		var owner := m.cards[0].deck_owner
+		for c in m.cards:
+			if c.deck_owner != owner:
+				printerr("starting melds: a meld mixed cards from two decks")
+				ok = false
+	var count := gm.cards_left_in_decks() + gm.board.all_cards().size()
 	for p in gm.players:
 		count += p.hand.size()
-	if count != 108:
+	if count != 162:
 		printerr("starting melds: card conservation broken (%d)" % count)
 		ok = false
 	gm.free()
 	if ok:
 		print("starting melds test OK")
 	return ok
-
-## A full AI-vs-AI game on a slimed table: the Cute Slime's mechanic is planted
-## at combat start and both seats play under her profile, so the run exercises
-## sticky clusters on the board. Core invariants (valid table, card
-## conservation) must hold after every turn, exactly as in a plain game.
-func _play_slime_game(seed_value: int) -> bool:
-	var gm := GameManager.new()
-	gm.setup(["You", "The Cute Slime"], 13, seed_value, true)
-	gm.draw_per_turn = 2
-	gm.max_plays_per_turn = 13
-	var slime := CuteSlime.new()
-	slime.on_combat_start(gm)
-	var profile := slime.make_profile(seed_value)
-	var turns := 0
-	while not gm.is_game_over and turns < MAX_TURNS:
-		# Only the slime's own turns carry her strategy; the other seat plays a
-		# plain game against the slimed table.
-		var enemy: Enemy = slime if gm.current_player().is_opponent else null
-		GreedyAI.take_turn(gm, profile, enemy)
-		turns += 1
-		if not gm.board.all_valid():
-			printerr("slime game %d: invalid meld on table after turn %d" % [seed_value, turns])
-			return false
-		var count := gm.deck.size() + gm.board.all_cards().size()
-		for p in gm.players:
-			count += p.hand.size()
-		if count != 108:
-			printerr("slime game %d: card conservation broken (%d) after turn %d"
-				% [seed_value, count, turns])
-			return false
-	if not gm.is_game_over:
-		printerr("slime game %d: did not finish within %d turns" % [seed_value, MAX_TURNS])
-		return false
-	print("slime game %d: finished in %d turns" % [seed_value, turns])
-	gm.free()
-	return true
-
-## A full AI-vs-AI game on a glass table: the Sadistic Billionaire's mechanic
-## is planted at combat start and both seats play under his (smart,
-## conservative, attentive) profile, so every turn exercises the glass-aware
-## brain — obtainable counting, glass feed threats, glass joker stand-ins and
-## the public stock top. Core invariants must hold after every turn.
-func _play_glass_game(seed_value: int) -> bool:
-	var gm := GameManager.new()
-	gm.setup(["You", "The Sadistic Billionaire"], 13, seed_value, true)
-	gm.draw_per_turn = 2
-	gm.max_plays_per_turn = 13
-	var billionaire := SadisticBillionaire.new()
-	billionaire.on_combat_start(gm)
-	var profile := billionaire.make_profile(seed_value)
-	var turns := 0
-	while not gm.is_game_over and turns < MAX_TURNS:
-		GreedyAI.take_turn(gm, profile)
-		turns += 1
-		if not gm.board.all_valid():
-			printerr("glass game %d: invalid meld on table after turn %d" % [seed_value, turns])
-			return false
-		var count := gm.deck.size() + gm.board.all_cards().size()
-		for p in gm.players:
-			count += p.hand.size()
-		if count != 108:
-			printerr("glass game %d: card conservation broken (%d) after turn %d"
-				% [seed_value, count, turns])
-			return false
-	if not gm.is_game_over:
-		printerr("glass game %d: did not finish within %d turns" % [seed_value, MAX_TURNS])
-		return false
-	print("glass game %d: finished in %d turns" % [seed_value, turns])
-	gm.free()
-	return true
-
-## Glass and slime planted on the same table (so plenty of cards carry both
-## effects): glass is pure information and must not disturb sticky movement or
-## any invariant. The slime's seat still runs her guard strategy.
-func _play_glass_slime_game(seed_value: int) -> bool:
-	var gm := GameManager.new()
-	gm.setup(["You", "The Cute Slime"], 13, seed_value, true)
-	gm.draw_per_turn = 2
-	gm.max_plays_per_turn = 13
-	var slime := CuteSlime.new()
-	slime.on_combat_start(gm)
-	SadisticBillionaire.new().on_combat_start(gm)
-	var profile := slime.make_profile(seed_value)
-	var turns := 0
-	while not gm.is_game_over and turns < MAX_TURNS:
-		var enemy: Enemy = slime if gm.current_player().is_opponent else null
-		GreedyAI.take_turn(gm, profile, enemy)
-		turns += 1
-		if not gm.board.all_valid():
-			printerr("glass+slime game %d: invalid meld on table after turn %d"
-				% [seed_value, turns])
-			return false
-		var count := gm.deck.size() + gm.board.all_cards().size()
-		for p in gm.players:
-			count += p.hand.size()
-		if count != 108:
-			printerr("glass+slime game %d: card conservation broken (%d) after turn %d"
-				% [seed_value, count, turns])
-			return false
-	if not gm.is_game_over:
-		printerr("glass+slime game %d: did not finish within %d turns"
-			% [seed_value, MAX_TURNS])
-		return false
-	print("glass+slime game %d: finished in %d turns" % [seed_value, turns])
-	gm.free()
-	return true
 
 func _play_game(seed_value: int, label: String, include_jokers := false,
 		profile: AIProfile = null, draw_per_turn := 1, max_hand_size := 0,
@@ -1324,7 +995,7 @@ func _play_game(seed_value: int, label: String, include_jokers := false,
 	gm.max_plays_per_turn = max_plays
 	if start_melds:
 		gm.deal_starting_melds()
-	var total_cards := 108 if include_jokers else 104
+	var total_cards := _cards_in_game(gm)
 	var turns := 0
 	while not gm.is_game_over and turns < MAX_TURNS:
 		GreedyAI.take_turn(gm, profile)
@@ -1332,9 +1003,7 @@ func _play_game(seed_value: int, label: String, include_jokers := false,
 		if not gm.board.all_valid():
 			printerr("%s %d: invalid meld on table after turn %d" % [label, seed_value, turns])
 			return false
-		var count := gm.deck.size() + gm.board.all_cards().size()
-		for p in gm.players:
-			count += p.hand.size()
+		var count := _cards_in_game(gm)
 		if count != total_cards:
 			printerr("%s %d: card conservation broken (%d) after turn %d"
 				% [label, seed_value, count, turns])
@@ -1346,3 +1015,267 @@ func _play_game(seed_value: int, label: String, include_jokers := false,
 	print("%s %d: finished in %d turns, table melds: %d" % [label, seed_value, turns, melds])
 	gm.free()
 	return true
+
+## Every card in the game right now: what is left in each player's deck (and
+## its discards), every hand and the table.
+func _cards_in_game(gm: GameManager) -> int:
+	var count := gm.board.all_cards().size()
+	for p in gm.players:
+		count += p.deck.size() + p.deck.discards.size() + p.hand.size()
+	return count
+
+## A 1v1 game under the roguelike's energy rule, driven move by move so every
+## single staged move can be checked against the mover's energy: no AI move
+## may ever spend more than the turn's ceiling. Card conservation and a valid
+## table must hold after every turn, and the game must finish.
+func _play_energy_game(seed_value: int, profile: AIProfile) -> bool:
+	var gm := GameManager.new()
+	gm.start_energy = 3
+	gm.energy_per_turn = 1
+	gm.energy_cap = 10
+	gm.setup(["P0", "P1"], 13, seed_value, true)
+	gm.draw_per_turn = 2
+	gm.deal_starting_melds()
+	var label := "energy game"
+	var total_cards := _cards_in_game(gm)
+	var turns := 0
+	while not gm.is_game_over and turns < MAX_TURNS:
+		while true:
+			var move := GreedyAI.plan_move(gm, profile)
+			if move.is_empty():
+				break
+			GreedyAI.apply_move(gm, move, profile)
+			if gm.energy_spent() > gm.current_player().max_energy:
+				printerr("%s %d: AI spent %d energy with a ceiling of %d" % [label,
+					seed_value, gm.energy_spent(), gm.current_player().max_energy])
+				return false
+		if gm.cards_played_this_turn() > 0:
+			var err := gm.commit_turn()
+			if err != "":
+				printerr("%s %d: AI staged an illegal turn: %s" % [label, seed_value, err])
+				return false
+		else:
+			gm.draw_and_end_turn()
+		turns += 1
+		if not gm.board.all_valid():
+			printerr("%s %d: invalid meld on table after turn %d" % [label, seed_value, turns])
+			return false
+		if _cards_in_game(gm) != total_cards:
+			printerr("%s %d: card conservation broken after turn %d"
+				% [label, seed_value, turns])
+			return false
+	if not gm.is_game_over:
+		printerr("%s %d: did not finish within %d turns" % [label, seed_value, MAX_TURNS])
+		return false
+	print("%s %d: finished in %d turns" % [label, seed_value, turns])
+	gm.free()
+	return true
+
+## Every player brings and draws from their own deck: a standard deck is 52
+## cards (+2 jokers) all tagged with its owner, hands are dealt from it, a draw
+## takes only from the drawer's deck, a custom deck passed to setup is used and
+## re-tagged to its seat, and a player whose deck is empty passes.
+func _test_own_decks() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.setup(["P0", "P1"], 13, 21, true)
+	for p in gm.players:
+		if p.deck.size() != 54 - 13:
+			printerr("own decks: %s should have 41 cards left, has %d"
+				% [p.display_name, p.deck.size()])
+			ok = false
+		for c in p.deck.cards + p.hand:
+			if c.deck_owner != p.player_id:
+				printerr("own decks: %s holds a card from deck %d"
+					% [p.display_name, c.deck_owner])
+				ok = false
+				break
+	if gm.copies_in_play(5, "hearts") != 2:
+		printerr("own decks: two standard decks hold 2 copies of 5♥, counted %d"
+			% gm.copies_in_play(5, "hearts"))
+		ok = false
+	var before0 := gm.players[0].deck.size()
+	var before1 := gm.players[1].deck.size()
+	gm.draw_and_end_turn()
+	if gm.players[0].deck.size() != before0 - 1 or gm.players[1].deck.size() != before1:
+		printerr("own decks: P0's draw must come from P0's deck only")
+		ok = false
+	gm.free()
+	# A custom deck (an enemy's authored deck) replaces the standard one.
+	gm = GameManager.new()
+	var custom := Deck.new(3)
+	for rank in range(1, 14):
+		for suit in ["hearts", "spades"]:
+			var c := _card(rank, suit)
+			custom.cards.append(c)
+	gm.setup(["P0", "P1"], 13, 4, false, [null, custom])
+	if gm.players[1].deck.size() != 26 - 13:
+		printerr("own decks: the custom deck should be dealt from, %d left"
+			% gm.players[1].deck.size())
+		ok = false
+	for c in gm.players[1].hand:
+		if c.deck_owner != 1 or (c.suit != "hearts" and c.suit != "spades"):
+			printerr("own decks: the custom deck's cards should be dealt and re-tagged")
+			ok = false
+			break
+	# Deck-out: with nothing left to draw, a draw is a pass.
+	gm.players[0].deck.cards.clear()
+	var passed := [false]
+	gm.player_passed.connect(func(_p: PlayerState) -> void: passed[0] = true)
+	gm.draw_and_end_turn()
+	if not passed[0]:
+		printerr("own decks: drawing from an empty deck should pass")
+		ok = false
+	gm.free()
+	if ok:
+		print("own decks test OK")
+	return ok
+
+## Energy: every card costs 1; a player starts at start_energy, gains
+## energy_per_turn each turn up to energy_cap, and never carries energy over.
+## Staging past the energy left is refused, rearranging the table is free, and
+## undoing or returning a card refunds it. Energy off means no limit at all.
+func _test_energy() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.start_energy = 3
+	gm.energy_per_turn = 1
+	gm.energy_cap = 5
+	gm.setup(["P0", "P1"], 13, 8)
+	var p := gm.current_player()
+	if p.max_energy != 3 or gm.energy_left() != 3:
+		printerr("energy: first turn should start at 3, got %d/%d"
+			% [gm.energy_left(), p.max_energy])
+		ok = false
+	p.has_opened = true
+	p.hand.clear()
+	var run: Array[Card] = [_card(5, "hearts"), _card(6, "hearts"), _card(7, "hearts")]
+	var eight := _card(8, "hearts")
+	p.hand.append_array(run)
+	p.hand.append(eight)
+	p.hand.append(_card(2, "clubs"))
+	gm._hand_snapshot = p.hand.duplicate()
+	if gm.move_cards_to_new_meld(run) != "":
+		printerr("energy: three cards with 3 energy should be playable")
+		ok = false
+	if gm.energy_left() != 0:
+		printerr("energy: 3 cards played should leave 0, got %d" % gm.energy_left())
+		ok = false
+	var one: Array[Card] = [eight]
+	if gm.add_cards_to_meld(one, gm.board.melds[-1]).find("energy") == -1:
+		printerr("energy: a fourth card with no energy left must be refused")
+		ok = false
+	# Rearranging cards already on the table is free.
+	var table_card: Array[Card] = [run[2]]
+	if gm.move_cards_to_new_meld(table_card) != "":
+		printerr("energy: moving a table card must not cost energy")
+		ok = false
+	gm.undo_action()
+	# Returning a played card refunds it; undo refunds too.
+	if gm.return_cards_to_hand(table_card) != "" or gm.energy_left() != 1:
+		printerr("energy: returning a played card should refund 1, have %d" % gm.energy_left())
+		ok = false
+	gm.undo_action()
+	if gm.energy_left() != 0:
+		printerr("energy: undoing the return should spend it again")
+		ok = false
+	if gm.commit_turn() != "":
+		printerr("energy: committing a 3-card meld should work")
+		ok = false
+	# P1 starts their own first turn at 3; P0's next turn is 4, then the cap.
+	if gm.current_player().max_energy != 3:
+		printerr("energy: P1's first turn should be 3, got %d" % gm.current_player().max_energy)
+		ok = false
+	var want := [4, 5, 5]
+	for w: int in want:
+		gm.draw_and_end_turn()  # P1 draws
+		if gm.current_player() != p or p.max_energy != w or gm.energy_left() != w:
+			printerr("energy: P0 should refill to %d (no carry-over), got %d/%d"
+				% [w, gm.energy_left(), p.max_energy])
+			ok = false
+		gm.draw_and_end_turn()  # P0 draws
+	gm.free()
+	# Energy off: no limit, no ceiling.
+	gm = GameManager.new()
+	gm.setup(["P0", "P1"], 13, 8)
+	if gm.energy_on() or gm.play_budget() != -1 or gm.current_player().max_energy != 0:
+		printerr("energy: with start_energy 0 energy must be off")
+		ok = false
+	gm.free()
+	if ok:
+		print("energy test OK")
+	return ok
+
+## The AI plans inside its energy: holding a five-card run with 3 energy it
+## lays three of them rather than giving up the turn, and with 0 energy left it
+## plans nothing.
+func _test_energy_ai() -> bool:
+	var gm := GameManager.new()
+	var ok := true
+	gm.start_energy = 3
+	gm.setup(["P0", "P1"], 13, 2)
+	var p := gm.current_player()
+	p.hand.clear()
+	for rank in range(3, 8):
+		p.hand.append(_card(rank, "spades"))
+	p.hand.append(_card(12, "hearts"))
+	gm._hand_snapshot = p.hand.duplicate()
+	var move := GreedyAI.plan_move(gm, null)
+	if move.is_empty() or (move["cards"] as Array).size() != 3 \
+			or not Rules.is_valid_meld(move["cards"]):
+		printerr("energy AI: should lay a valid 3-card part of its run, got %s" % str(move))
+		ok = false
+	else:
+		GreedyAI.apply_move(gm, move, null)
+		if not GreedyAI.plan_move(gm, null).is_empty():
+			printerr("energy AI: with 0 energy left nothing more should be planned")
+			ok = false
+	gm.free()
+	if ok:
+		print("energy AI test OK")
+	return ok
+
+## The run map: three nodes in a line, 3 lives. Only the next node is open; a
+## loss costs a life and leaves the node open to retry; a win clears it and
+## opens the next; the run is lost at 0 lives and won when the last node falls.
+func _test_run_state() -> bool:
+	var ok := true
+	var run := RunState.linear(Enemy.roster(), 3)
+	if run.rows.size() != 3 or run.lives != 3:
+		printerr("run state: expected 3 nodes and 3 lives")
+		ok = false
+	var n0 := run.node_at(0, 0)
+	var n1 := run.node_at(1, 0)
+	var n2 := run.node_at(2, 0)
+	if run.available_nodes() != [n0] or run.begin(n1):
+		printerr("run state: only the first node should be open at the start")
+		ok = false
+	run.begin(n0)
+	run.record_loss()
+	if run.lives != 2 or not run.is_available(n0) or n0.cleared:
+		printerr("run state: a loss should cost a life and leave the node open")
+		ok = false
+	run.begin(n0)
+	run.record_win()
+	if not n0.cleared or run.available_nodes() != [n1] or run.cleared_count() != 1:
+		printerr("run state: a win should clear the node and open the next")
+		ok = false
+	run.begin(n1)
+	run.record_win()
+	run.begin(n2)
+	run.record_loss()
+	run.begin(n2)
+	run.record_loss()
+	if not run.is_lost() or not run.is_over() or not run.available_nodes().is_empty():
+		printerr("run state: at 0 lives the run should be over")
+		ok = false
+	var won := RunState.linear(Enemy.roster(), 3)
+	for r in 3:
+		won.begin(won.node_at(r, 0))
+		won.record_win()
+	if not won.is_won() or won.lives != 3:
+		printerr("run state: clearing the last node should win the run")
+		ok = false
+	if ok:
+		print("run state test OK")
+	return ok

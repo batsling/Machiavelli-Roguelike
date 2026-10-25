@@ -144,7 +144,7 @@ func _build_vanilla_settings() -> VBoxContainer:
 	col.add_child(joker_check)
 
 	var combo_check := _make_check_row("Starting combos (next game)",
-		"Deal every player a random valid opening group from the stock onto the "
+		"Deal every player a random valid opening group from their own deck onto the "
 		+ "table, so nobody starts locked out on a hand that can't lay a group.",
 		_settings.start_combo,
 		func(on: bool) -> void: _settings.start_combo = on)
@@ -161,14 +161,14 @@ func _build_vanilla_settings() -> VBoxContainer:
 	return col
 
 ## The "Roguelike run" tab: the run's own rules. Everything applies from the
-## next round, so a round in progress keeps the rules it started under.
+## next match, so a match in progress keeps the rules it started under.
 func _build_rogue_settings() -> VBoxContainer:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 6)
 
 	var intro := Label.new()
 	intro.text = "Run rules for balancing the roguelike. Every change applies " \
-		+ "from the next round; enemies keep their own designed AI."
+		+ "from the next match; lives apply from the next run."
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	intro.add_theme_font_size_override("font_size", 13)
 	intro.add_theme_color_override("font_color", Color(1, 1, 1, 0.7))
@@ -183,34 +183,36 @@ func _build_rogue_settings() -> VBoxContainer:
 		func(v: float) -> void: _settings.rogue_start_hand_size = int(v)))
 	col.add_child(_make_cap_row("Max hand size", _settings.rogue_max_hand_size,
 		func(v: int) -> void: _settings.rogue_max_hand_size = v))
-	col.add_child(_make_cap_row("Max cards played per turn", _settings.rogue_max_plays_per_turn,
-		func(v: int) -> void: _settings.rogue_max_plays_per_turn = v))
 
-	var joker_check := _make_check_row("Include 4 jokers",
+	var joker_check := _make_check_row("Include jokers (2 per deck)",
 		"Jokers are wildcards: they count as any card until they lock into a group.",
 		_settings.rogue_jokers,
 		func(on: bool) -> void: _settings.rogue_jokers = on)
 	col.add_child(joker_check)
 
 	var combo_check := _make_check_row("Starting combos",
-		"Deal every player a random valid opening group from the stock onto the "
-		+ "table, so nobody starts locked out on a hand that can't lay a group.",
+		"Deal every player a random valid opening group from their own deck onto "
+		+ "the table, so nobody starts locked out on a hand that can't lay a group.",
 		_settings.rogue_start_combo,
 		func(on: bool) -> void: _settings.rogue_start_combo = on)
 	col.add_child(combo_check)
 
 	col.add_child(HSeparator.new())
-	col.add_child(_make_meter_rows(
-		func() -> int: return _settings.rogue_meter_max,
-		func(v: int) -> void: _settings.rogue_meter_max = v,
-		func() -> int: return _settings.rogue_meter_gain,
-		func(v: int) -> void: _settings.rogue_meter_gain = v,
-		func() -> bool: return _settings.rogue_meter_per_card,
-		func(on: bool) -> void: _settings.rogue_meter_per_card = on))
+	col.add_child(_make_section("Energy and lives",
+		"Every card played from hand costs 1 energy. Energy refills each turn and "
+		+ "never carries over; rearranging the table is free."))
+	col.add_child(_make_spin_row("Starting energy", 1, 10, _settings.rogue_start_energy,
+		func(v: float) -> void: _settings.rogue_start_energy = int(v)))
+	col.add_child(_make_spin_row("Energy gained per turn", 0, 5, _settings.rogue_energy_per_turn,
+		func(v: float) -> void: _settings.rogue_energy_per_turn = int(v)))
+	col.add_child(_make_spin_row("Energy cap (0 = none)", 0, 30, _settings.rogue_energy_cap,
+		func(v: float) -> void: _settings.rogue_energy_cap = int(v)))
+	col.add_child(_make_spin_row("Lives (next run)", 1, 9, _settings.rogue_lives,
+		func(v: float) -> void: _settings.rogue_lives = int(v)))
 
 	col.add_child(HSeparator.new())
 	col.add_child(_make_section("Enemy AI",
-		"Retune each opponent's brain individually. Applies from the next round; "
+		"Retune each opponent's brain individually. Applies from the next match; "
 		+ "leave an enemy untouched to keep its designed personality."))
 	for enemy in Enemy.roster():
 		col.add_child(_build_enemy_ai_rows(enemy.display_name))

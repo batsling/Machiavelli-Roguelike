@@ -56,6 +56,9 @@ const COL_HINT_BG := Color(0.34, 0.86, 0.46, 0.12)  # faint green fill behind a 
 const COL_GROUP_HANDLE := Color(1, 1, 1, 0.10)     # the grip strip atop each group on the felt
 const PLAY_MARKER_HEIGHT := 5     # the green strip capping a hand card that can be played right now
 const COL_OPP_HAND_BG := Color(0.06, 0.14, 0.10, 0.96)  # backing of the enlarged opponent-hand reveal
+const COL_ENERGY := Color(0.40, 0.78, 1.0)        # an energy pip you can still spend
+const COL_ENERGY_SPENT := Color(1, 1, 1, 0.22)    # an energy pip spent this turn
+const COL_LIFE := Color(0.92, 0.33, 0.36)         # the hearts of your remaining lives
 
 # --- Ultimate meter -----------------------------------------------------------
 const COL_METER_TRACK := Color(0, 0, 0, 0.38)      # empty channel behind the fill

@@ -6,9 +6,7 @@ extends SceneTree
 ## and adjacency math, and the cluster/vertical rendering paths. Run:
 ##   godot --headless --path . --script res://tests/layout_check.gd
 
-## A small known-geometry picture used by the play-off-picture tests below. It
-## is a local fixture (the enemy's own ult templates are exercised separately),
-## so those generic-mechanic tests don't move when the ult roster changes. A
+## A small known-geometry picture used by the play-off-picture tests below. A
 ## 9-cell flower: top row (indices 0-2), side walls (3-4), bottom row (5-7),
 ## stem (8).
 const TEST_PICTURE: Array[Vector2i] = [
@@ -17,6 +15,29 @@ const TEST_PICTURE: Array[Vector2i] = [
 	Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2),
 	Vector2i(1, 3),
 ]
+
+## A 14-card hollow heart outline (the legacy Cute Slime's ultimate shape),
+## kept as a fixture for the shape-group geometry tests.
+const HEART: Array[Vector2i] = [
+	Vector2i(1, 0), Vector2i(2, 0), Vector2i(4, 0), Vector2i(5, 0),
+	Vector2i(0, 1), Vector2i(3, 1), Vector2i(6, 1),
+	Vector2i(0, 2), Vector2i(6, 2),
+	Vector2i(1, 3), Vector2i(5, 3),
+	Vector2i(2, 4), Vector2i(4, 4),
+	Vector2i(3, 5),
+]
+
+## Build a picture group from a template and the cards to fill it (in template
+## order), or null when the card count doesn't fill the template.
+static func _shape_meld(template: Array[Vector2i], cards: Array[Card]) -> CardSet:
+	if cards.size() != template.size():
+		return null
+	var cells := {}
+	for i in template.size():
+		cells[cards[i]] = template[i]
+	var meld := CardSet.new()
+	meld.set_shape(cells)
+	return meld
 
 func _card(rank: int, suit: String) -> Card:
 	var c := Card.new()
@@ -48,11 +69,7 @@ func _init() -> void:
 	_test_shape_groups()
 	_test_board_grid()
 	_test_projected_meter()
-	_test_slime_ultimate()
-	_test_slime_ultimate_gates()
-	_test_ult_fills_this_turn()
 	_test_picture_seal_this_turn()
-	_test_ult_in_driven_games()
 	_test_grid_line_rules()
 	_test_play_off_picture()
 	_test_picture_line_joker()
@@ -171,9 +188,9 @@ func _test_cross_meld_undo_and_removal() -> void:
 ## the line helpers read straight lines out of the picture.
 func _test_shape_groups() -> void:
 	var cards: Array[Card] = []
-	for i in CuteSlime.ULT_HEART.size():
+	for i in HEART.size():
 		cards.append(_card((i % 13) + 1, "hearts"))
-	var heart := CuteSlime.build_shape_meld(CuteSlime.ULT_HEART, cards)
+	var heart := _shape_meld(HEART, cards)
 	if heart == null or not heart.is_shape():
 		_fail("the heart template should build a shape group")
 		return
@@ -220,9 +237,9 @@ func _test_shape_groups() -> void:
 	if torn.is_valid():
 		_fail("a disconnected shape must not be valid")
 	# Wrong card count for the template is refused.
-	if CuteSlime.build_shape_meld(CuteSlime.ULT_HEART,
+	if _shape_meld(HEART,
 			[_card(2, "clubs")] as Array[Card]) != null:
-		_fail("build_shape_meld must refuse a card count that doesn't fill the template")
+		_fail("_shape_meld must refuse a card count that doesn't fill the template")
 
 ## BoardGrid: a cross lays out as one cluster with the pivot at the shared
 ## cell, and neighbors() reads adjacency straight off the grid.
@@ -272,21 +289,6 @@ func _slimed(rank: int, suit: String) -> Card:
 	c.effects.append(Card.Effect.STICKY)
 	return c
 
-## A rogue-style 1v1 where the slime's seat is the current player: open,
-## sticky-immune, meter full, with the given hand and table.
-func _slime_gm(hand: Array[Card], melds: Array[CardSet]) -> GameManager:
-	var gm := GameManager.new()
-	gm.setup(["You", "Slime"], 5, 7)
-	gm.board.melds.assign(melds)
-	gm.turn_index = 1
-	var her := gm.players[1]
-	her.has_opened = true
-	her.ignores_sticky = true
-	her.meter = gm.meter_max
-	her.hand = hand.duplicate()
-	gm._begin_turn()
-	return gm
-
 ## The meter builds live: the current player's bar previews the charge this
 ## turn's staged plays will bank, so it fills as cards are played and drops back
 ## on undo. Everyone else shows only their banked charge.
@@ -314,214 +316,39 @@ func _test_projected_meter() -> void:
 		_fail("undoing the play should drop the live charge back")
 	gm.free()
 
-## The ultimate: a full meter plus enough gatherable slime builds the biggest
-## picture that fits, seals it as one lump, and resets the meter.
-func _test_slime_ultimate() -> void:
-	var slime := CuteSlime.new()
-	# Table slime she can take legally: two fully slimed 6-card runs (each whole
-	# group may leave) and a slimed 8 in a set of four (the leftover trio stays
-	# valid) — 13 table cards. The clean set of jacks must not be touched.
-	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
-		_slimed(6, "hearts"), _slimed(7, "hearts"), _slimed(8, "hearts")])
-	var run2 := _meld([_slimed(3, "spades"), _slimed(4, "spades"), _slimed(5, "spades"),
-		_slimed(6, "spades"), _slimed(7, "spades"), _slimed(8, "spades")])
-	var eights := _meld([_slimed(8, "diamonds"), _card(8, "clubs"), _card(8, "spades"),
-		_card(8, "hearts")])
-	var jacks := _meld([_card(11, "hearts"), _card(11, "clubs"), _card(11, "spades")])
-	# Slimed naturals in hand to top the picture off: 13 gathered from the table
-	# + 1 from the hand = 14 — exactly the heart. Her extra slime stays in hand.
-	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
-		_slimed(12, "hearts"), _slimed(13, "hearts"), _slimed(2, "diamonds"),
-		_slimed(9, "clubs"), _card(2, "clubs")]
-	var gm := _slime_gm(hand, [run, run2, eights, jacks] as Array[CardSet])
-	var move := slime.plan_strategy_move(gm)
-	if not move.get("ult", false):
-		_fail("a full meter with enough gatherable slime should fire the ultimate")
-		gm.free()
-		return
-	if (move["cards"] as Array).size() != 14:
-		_fail("the ultimate should fill the 14-card heart, got %d cards"
-			% (move["cards"] as Array).size())
-	GreedyAI.apply_move(gm, move)
-	var picture: CardSet = gm.board.melds[-1]
-	if not picture.is_shape() or picture.cards.size() != 14 or not picture.is_valid():
-		_fail("the ultimate should leave a valid 14-card picture on the table")
-	if gm.players[1].meter != 0:
-		_fail("spending the ultimate should reset her meter, got %d" % gm.players[1].meter)
-	if gm.board.meld_of(hand[0]) != picture:
-		_fail("her slimed hand cards should be inside the picture")
-	for m in gm.board.melds:
-		if not m.is_valid():
-			_fail("the ultimate left an invalid group behind: %d cards" % m.cards.size())
-	if jacks.cards.size() != 3:
-		_fail("the clean set of jacks must be untouched")
-	if eights.cards.size() != 3:
-		_fail("the slimed eight should leave its set of four (leftover trio valid)")
-	# The picture is one sticky lump: lifting any card drags the whole picture.
-	if picture.sticky_cluster(picture.cards[0]).size() != 14:
-		_fail("the picture should move as one 14-card lump")
-	# Sealing is a mechanic, not a play: the swallowed hand cards never count,
-	# so an ult-only turn can't commit — she draws, keeping the picture.
-	if gm.cards_played_this_turn() != 0:
-		_fail("the ultimate must not count as playing cards, counted %d"
-			% gm.cards_played_this_turn())
-	if gm.commit_turn() == "":
-		_fail("an ult-only turn has played nothing and must not commit")
-	var stock := gm.deck.size()
-	gm.draw_and_end_turn()
-	if gm.deck.size() != stock - 1:
-		_fail("the ultimate turn should still end in a draw")
-	if gm.board.melds[-1] != picture or not picture.is_shape():
-		_fail("the drawn turn should keep the picture on the felt")
-	# Her planner never unpicks the picture on later turns.
-	if not GreedyAI._immovable_cards(gm).has(picture.cards[0]):
-		_fail("picture cards should be immovable to every planner")
-	gm.free()
-
-## Gates: no ult below a full meter, and a full meter holds until the slime on
-## offer can legally fill a template.
-func _test_slime_ultimate_gates() -> void:
-	var slime := CuteSlime.new()
-	# Enough slime for the heart (two whole-leaving runs + hand top-up), but
-	# the meter isn't full — so only the meter gate can be holding the ult back.
-	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
-		_slimed(6, "hearts"), _slimed(7, "hearts")])
-	var run2 := _meld([_slimed(3, "spades"), _slimed(4, "spades"), _slimed(5, "spades"),
-		_slimed(6, "spades"), _slimed(7, "spades")])
-	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
-		_slimed(12, "hearts"), _slimed(13, "hearts"), _slimed(2, "diamonds"),
-		_slimed(9, "clubs"), _slimed(2, "hearts")]
-	var gm := _slime_gm(hand, [run, run2] as Array[CardSet])
-	gm.players[1].meter = gm.meter_max - 1
-	if slime.plan_strategy_move(gm).get("ult", false):
-		_fail("the ultimate must wait for a full meter")
-	gm.free()
-	# Full meter, but the only table slime is locked into its group: a set of
-	# three with one slimed card can't spare it (leftover pair invalid), and
-	# 3 hand cards alone can't fill the 14-card heart.
-	var trio := _meld([_slimed(6, "diamonds"), _card(6, "clubs"), _card(6, "spades")])
-	var gm2 := _slime_gm([_slimed(9, "diamonds"), _slimed(10, "diamonds"),
-		_slimed(12, "hearts")] as Array[Card], [trio] as Array[CardSet])
-	var move := slime.plan_strategy_move(gm2)
-	if move.get("ult", false):
-		_fail("without enough legally gatherable slime the ultimate must hold")
-	if trio.cards.size() != 3:
-		_fail("planning alone must not touch the table")
-	gm2.free()
-
-## A meter that fills from THIS turn's plays fires the ultimate the same turn,
-## not a turn later: the play that tops the bar off lets the ult go at once.
-func _test_ult_fills_this_turn() -> void:
-	var slime := CuteSlime.new()
-	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
-		_slimed(6, "hearts"), _slimed(7, "hearts")])
-	var run2 := _meld([_slimed(3, "spades"), _slimed(4, "spades"), _slimed(5, "spades"),
-		_slimed(6, "spades"), _slimed(7, "spades")])
-	var eights := _meld([_slimed(8, "diamonds"), _card(8, "clubs"), _card(8, "spades"),
-		_card(8, "hearts")])
-	var jacks := _meld([_card(11, "hearts"), _card(11, "clubs"), _card(11, "spades")])
-	# Six slimed naturals for the heart top-up, plus a clean set of 2s to play
-	# (a real, valid play so the leftover table stays sound).
-	var twos: Array[Card] = [_card(2, "clubs"), _card(2, "spades"), _card(2, "hearts")]
-	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
-		_slimed(12, "hearts"), _slimed(13, "hearts"), _slimed(2, "diamonds"),
-		_slimed(9, "clubs")]
-	hand.append_array(twos)
-	var gm := _slime_gm(hand, [run, run2, eights, jacks] as Array[CardSet])
-	gm.players[1].meter = gm.meter_max - 1  # one short of full
-	if slime.plan_strategy_move(gm).get("ult", false):
-		_fail("a meter one short with no play yet this turn must not fire")
-	# Play the clean set from hand: the live charge tops the bar off, and the
-	# ultimate is available immediately — this same turn.
-	if gm.move_cards_to_new_meld(twos) != "":
-		_fail("staging the throwaway play failed")
-	if gm.projected_meter(gm.players[1]) != gm.meter_max:
-		_fail("this turn's play should top the meter off, got %d"
-			% gm.projected_meter(gm.players[1]))
-	if not slime.plan_strategy_move(gm).get("ult", false):
-		_fail("the ult should fire the turn its meter completes, not a turn later")
-	gm.free()
-
-## A slimed picture card can be lifted back off the turn it is sealed in (like
+## A picture card can be lifted back off the turn it is sealed in (like
 ## anything you played this turn), but is sealed for good from the next turn on.
 func _test_picture_seal_this_turn() -> void:
-	var slime := CuteSlime.new()
-	var run := _meld([_slimed(3, "hearts"), _slimed(4, "hearts"), _slimed(5, "hearts"),
-		_slimed(6, "hearts"), _slimed(7, "hearts")])
-	var run2 := _meld([_slimed(3, "spades"), _slimed(4, "spades"), _slimed(5, "spades"),
-		_slimed(6, "spades"), _slimed(7, "spades")])
-	var eights := _meld([_slimed(8, "diamonds"), _card(8, "clubs"), _card(8, "spades"),
-		_card(8, "hearts")])
-	var jacks := _meld([_card(11, "hearts"), _card(11, "clubs"), _card(11, "spades")])
-	var hand: Array[Card] = [_slimed(9, "diamonds"), _slimed(10, "diamonds"),
-		_slimed(12, "hearts"), _slimed(13, "hearts"), _slimed(2, "diamonds"),
-		_slimed(9, "clubs"), _card(2, "clubs")]
-	var gm := _slime_gm(hand, [run, run2, eights, jacks] as Array[CardSet])
-	GreedyAI.apply_move(gm, slime.plan_strategy_move(gm))
-	var sealed_card: Card = gm.board.melds[-1].cards[0]
-	if not gm.board.meld_of(sealed_card).is_shape():
-		_fail("the ultimate should have sealed the card into a picture")
+	var gm := GameManager.new()
+	gm.setup(["You", "Foe"], 5, 7)
+	var me := gm.players[0]
+	me.has_opened = true
+	var line: Array[Card] = [_card(3, "hearts"), _card(4, "hearts"), _card(5, "hearts")]
+	me.hand = line.duplicate()
+	me.hand.append(_card(9, "clubs"))
+	gm._hand_snapshot = me.hand.duplicate()
+	gm._undo_stack.clear()
+	var cells := {line[0]: Vector2i(0, 0), line[1]: Vector2i(1, 0), line[2]: Vector2i(1, 1)}
+	if gm.move_cards_to_new_shape(line, cells) != "":
+		_fail("building a picture from hand cards should be allowed")
 		gm.free()
 		return
-	# Same turn: the card she just squeezed in can still be lifted back off.
+	var sealed_card := line[0]
+	# Same turn: the card just sealed in can still be lifted back off.
 	if gm.move_cards_to_new_meld([sealed_card] as Array[Card]) != "":
 		_fail("a picture card placed this turn should still be movable off it")
-	gm.undo_action()  # put the picture back before ending her turn
+	gm.undo_action()  # put the picture back before ending the turn
 	if not gm.board.meld_of(sealed_card).is_shape():
 		_fail("undo should restore the card into the picture")
-	# End her turn (an ult-only turn draws, keeping the picture), then the next
-	# player finds the picture sealed shut.
+	# Sealing cards is not a play, so the turn ends with a draw that keeps the
+	# picture; the next player then finds it sealed shut.
 	gm.draw_and_end_turn()
-	if not gm.board.meld_of(sealed_card).is_shape():
+	if gm.board.meld_of(sealed_card) == null or not gm.board.meld_of(sealed_card).is_shape():
 		_fail("the picture should survive into the next turn")
+	gm.players[1].has_opened = true
 	if gm.move_cards_to_new_meld([sealed_card] as Array[Card]) == "":
 		_fail("a picture card is sealed once its turn has ended")
 	gm.free()
-
-## The ultimate fires inside real driven games: seeded 1v1s against the slime
-## with a tiny per-card meter so it charges fast. Core invariants (valid
-## table, card conservation) hold after every turn, every game still
-## finishes, and at least one game grows a picture on the felt.
-func _test_ult_in_driven_games() -> void:
-	var pictures := 0
-	for seed_value in [1, 2, 3]:
-		var gm := GameManager.new()
-		gm.setup(["You", "The Cute Slime"], 13, seed_value, true)
-		gm.draw_per_turn = 2
-		gm.max_plays_per_turn = 13
-		gm.meter_max = 5
-		gm.meter_gain = 1
-		gm.meter_per_card = true
-		var slime := CuteSlime.new()
-		slime.on_combat_start(gm)
-		var profile := slime.make_profile(seed_value)
-		var turns := 0
-		var saw_picture := false
-		while not gm.is_game_over and turns < 400:
-			var enemy: Enemy = slime if gm.current_player().is_opponent else null
-			GreedyAI.take_turn(gm, profile, enemy)
-			turns += 1
-			if not gm.board.all_valid():
-				_fail("ult game %d: invalid table after turn %d" % [seed_value, turns])
-				break
-			var count := gm.deck.size() + gm.board.all_cards().size()
-			for p in gm.players:
-				count += p.hand.size()
-			if count != 108:
-				_fail("ult game %d: card conservation broken (%d) after turn %d"
-					% [seed_value, count, turns])
-				break
-			for m in gm.board.melds:
-				if m.is_shape():
-					saw_picture = true
-		if not gm.is_game_over:
-			_fail("ult game %d: did not finish within 400 turns" % seed_value)
-		if saw_picture:
-			pictures += 1
-		gm.free()
-	print("ult games: %d of 3 grew a picture" % pictures)
-	if pictures == 0:
-		_fail("no seeded ult game ever built a picture — the ultimate never fired")
 
 ## The Scrabble-style line reading: could-grow pairs and ordered grid lines.
 func _test_grid_line_rules() -> void:
@@ -582,7 +409,7 @@ func _picture_gm() -> Dictionary:
 	var left := _slimed(5, "diamonds")
 	flower_cards[1] = top
 	flower_cards[3] = left
-	var picture := CuteSlime.build_shape_meld(TEST_PICTURE, flower_cards)
+	var picture := _shape_meld(TEST_PICTURE, flower_cards)
 	var gm := GameManager.new()
 	gm.setup(["You", "Foe"], 5, 7)
 	gm.board.melds.assign([picture] as Array[CardSet])
@@ -739,7 +566,7 @@ func _test_picture_joker_swap() -> void:
 	joker.joker_lock_rank = 9
 	joker.joker_lock_suit = "hearts"
 	flower_cards[4] = joker  # the right wall cell (2,1)
-	var picture := CuteSlime.build_shape_meld(TEST_PICTURE, flower_cards)
+	var picture := _shape_meld(TEST_PICTURE, flower_cards)
 	var gm := GameManager.new()
 	gm.setup(["You", "Foe"], 5, 7)
 	gm.board.melds.assign([picture] as Array[CardSet])
@@ -819,7 +646,7 @@ func _test_picture_ghost_cells() -> void:
 		flower_cards.append(_slimed((i % 13) + 3, "diamonds"))
 	var top := _slimed(7, "hearts")
 	flower_cards[1] = top  # the blossom's top-middle cell (1,0)
-	var picture := CuteSlime.build_shape_meld(TEST_PICTURE, flower_cards)
+	var picture := _shape_meld(TEST_PICTURE, flower_cards)
 	ui.gm.board.melds.assign([picture] as Array[CardSet])
 	ui.gm.players[0].has_opened = true
 	# 6H then 5H above the 7H petal: descending upward, so the lower rank is on

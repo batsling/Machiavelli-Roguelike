@@ -141,19 +141,19 @@ func _init() -> void:
 		printerr("the slimed card should show its splotch on the seat back, got %d" % seat_slimed)
 		ok = false
 
-	# --- 1c. A slimed top of the stock shows a back with the splotch -------------
-	ui.gm.deck.cards.append(_slimed(4, "diamonds"))
+	# --- 1c. A slimed top of your deck shows a back with the splotch -------------
+	ui.gm.players[0].deck.cards.append(_slimed(4, "diamonds"))
 	ui._table.refresh_seats()
 	await process_frame
 	if ui.stock_top_slot.get_child_count() != 1 or not _has_slime_blob(ui.stock_top_slot.get_child(0)):
-		printerr("a slimed top of the stock should render a splotched back")
+		printerr("a slimed top of your deck should render a splotched back")
 		ok = false
 	# A plain top shows nothing.
-	ui.gm.deck.cards.append(_card(7, "clubs"))
+	ui.gm.players[0].deck.cards.append(_card(7, "clubs"))
 	ui._table.refresh_seats()
 	await process_frame
 	if ui.stock_top_slot.get_child_count() != 0:
-		printerr("a plain top of the stock should stay hidden")
+		printerr("a plain top of your deck should stay hidden")
 		ok = false
 
 	# --- 2. The green play marker on immediately-playable hand cards -------------

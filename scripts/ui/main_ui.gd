@@ -5,25 +5,18 @@ extends Control
 ## file stays trivial.
 ##
 ## A main menu fronts the table: Roguelike run, Vanilla sandbox (a fresh
-## free-play game), Resume (shown once a game exists), Settings and Quit.
+## free-play game), Resume (shown once a game or run exists), Settings and Quit.
 ## The in-game Menu button returns to it without losing the game in progress.
 ##
-## Roguelike run: an endless ladder of 1v1 games under the run rules from the
-## Settings dialog's "Roguelike run" tab (defaults: draw 2 cards per turn, at
-## most 13 cards played per turn, 13-card starting hands, all 4 jokers in).
-## Beat an enemy to advance to the next round (the "New game" button becomes
-## "Next round"); lose and the run is over ("New run" starts over at round
-## 1). Each round faces a designed enemy picked at random from Enemy.roster():
-## the Cute Slime, who slimes every heart, diamond and joker in her own deck
-## (slimed cards carry a green splotch and stick to each other, so a run of them
-## moves as one lump), or the Sadistic Billionaire, who turns every card in his
-## own deck to glass (glass cards render transparent and are visible from the
-## back — in any hand and on top of the stock — so his glass cards show face-up
-## in his seat and a glass stock top is shown beside the stock count). Because
-## each player brings their own deck and they only merge into the stock at combat
-## start, an enemy corrupts just its own half — one copy of any card, so only two
-## of the four jokers. Vanilla sandbox settings never apply during a run;
-## roguelike settings apply from the next round.
+## Roguelike run: a run starts on the map (MapScreen) with 3 lives. The map is
+## three nodes in a line, each an enemy (Enemy.roster(): Scrap Drone, Rust
+## Raider, Belt Warden). Pick the lit node to play a 1v1 match against it. Win
+## and the next node unlocks; lose and you lose a life but may retry the node.
+## The run ends at 0 lives or when the last node falls. Every player brings and
+## draws from their own deck, and every card played from hand costs 1 energy:
+## you start with 3, gain 1 each turn (up to the cap), and unspent energy is
+## lost. The run's rules come from the Settings dialog's "Roguelike run" tab
+## and apply from the next match; vanilla sandbox settings never touch a run.
 ##
 ## Table layout: you sit at the bottom; opponents sit around the table showing
 ## the backs of their cards. The first enemy sits directly opposite you at the
@@ -31,7 +24,7 @@ extends Control
 ## the right — at most 4 seats in total. Backs overlap more as a hand grows so
 ## every seat always fits on screen. A card whose status shows through its back —
 ## a glass card (see-through, shown face-up) or a slimed one (its green splotch
-## on the back) — is readable right in the seat and on top of the stock; when an
+## on the back) — is readable right in the seat and on top of your deck; when an
 ## opponent holds any, hovering their crowded seat pops an enlarged reveal of
 ## that hand, so those statuses are easy to read at a bigger size.
 ##
@@ -85,10 +78,10 @@ extends Control
 ## leaving your hand count, rearranging the table is free; applies
 ## immediately, and binds the AI too), the joker toggle (next game) and the
 ## starting-combo toggle (next game). "Roguelike run" holds the run's own
-## copies of the same rules — draw count, starting hand size, hand cap, play
-## cap, jokers, starting combos — all applying from the next round, so the
+## rules — draw count, starting hand size, hand cap, jokers, starting combos,
+## energy (start, growth, cap) and lives — applying from the next match, so the
 ## run can be balanced without touching the sandbox. Starting combos deal
-## every player a random valid three-card group from the stock onto the table
+## every player a random valid three-card group from their own deck onto the table
 ## at game start, which counts as their opening meld — nobody sits locked out
 ## of the table on a hand that can't lay a group. Jokers (★) count as any
 ## card while in a hand; the moment one lands in a valid group on the table
@@ -117,12 +110,11 @@ const SUIT_ORDER := {"hearts": 0, "diamonds": 1, "clubs": 2, "spades": 3}
 
 var gm: GameManager
 var game_mode := Mode.SANDBOX
-var rogue_round := 1
-# The designed enemy faced in the current rogue round (null in sandbox); drives
-# the AI profile and planted the round's mechanics at combat start.
+# The roguelike run in progress (lives + map), or null before the first run.
+var run: RunState = null
+# The enemy faced in the current rogue match (null in sandbox); drives the AI
+# profile and plants any mechanics at combat start.
 var current_enemy: Enemy = null
-# Whether the just-finished rogue game was won, i.e. "Next round" is on offer.
-var rogue_round_won := false
 var selected: Array[Card] = []
 var highlighted := {}  # Card -> true; every card the enemies touched last round
 # While a suit-highlighter button is hovered this holds that suit; the table and
@@ -154,15 +146,15 @@ var settings := GameSettings.new()
 
 var game_root: VBoxContainer
 var menu_layer: MenuScreen
+var map_layer: MapScreen
 var seat_top: VBoxContainer
 var seat_left: VBoxContainer
 var seat_right: VBoxContainer
 var round_label: Label
+## Lives and map progress in the top bar during a run (hidden in sandbox).
+var lives_label: Label
 var stock_label: Label
 var stock_top_slot: HBoxContainer
-## The face-up discard pile beside the stock: a count plus the most recent
-## discards shown face up (currently the Billionaire's Riichi discards).
-var discard_slot: HBoxContainer
 var status_label: Label
 var log_box: RichTextLabel
 ## The freeform felt: a plain canvas whose children (group panels) are each
@@ -174,6 +166,8 @@ var hand_panel: PanelContainer
 var hand_box: HFlowContainer
 var hand_title: Label
 var hand_meter_slot: HBoxContainer
+## Your energy for the turn, in the hand header (shown only when energy is on).
+var energy_slot: HBoxContainer
 var selection_label: Label
 var return_btn: Button
 var undo_action_btn: Button
@@ -227,7 +221,6 @@ func _new_game() -> void:
 	selected.clear()
 	highlighted.clear()
 	ai_running = false
-	rogue_round_won = false
 	_clear_children(anim_layer)
 	log_box.clear()
 	var combo_start := false
@@ -235,23 +228,26 @@ func _new_game() -> void:
 	if game_mode == Mode.ROGUE:
 		combo_start = settings.rogue_start_combo
 		jokers_in = settings.rogue_jokers
-		current_enemy = Enemy.random_enemy()
 		settings.apply_ai_override(current_enemy)
-		gm.setup(["You", current_enemy.display_name], settings.rogue_start_hand_size, -1, settings.rogue_jokers)
+		# Energy is set before the deal: setup begins the first turn, which
+		# fills the opening player's energy.
+		gm.start_energy = settings.rogue_start_energy
+		gm.energy_per_turn = settings.rogue_energy_per_turn
+		gm.energy_cap = settings.rogue_energy_cap
+		gm.max_plays_per_turn = 0
+		gm.meter_max = 0
+		gm.setup(["You", current_enemy.display_name], settings.rogue_start_hand_size, -1,
+			settings.rogue_jokers, [null, current_enemy.build_deck(settings.rogue_jokers)])
 		gm.draw_per_turn = settings.rogue_draw_per_turn
 		gm.max_hand_size = settings.rogue_max_hand_size
-		gm.max_plays_per_turn = settings.rogue_max_plays_per_turn
-		gm.meter_max = settings.rogue_meter_max
-		gm.meter_gain = settings.rogue_meter_gain
-		gm.meter_per_card = settings.rogue_meter_per_card
 		# Let the enemy plant its mechanics on the freshly dealt game.
 		current_enemy.on_combat_start(gm)
-		_log("[b]Round %d[/b] — you face %s. Run rules: draw %d per turn, "
-			% [rogue_round, current_enemy.display_name, settings.rogue_draw_per_turn]
-			+ "%s cards played per turn, %d-card hands, %s."
-			% ["at most %d" % settings.rogue_max_plays_per_turn if settings.rogue_max_plays_per_turn > 0
-				else "unlimited", settings.rogue_start_hand_size,
-				"4 jokers in" if settings.rogue_jokers else "no jokers"])
+		_log("[b]Node %d of %d[/b] — you face %s. You have %s."
+			% [run.active_node.row + 1, run.rows.size(), current_enemy.display_name,
+				_lives_text()])
+		_log("Each card you play from hand costs 1 energy: %d on your first turn, " \
+			% settings.rogue_start_energy + "+%d each turn after. Unspent energy is lost." \
+			% settings.rogue_energy_per_turn)
 		var intro := current_enemy.mechanic_intro()
 		if intro != "":
 			_log(intro)
@@ -262,6 +258,7 @@ func _new_game() -> void:
 		var names: Array = ["You"]
 		for i in settings.enemy_count:
 			names.append(ENEMY_NAMES[i])
+		gm.start_energy = 0
 		gm.setup(names, settings.start_hand_size, -1, settings.include_jokers)
 		gm.draw_per_turn = settings.draw_per_turn
 		gm.max_hand_size = settings.max_hand_size
@@ -269,11 +266,12 @@ func _new_game() -> void:
 		gm.meter_max = settings.meter_max
 		gm.meter_gain = settings.meter_gain
 		gm.meter_per_card = settings.meter_per_card
-		_log("New game: %d enem%s, %d cards each, double deck, %s." % [settings.enemy_count,
-			"y" if settings.enemy_count == 1 else "ies", settings.start_hand_size,
-			"4 jokers in" if settings.include_jokers else "no jokers"])
+		_log("New game: %d enem%s, %d cards each, everyone draws from their own deck, %s."
+			% [settings.enemy_count, "y" if settings.enemy_count == 1 else "ies",
+				settings.start_hand_size,
+				"2 jokers per deck" if settings.include_jokers else "no jokers"])
 	if combo_start:
-		# Dealt after the enemy's mechanics so combo cards keep their slime/glass.
+		# Dealt after the enemy's mechanics so combo cards keep their effects.
 		gm.deal_starting_melds()
 		_set_status("Your turn. Drag cards to the table (or click to select) — "
 			+ "your starting combo already opened you.")
@@ -309,6 +307,8 @@ func _enemy_info_text(player_index: int) -> String:
 	var lines := PackedStringArray()
 	lines.append("[b]%s[/b]" % p.display_name)
 	if current_enemy != null and player_index == 1:
+		if current_enemy.description != "":
+			lines.append(current_enemy.description)
 		var intro := current_enemy.mechanic_intro()
 		if intro != "":
 			lines.append(intro)
@@ -321,27 +321,54 @@ func _enemy_info_text(player_index: int) -> String:
 	return "\n\n".join(lines)
 
 func _show_menu() -> void:
-	menu_layer.show_menu(not gm.players.is_empty())
+	menu_layer.show_menu(not gm.players.is_empty() or run != null)
+	map_layer.visible = false
 	game_root.visible = false
 
 func _show_game() -> void:
 	menu_layer.visible = false
+	map_layer.visible = false
 	game_root.visible = true
 	_refresh()
+
+## Show the run map (between matches).
+func _show_map() -> void:
+	menu_layer.visible = false
+	game_root.visible = false
+	map_layer.show_run(run)
+
+## A node on the map was picked: fight its enemy.
+func _on_map_node_chosen(node: RunState.MapNode) -> void:
+	if not run.begin(node):
+		return
+	current_enemy = node.enemy
+	_new_game()
+	_show_game()
+
+## True while a rogue match is being played (dealt and not yet over).
+func _rogue_match_live() -> bool:
+	return game_mode == Mode.ROGUE and run != null and run.active_node != null \
+		and not gm.players.is_empty() and not gm.is_game_over
 
 func _on_play_vanilla_pressed() -> void:
 	game_mode = Mode.SANDBOX
 	_new_game()
 	_show_game()
 
+## Start a fresh run on the map.
 func _on_play_rogue_pressed() -> void:
 	game_mode = Mode.ROGUE
-	rogue_round = 1
-	_new_game()
-	_show_game()
+	run = RunState.linear(Enemy.roster(), settings.rogue_lives)
+	_show_map()
 
+## Resume where you left off: the table in sandbox or mid-match, the map between
+## run matches.
 func _on_resume_pressed() -> void:
-	_show_game()
+	if game_mode == Mode.ROGUE and run != null and not _rogue_match_live() \
+			and not run.is_over():
+		_show_map()
+	else:
+		_show_game()
 
 func _on_quit_pressed() -> void:
 	get_tree().quit()
@@ -425,10 +452,14 @@ func _refresh_buttons() -> void:
 	sort_board_btn.disabled = not can_tidy
 	randomize_board_btn.disabled = not can_tidy
 	if game_mode == Mode.ROGUE:
-		new_game_btn.text = "Next round" if gm.is_game_over and rogue_round_won \
-			else "New run"
+		if _rogue_match_live() or run == null:
+			new_game_btn.text = "Restart run"
+		elif run.is_over():
+			new_game_btn.text = "New run"
+		else:
+			new_game_btn.text = "Back to map"
 		settings_btn.tooltip_text = "Roguelike run rules (apply from the next " \
-			+ "round) — the vanilla tab never touches a run"
+			+ "match) — the vanilla tab never touches a run"
 	else:
 		new_game_btn.text = "New game"
 		settings_btn.tooltip_text = \
@@ -522,8 +553,8 @@ func _card_is_playable_now(c: Card) -> bool:
 	return _is_human_turn() and _advisor.playable_now(c, gm.current_player_is_open())
 
 ## True when an opponent's hand holds at least one card whose status is visible
-## through its back — a glass card (the Sadistic Billionaire's whole deck) or a
-## slimed one (the Cute Slime's splotch shows from the back too). Gates the
+## through its back — a glass card or a slimed one (the splotch shows from the
+## back too). Gates the
 ## enlarged hand reveal so a plain opponent (nothing to see) never sprouts the
 ## hover screen.
 func _hand_has_visible_card(hand: Array[Card]) -> bool:
@@ -903,15 +934,16 @@ func _on_card_toggled(pressed: bool, c: Card) -> void:
 func _on_new_meld_pressed() -> void:
 	_stage_move(selected.duplicate(), null)
 
-## Sandbox: always a fresh game. Roguelike: "Next round" after a won game
-## advances the ladder; otherwise the run restarts from round 1.
+## Sandbox: always a fresh game. Roguelike: after a match, back to the map (or
+## a new run once this one is over); mid-match, restart the run from scratch.
 func _on_new_game_pressed() -> void:
-	if game_mode == Mode.ROGUE:
-		if gm.is_game_over and rogue_round_won:
-			rogue_round += 1
-		else:
-			rogue_round = 1
-	_new_game()
+	if game_mode != Mode.ROGUE:
+		_new_game()
+		return
+	if _rogue_match_live() or run == null or run.is_over():
+		_on_play_rogue_pressed()
+	else:
+		_show_map()
 
 ## "Sort": tidy the freeform felt back into a readable arrangement. Straights
 ## come first — by colour, then by their starting rank — and sets after, by
@@ -1077,7 +1109,7 @@ func _join_card_labels(cards: Array[Card]) -> String:
 	return "%s and %s" % [head, labels[labels.size() - 1]]
 
 func _on_player_passed(p: PlayerState) -> void:
-	var why := "stock is empty" if gm.deck.is_empty() else "hand is full"
+	var why := "deck is empty" if p.deck.is_empty() else "hand is full"
 	_log("%s passed (%s)." % [p.display_name, why])
 
 func _on_game_over(winners: Array) -> void:
@@ -1086,15 +1118,24 @@ func _on_game_over(winners: Array) -> void:
 		names.append(p.display_name)
 	var who := ", ".join(names)
 	_log("[b]Game over — winner: %s[/b]" % who)
-	if game_mode == Mode.ROGUE:
-		# A shared fewest-cards tie counts as surviving the round.
-		rogue_round_won = winners.has(gm.players[0])
-		if rogue_round_won:
-			_set_status("Round %d cleared! Press \"Next round\" for the next enemy."
-				% rogue_round)
+	if game_mode == Mode.ROGUE and run != null and run.active_node != null:
+		# A shared fewest-cards tie counts as winning the match.
+		if winners.has(gm.players[0]):
+			run.record_win()
+			if run.is_won():
+				_set_status("Run complete — you beat every enemy on the chart! "
+					+ "Press \"New run\" to play again.")
+			else:
+				_set_status("You beat %s! Press \"Back to map\" for the next node."
+					% current_enemy.display_name)
 		else:
-			_set_status("Run over — %s beat you on round %d. Press \"New run\" to try again."
-				% [who, rogue_round])
+			run.record_loss()
+			if run.is_lost():
+				_set_status("Run over — %s took your last life. Press \"New run\" to try again."
+					% who)
+			else:
+				_set_status("%s beat you — you lose a life (%s). Press \"Back to map\" "
+					% [who, _lives_text()] + "to try again.")
 	else:
 		_set_status("Game over — %s wins. Press New game to play again." % who)
 
@@ -1124,8 +1165,8 @@ func _run_ai_turns() -> void:
 		await get_tree().create_timer(AI_THINK_DELAY).timeout
 		if gen != game_generation:
 			return
-		# A designed enemy may drive its whole turn (the Billionaire's Riichi
-		# draw): it stages and advances the turn itself; we just narrate it.
+		# A designed enemy may drive its whole turn: it stages and advances the
+		# turn itself; we just narrate it.
 		if enemy_def != null and enemy_def.wants_control(gm):
 			var res := enemy_def.run_controlled_turn(gm)
 			_log("%s %s." % [enemy.display_name, res.get("text", "acts")])
@@ -1169,6 +1210,10 @@ func _run_ai_turns() -> void:
 	_refresh()
 
 # --- Misc ----------------------------------------------------------------------
+
+## "2 lives" / "1 life" for the log and status line.
+func _lives_text() -> String:
+	return "%d %s" % [run.lives, "life" if run.lives == 1 else "lives"]
 
 func _set_status(msg: String) -> void:
 	status_label.text = msg

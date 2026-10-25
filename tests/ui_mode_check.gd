@@ -1,7 +1,14 @@
 extends SceneTree
 
-## Headless check for the menu modes (sandbox vs roguelike run). Run with:
+## Headless check for the menu modes: the roguelike run (map, lives, energy,
+## own decks) and the vanilla sandbox. Run with:
 ##   godot --headless --path . --script res://tests/ui_mode_check.gd
+
+func _card(rank: int, suit: String) -> Card:
+	var c := Card.new()
+	c.suit = suit
+	c.rank = rank
+	return c
 
 func _init() -> void:
 	var ui: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
@@ -12,138 +19,179 @@ func _init() -> void:
 	if not ui.menu_layer.visible:
 		printerr("menu should be visible on boot")
 		ok = false
+
+	# --- A new run opens on the map ---------------------------------------------
 	ui._on_play_rogue_pressed()
-	if ui.gm.players.size() != 2:
-		printerr("rogue run should be 1v1, got %d players" % ui.gm.players.size())
+	var run: RunState = ui.run
+	if not ui.map_layer.visible or ui.game_root.visible or ui.menu_layer.visible:
+		printerr("a new run should open on the map")
 		ok = false
-	if ui.gm.draw_per_turn != 2 or ui.gm.max_plays_per_turn != 13 \
-			or ui.gm.max_hand_size != 0:
-		printerr("rogue rules wrong: draw %d, plays %d, hand cap %d"
-			% [ui.gm.draw_per_turn, ui.gm.max_plays_per_turn, ui.gm.max_hand_size])
+	if run.lives != 3 or run.rows.size() != 3:
+		printerr("a run should start with 3 lives and 3 nodes, got %d / %d"
+			% [run.lives, run.rows.size()])
 		ok = false
-	if ui.gm.meter_max != 20 or ui.gm.meter_gain != 1 or not ui.gm.meter_per_card:
-		printerr("rogue meter defaults wrong: max %d gain %d per_card %s"
-			% [ui.gm.meter_max, ui.gm.meter_gain, ui.gm.meter_per_card])
+	# Only the first node can be picked.
+	ui._on_map_node_chosen(run.node_at(1, 0))
+	if ui.game_root.visible:
+		printerr("a locked node must not start a match")
 		ok = false
-	var jokers := 0
-	for c in ui.gm.deck.cards:
-		if c.is_joker:
-			jokers += 1
-	for p in ui.gm.players:
-		for c in p.hand:
+
+	# --- The first match ---------------------------------------------------------
+	ui._on_map_node_chosen(run.node_at(0, 0))
+	var gm: GameManager = ui.gm
+	if not ui.game_root.visible or ui.map_layer.visible:
+		printerr("picking the open node should start its match")
+		ok = false
+	if gm.players.size() != 2 or gm.players[1].display_name != "Scrap Drone":
+		printerr("node 1 should be a 1v1 against the Scrap Drone")
+		ok = false
+	if gm.draw_per_turn != 2 or gm.max_plays_per_turn != 0 or gm.max_hand_size != 0 \
+			or gm.meter_max != 0:
+		printerr("run rules wrong: draw %d, plays %d, hand cap %d, meter %d"
+			% [gm.draw_per_turn, gm.max_plays_per_turn, gm.max_hand_size, gm.meter_max])
+		ok = false
+	if not gm.energy_on() or gm.players[0].max_energy != 3 or gm.energy_left() != 3:
+		printerr("the first turn should start with 3 energy")
+		ok = false
+	# Every player brings their own deck: 2 jokers each, every card tagged to its owner.
+	for p in gm.players:
+		var jokers := 0
+		for c in p.deck.cards + p.hand:
+			if c.deck_owner != p.player_id:
+				printerr("%s holds a card from another deck" % p.display_name)
+				ok = false
+				break
 			if c.is_joker:
 				jokers += 1
-	if jokers != 4:
-		printerr("rogue deck should hold 4 jokers, found %d" % jokers)
+		for m in gm.board.melds:
+			for c in m.cards:
+				if c.deck_owner == p.player_id and c.is_joker:
+					jokers += 1
+		if jokers != 2:
+			printerr("%s's deck should hold 2 jokers, found %d" % [p.display_name, jokers])
+			ok = false
+	if gm.board.melds.size() != 2 or not gm.players[0].has_opened:
+		printerr("starting combos should open both players with a meld each")
+		ok = false
+	if ui.energy_slot.get_child_count() != 1 + 3:
+		printerr("the hand header should show the energy label and 3 pips")
+		ok = false
+	elif (ui.energy_slot.get_child(0) as Label).text != "Energy 3/3":
+		printerr("energy label should read 'Energy 3/3', got '%s'"
+			% (ui.energy_slot.get_child(0) as Label).text)
+		ok = false
+	if not ui.lives_label.visible or ui.lives_label.text.find("Node 1/3") == -1:
+		printerr("the top bar should show lives and 'Node 1/3', got '%s'" % ui.lives_label.text)
 		ok = false
 	if ui.settings_btn.disabled:
 		printerr("settings button should stay enabled during a run (roguelike tab)")
 		ok = false
-	# The round-1 enemy is drawn at random from the roster; whichever it is,
-	# its mechanic must be planted across the freshly dealt game.
-	# Roguelike runs deal starting combos by default, so the enemy's marked cards
-	# can land on the felt too — count deck, hands and board together.
-	var all_cards: Array = ui.gm.deck.cards.duplicate()
-	for p in ui.gm.players:
-		all_cards.append_array(p.hand)
-	for m in ui.gm.board.melds:
-		all_cards.append_array(m.cards)
-	if ui.current_enemy is CuteSlime:
-		# She marks her own seat immune and slimes every card of her own deck
-		# only (one copy of each, so exactly half the cards in play).
-		if not ui.gm.players[1].ignores_sticky:
-			printerr("the slime's seat should ignore sticky")
-			ok = false
-		var slimed := 0
-		for c in all_cards:
-			if c.is_sticky():
-				slimed += 1
-		if slimed != 54:  # her 52 naturals + her 2 jokers, all from her deck
-			printerr("expected 54 slimed cards at combat start, got %d" % slimed)
-			ok = false
-	elif ui.current_enemy is SadisticBillionaire:
-		# He glasses his own deck only: all 52 naturals + his 2 jokers = 54 of 108.
-		var glass := 0
-		for c in all_cards:
-			if c.is_glass():
-				glass += 1
-		if glass != 54:
-			printerr("expected 54 glass cards at combat start, got %d" % glass)
-			ok = false
-	else:
-		printerr("round 1 should face a designed enemy, got %s" % ui.current_enemy)
+	if ui.new_game_btn.text != "Restart run":
+		printerr("mid-match the button should read Restart run, got '%s'" % ui.new_game_btn.text)
 		ok = false
-	# Simulate a won round: Next round advances and picks up any roguelike
-	# settings changed in the meantime — they apply from the next round.
+
+	# --- Energy gates the green playable cap -------------------------------------
+	var run_meld := CardSet.new()
+	run_meld.cards.assign([_card(5, "hearts"), _card(6, "hearts"), _card(7, "hearts")])
+	gm.board.melds.append(run_meld)
+	var eight := _card(8, "hearts")
+	gm.players[0].hand.append(eight)
+	gm._hand_snapshot = gm.players[0].hand.duplicate()
+	if not ui._card_is_playable_now(eight):
+		printerr("8♥ should be playable with energy to spare")
+		ok = false
+	gm.players[0].max_energy = 0
+	if ui._card_is_playable_now(eight):
+		printerr("with no energy left nothing should read as playable")
+		ok = false
+	gm.players[0].max_energy = 3
+
+	# --- Win: back to the map, next node open, new rules apply -------------------
 	ui.settings.rogue_draw_per_turn = 3
 	ui.settings.rogue_start_hand_size = 10
-	ui.settings.rogue_start_combo = true
-	ui.settings.rogue_meter_max = 7
-	ui.settings.rogue_meter_per_card = true
-	ui.gm._end_game([ui.gm.players[0]])
+	ui.settings.rogue_start_energy = 4
+	gm._end_game([gm.players[0]])
 	ui._refresh()
-	if ui.new_game_btn.text != "Next round":
-		printerr("after a win the button should read Next round, got '%s'"
+	if run.cleared_count() != 1 or ui.new_game_btn.text != "Back to map":
+		printerr("a win should clear node 1 and offer Back to map, got '%s'"
 			% ui.new_game_btn.text)
 		ok = false
 	ui._on_new_game_pressed()
-	if ui.rogue_round != 2 or ui.gm.draw_per_turn != 3:
-		printerr("Next round should advance to round 2 with the new rules")
+	if not ui.map_layer.visible or run.available_nodes() != [run.node_at(1, 0)]:
+		printerr("after a win the map should open node 2")
 		ok = false
-	if ui.gm.meter_max != 7 or not ui.gm.meter_per_card:
-		printerr("Next round should pick up the new meter settings: max %d per_card %s"
-			% [ui.gm.meter_max, ui.gm.meter_per_card])
+	ui._on_map_node_chosen(run.node_at(1, 0))
+	gm = ui.gm
+	if gm.players[1].display_name != "Rust Raider" or gm.draw_per_turn != 3 \
+			or gm.players[0].hand.size() != 10 or gm.players[0].max_energy != 4:
+		printerr("node 2 should face the Rust Raider under the changed run rules")
 		ok = false
-	if ui.gm.players[0].hand.size() != 10:
-		printerr("round 2 should deal the new 10-card hands, got %d"
-			% ui.gm.players[0].hand.size())
-		ok = false
-	if ui.gm.board.melds.size() != 2 or not ui.gm.players[0].has_opened \
-			or not ui.gm.players[1].has_opened:
-		printerr("starting combos should open every player with a meld on the table")
-		ok = false
-	for m in ui.gm.board.melds:
-		if not m.is_valid():
-			printerr("a starting combo left an invalid meld on the table")
-			ok = false
 	ui.settings.rogue_draw_per_turn = 2
 	ui.settings.rogue_start_hand_size = 13
-	ui.settings.rogue_start_combo = false
-	ui.settings.rogue_meter_max = 30
-	ui.settings.rogue_meter_per_card = false
-	# Simulate a lost round: the button offers a fresh run from round 1.
-	ui.gm._end_game([ui.gm.players[1]])
+	ui.settings.rogue_start_energy = 3
+
+	# --- Loss: a life lost, the node stays open ----------------------------------
+	gm._end_game([gm.players[1]])
 	ui._refresh()
-	if ui.new_game_btn.text != "New run":
-		printerr("after a loss the button should read New run, got '%s'"
-			% ui.new_game_btn.text)
+	if run.lives != 2 or ui.new_game_btn.text != "Back to map":
+		printerr("a loss should cost a life and offer Back to map")
 		ok = false
 	ui._on_new_game_pressed()
-	if ui.rogue_round != 1:
-		printerr("New run should reset to round 1, got %d" % ui.rogue_round)
+	if run.available_nodes() != [run.node_at(1, 0)]:
+		printerr("a lost node should stay open to retry")
 		ok = false
-	# Back to sandbox: player settings apply again.
+	# Menu → Resume between matches returns to the map.
+	ui._show_menu()
+	ui._on_resume_pressed()
+	if not ui.map_layer.visible:
+		printerr("Resume between matches should return to the map")
+		ok = false
+
+	# --- Out of lives: the run is over -------------------------------------------
+	for _i in 2:
+		ui._on_map_node_chosen(run.node_at(1, 0))
+		ui.gm._end_game([ui.gm.players[1]])
+	ui._refresh()
+	if not run.is_lost() or ui.new_game_btn.text != "New run":
+		printerr("at 0 lives the run should be over and offer New run")
+		ok = false
+	ui._on_new_game_pressed()
+	if ui.run == run or ui.run.lives != 3 or not ui.map_layer.visible:
+		printerr("New run should start a fresh run on the map")
+		ok = false
+
+	# --- Beat every node: the run is won -----------------------------------------
+	run = ui.run
+	for r in 3:
+		ui._on_map_node_chosen(run.node_at(r, 0))
+		ui.gm._end_game([ui.gm.players[0]])
+	ui._refresh()
+	if not run.is_won() or ui.new_game_btn.text != "New run":
+		printerr("clearing the last node should win the run")
+		ok = false
+
+	# --- Back to sandbox: sandbox settings apply, no energy ----------------------
 	ui.settings.max_plays_per_turn = 12
 	ui.settings.enemy_count = 3
 	ui.settings.meter_gain = 2
 	ui.settings.meter_per_card = true
 	ui._on_play_vanilla_pressed()
-	if ui.gm.players.size() != 4 or ui.gm.max_plays_per_turn != 12 \
-			or ui.gm.draw_per_turn != 1:
+	gm = ui.gm
+	if gm.players.size() != 4 or gm.max_plays_per_turn != 12 or gm.draw_per_turn != 1:
 		printerr("sandbox game should use sandbox settings")
 		ok = false
-	if ui.gm.meter_gain != 2 or not ui.gm.meter_per_card or ui.gm.meter_max != 20:
+	if gm.energy_on() or ui.lives_label.visible:
+		printerr("sandbox games have no energy and no lives")
+		ok = false
+	if gm.meter_gain != 2 or not gm.meter_per_card or gm.meter_max != 20:
 		printerr("sandbox game should use sandbox meter settings: max %d gain %d per_card %s"
-			% [ui.gm.meter_max, ui.gm.meter_gain, ui.gm.meter_per_card])
+			% [gm.meter_max, gm.meter_gain, gm.meter_per_card])
 		ok = false
 	# Live-apply: editing a sandbox meter dial pushes onto the running game.
 	ui.settings.meter_max = 4
 	ui._apply_live_settings()
-	if ui.gm.meter_max != 4:
-		printerr("sandbox meter change should apply live, got %d" % ui.gm.meter_max)
-		ok = false
-	if ui.settings_btn.disabled:
-		printerr("settings button should be enabled in sandbox")
+	if gm.meter_max != 4:
+		printerr("sandbox meter change should apply live, got %d" % gm.meter_max)
 		ok = false
 	if ok:
 		print("UI MODE CHECK OK")

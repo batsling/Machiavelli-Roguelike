@@ -4,10 +4,16 @@ extends Node
 ## Core engine for a vanilla game of Machiavelli (the Italian rummy variant).
 ##
 ## Rules implemented:
-##  - Two full 52-card decks (plus 4 wildcards when jokers are enabled); each
-##    player is dealt a starting hand, the rest forms the stock.
+##  - Every player brings their own deck (a standard 52 cards, plus 2 jokers
+##    when jokers are enabled, unless a custom deck is passed to setup) and is
+##    dealt a starting hand from it. Players only ever draw from their own deck;
+##    the table is shared.
+##  - Energy (optional, on when start_energy > 0): each card played from hand
+##    costs its Card.cost in energy. A player starts their first turn with
+##    start_energy, gains energy_per_turn more each turn up to energy_cap, and
+##    unspent energy never carries over. Rearranging the table is always free.
 ##  - On your turn you either play at least one card from your hand onto the
-##    table, or draw from the stock (draw_per_turn cards). While playing you may freely
+##    table, or draw from your deck (draw_per_turn cards). While playing you may freely
 ##    rearrange every meld on the table — the only requirement is that when
 ##    the turn ends, every meld on the table is valid (Rules.is_valid_meld).
 ##  - Opening: until a player has laid down at least one valid meld built
@@ -16,9 +22,10 @@ extends Node
 ##    own meld unlocks table play immediately (even mid-turn), and once a
 ##    turn containing such a meld is committed the player stays open for the
 ##    rest of the game. This applies to every player, human and AI.
-##  - First player to empty their hand wins. If the stock is empty and every
-##    player passes in a full round, the game ends and whoever holds the
-##    fewest cards wins (ties shared).
+##  - First player to empty their hand wins. A player who cannot draw (their
+##    deck is empty or their hand is at the cap) passes; if every player passes
+##    in a full round, the game ends and whoever holds the fewest cards wins
+##    (ties shared).
 ##
 ## The turn is *staged*: moves mutate the board/hand immediately, but the
 ## whole turn can be rolled back (reset_turn, or draw_and_end_turn when the
@@ -35,9 +42,6 @@ signal board_changed
 ## draw_per_turn cards). Batched so the UI can announce a multi-card draw as a
 ## single line ("… drew 2 cards, X and Y") instead of one line per card.
 signal cards_drawn(player: PlayerState, cards: Array[Card])
-## Fired when a card is sent to the face-up discard pile (the Billionaire's
-## Riichi auto-discards), so the UI can log and render it.
-signal card_discarded(player: PlayerState, card: Card)
 signal turn_committed(player: PlayerState, cards_played: int)
 signal player_passed(player: PlayerState)
 signal game_over(winners: Array)
@@ -50,17 +54,16 @@ const DEFAULT_HAND_SIZE := 13
 
 var players: Array[PlayerState] = []
 var board := Board.new()
-var deck: Deck = null
 var turn_index := 0
 ## The current round of play: every player takes one turn per round, and the
 ## count ticks up each time play wraps back to the first player (turn_index 0).
 ## Starts at 1 the moment the game is dealt. This is the table's own round
-## counter, distinct from the roguelike ladder round (which enemy you face).
+## counter, distinct from the run's map progress (which enemy you face).
 var round_number := 1
 var is_game_over := false
 ## How many cards a player draws when they draw instead of playing (1-3 from
-## the settings menu). Drawing stops early when the stock runs dry; a turn
-## only counts as a pass when zero cards could be drawn.
+## the settings menu). Drawing stops early when the player's deck runs dry; a
+## turn only counts as a pass when zero cards could be drawn.
 var draw_per_turn := 1
 ## Optional hand cap (0 = none, 10-20 from the settings menu). Drawing stops
 ## at the cap, so a draw attempted with a full hand is a pass; a full round
@@ -78,14 +81,19 @@ var max_plays_per_turn := 0
 var meter_max := 20
 var meter_gain := 1
 var meter_per_card := false
+## Energy rules. start_energy 0 turns energy off entirely (cards are free, as in
+## vanilla Machiavelli); a roguelike run sets it to 3. A player's ceiling is
+## start_energy on their first turn, + energy_per_turn each turn after, capped
+## at energy_cap (0 = no cap). Energy refills to the ceiling every turn — unspent
+## energy is lost.
+var start_energy := 0
+var energy_per_turn := 1
+var energy_cap := 10
 
-## Optional duck-typed observer that gets a veto/interrupt right after any player
-## commits a hand to the table. A designed enemy registers itself here in
-## on_combat_start; commit_turn calls its on_opponent_commit(gm, committer) and,
-## if it returns true, the interceptor has already ended the game (the Sadistic
-## Billionaire's Riichi "ron" — he claims the table and wins the instant an
-## opponent's play lets his frozen hand go out). null in vanilla games.
-var play_interceptor: Object = null
+# How many copies of each natural card ("rank,suit") exist across every deck
+# and hand at the deal. With per-player decks this depends on what each player
+# brought, so the AI's card counting reads it instead of assuming a number.
+var _copies := {}
 
 # Staging state for the current turn. _hand_snapshot is the current player's
 # hand at the start of the turn; swap_joker() appends to it in place (the
@@ -105,44 +113,76 @@ var _meter_spent_this_turn := false
 # start of every turn.
 var _shaped_this_turn: Array[Card] = []
 
+## Deal a new game. Every player gets their own deck: `decks[i]` when given (an
+## enemy's authored deck, say — its cards are re-tagged to that seat), otherwise
+## a standard 52-card deck (+2 jokers when include_jokers). Each deck is shuffled
+## with its own seed derived from seed_value, so a seeded game replays exactly.
 func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: int = -1,
-		include_jokers := false) -> void:
+		include_jokers := false, decks: Array = []) -> void:
 	players.clear()
 	board = Board.new()
-	deck = Deck.new(seed_value)
-	deck.build_double_deck(include_jokers)
-	deck.shuffle()
 	turn_index = 0
 	round_number = 1
 	is_game_over = false
 	_consecutive_passes = 0
-	# A fresh game carries no mechanic interceptor until on_combat_start plants
-	# one, so a previous round's Billionaire can never fire into this game.
-	play_interceptor = null
 	for i in player_names.size():
 		var p := PlayerState.new()
 		p.player_id = i
 		p.display_name = str(player_names[i])
 		p.is_opponent = i != 0
+		var given: Deck = decks[i] if i < decks.size() else null
+		if given != null:
+			p.deck = given
+			for c in p.deck.cards:
+				c.deck_owner = i
+		else:
+			p.deck = Deck.new(seed_value + i * 7919 if seed_value >= 0 else -1)
+			p.deck.build_standard(i, include_jokers)
+		p.deck.shuffle()
 		for _j in hand_size:
-			p.hand.append(deck.draw())
+			var c := p.deck.draw()
+			if c == null:
+				break
+			p.hand.append(c)
 		players.append(p)
+	_count_copies()
 	_begin_turn()
 
 func current_player() -> PlayerState:
 	return players[turn_index]
 
+## How many copies of this natural card exist in the game (across every deck,
+## hand and the table at the deal). The AI's card counting reads it.
+func copies_in_play(rank: int, suit: String) -> int:
+	return _copies.get("%d,%s" % [rank, suit], 0)
+
+func _count_copies() -> void:
+	_copies.clear()
+	for p in players:
+		for c in p.deck.cards + p.deck.discards + p.hand:
+			if not c.is_joker:
+				var key := "%d,%s" % [c.rank, c.suit]
+				_copies[key] = _copies.get(key, 0) + 1
+
+## Cards left to draw across every player's deck — the game's "stock", for code
+## that cares how close the whole table is to running dry.
+func cards_left_in_decks() -> int:
+	var n := 0
+	for p in players:
+		n += p.deck.size()
+	return n
+
 ## Deal every player a starting combo: a random valid three-card meld (a set
-## or a run of naturals) pulled straight from the stock onto the table, which
-## counts as that player's opening meld (has_opened). No one starts stuck on a
-## hand that can't lay a group — the whole table is playable from turn one.
+## or a run of naturals) pulled straight from their own deck onto the table,
+## which counts as that player's opening meld (has_opened). No one starts stuck
+## on a hand that can't lay a group — the whole table is playable from turn one.
 ## Call after enemy mechanics are planted (on_combat_start), which coat the
-## stock and hands, so combo cards keep any slime/glass they picked up there.
+## decks and hands, so combo cards keep any effects they picked up there.
 func deal_starting_melds() -> void:
 	for p in players:
-		var pulled := _random_stock_meld()
+		var pulled := _random_stock_meld(p.deck)
 		if pulled.is_empty():
-			return  # stock too thin to build one; leave the rest as a normal deal
+			continue  # this deck is too thin to build one; leave it a normal deal
 		var meld := CardSet.new()
 		for c in pulled:
 			meld.add_card(c)
@@ -150,11 +190,11 @@ func deal_starting_melds() -> void:
 		p.has_opened = true
 	board_changed.emit()
 
-## A random valid three-card meld pulled from the stock: an even coin flip
+## A random valid three-card meld pulled from `deck`: an even coin flip
 ## between a set (one rank, three suits) and a run (one suit, three consecutive
 ## ranks, ace playing low). Uses the deck's RNG so a seeded game stays
-## reproducible. Returns [] when the stock can't supply any shape tried.
-func _random_stock_meld() -> Array[Card]:
+## reproducible. Returns [] when the deck can't supply any shape tried.
+func _random_stock_meld(deck: Deck) -> Array[Card]:
 	for _attempt in 40:
 		var want: Array = []  # [rank, suit] pairs
 		if deck.rng.randi_range(0, 1) == 0:
@@ -481,9 +521,8 @@ func cards_played_this_turn() -> int:
 	return _hand_snapshot.size() - current_player().hand.size()
 
 ## The cards the current player has moved from their hand onto the table this
-## turn (in the turn-start snapshot but no longer in hand). Read by a mechanic
-## interceptor to see exactly what an opponent just played (the Billionaire's
-## ron checks these against his waits).
+## turn (in the turn-start snapshot but no longer in hand). Energy is the cost
+## of these cards (energy_spent).
 func cards_placed_this_turn() -> Array[Card]:
 	var out: Array[Card] = []
 	for c in _hand_snapshot:
@@ -550,6 +589,9 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	# The swap counts as playing a card, so it needs room under the play cap.
 	elif max_plays_per_turn > 0 and cards_played_this_turn() >= max_plays_per_turn:
 		err = "You can only play %d cards in a turn." % max_plays_per_turn
+	# ...and it costs the real card's energy, like any card played from hand.
+	elif energy_on() and hand_card.cost > energy_left():
+		err = _energy_error(hand_card.cost)
 	if err != "":
 		return err
 	_push_undo()
@@ -635,7 +677,24 @@ func _staged_open_meld_exists() -> bool:
 			return true
 	return false
 
-## Why the staged move is illegal under the play cap, the opening rule, or the
+## Why moving these cards would overrun the turn's play cap or energy (only the
+## cards leaving the hand count), or "" when the turn can afford them.
+func _budget_error(cards_to_move: Array[Card]) -> String:
+	var p := current_player()
+	var from_hand := 0
+	var cost := 0
+	for c in cards_to_move:
+		if p.hand.has(c):
+			from_hand += 1
+			cost += c.cost
+	if max_plays_per_turn > 0 and from_hand > 0 \
+			and cards_played_this_turn() + from_hand > max_plays_per_turn:
+		return "You can only play %d cards in a turn." % max_plays_per_turn
+	if energy_on() and cost > energy_left():
+		return _energy_error(cost)
+	return ""
+
+## Why the staged move is illegal under the play cap, energy, the opening rule, or the
 ## picture seal, or "" if it is fine. Cards in an extension line are NOT
 ## sealed: they come off one at a time like any table card (the line slides in
 ## toward its anchor and revalidates at commit), keeping the picture's own
@@ -653,13 +712,9 @@ func _stage_error(cards_to_move: Array[Card], dest: CardSet) -> String:
 			for c in m.cards:
 				if batch.has(c) and not _shaped_this_turn.has(c):
 					return "That card is sealed inside a picture."
-	if max_plays_per_turn > 0:
-		var from_hand := 0
-		for c in cards_to_move:
-			if p.hand.has(c):
-				from_hand += 1
-		if from_hand > 0 and cards_played_this_turn() + from_hand > max_plays_per_turn:
-			return "You can only play %d cards in a turn." % max_plays_per_turn
+	var budget_err := _budget_error(cards_to_move)
+	if budget_err != "":
+		return budget_err
 	if current_player_is_open():
 		return ""
 	for c in cards_to_move:
@@ -670,6 +725,66 @@ func _stage_error(cards_to_move: Array[Card], dest: CardSet) -> String:
 		return "You can't add to other groups before opening — " \
 			+ "lay down a valid group from your own hand first."
 	return ""
+
+# --- Energy -----------------------------------------------------------------
+
+## True when cards cost energy this game (start_energy > 0).
+func energy_on() -> bool:
+	return start_energy > 0
+
+## Energy the current player has spent this turn: the cost of every card they
+## have moved from hand to the table. Derived from the staged turn, so undoing a
+## move or returning a card to the hand refunds it automatically.
+func energy_spent() -> int:
+	var spent := 0
+	for c in cards_placed_this_turn():
+		spent += c.cost
+	return spent
+
+## Energy the current player still has to spend this turn (0 when energy is off;
+## check energy_on first).
+func energy_left() -> int:
+	if not energy_on():
+		return 0
+	return maxi(current_player().max_energy - energy_spent(), 0)
+
+## How many more cards from hand the current player can afford this turn under
+## both the play cap and energy, assuming each costs 1 (every card does for
+## now); -1 when neither limit applies. The AI plans its moves inside this.
+func play_budget() -> int:
+	var budget := -1
+	if max_plays_per_turn > 0:
+		budget = maxi(max_plays_per_turn - cards_played_this_turn(), 0)
+	if energy_on():
+		budget = energy_left() if budget < 0 else mini(budget, energy_left())
+	return budget
+
+## The energy ceiling `p` will start their next turn with — their current
+## ceiling while it is their turn. Lets the UI show an opponent's (or your own)
+## energy between turns, including before their first turn.
+func upcoming_energy(p: PlayerState) -> int:
+	if not energy_on():
+		return 0
+	if p == current_player() and not is_game_over:
+		return p.max_energy
+	var ceiling := start_energy + p.turns_taken * energy_per_turn
+	return mini(ceiling, energy_cap) if energy_cap > 0 else ceiling
+
+func _energy_error(cost: int) -> String:
+	return "Not enough energy — that costs %d and you have %d left this turn." \
+		% [cost, energy_left()]
+
+## Set the current player's energy ceiling as their turn begins: start_energy on
+## their first turn, energy_per_turn more each turn after, capped at energy_cap.
+func _refill_energy(p: PlayerState) -> void:
+	p.turns_taken += 1
+	if not energy_on():
+		p.max_energy = 0
+		return
+	var ceiling := start_energy + (p.turns_taken - 1) * energy_per_turn
+	if energy_cap > 0:
+		ceiling = mini(ceiling, energy_cap)
+	p.max_energy = ceiling
 
 # --- Ending the turn --------------------------------------------------------
 
@@ -691,10 +806,6 @@ func commit_turn() -> String:
 	_charge_meter(p, played)
 	if p.hand.is_empty():
 		_end_game([p])
-		return ""
-	# A registered interceptor (the Billionaire in Riichi) may claim this play
-	# and win outright — his "ron". It ends the game itself; we just stop here.
-	if play_interceptor != null and play_interceptor.on_opponent_commit(self, p):
 		return ""
 	_advance()
 	return ""
@@ -747,11 +858,11 @@ func spend_meter() -> void:
 func _commit_error(p: PlayerState) -> String:
 	if cards_played_this_turn() <= 0:
 		return "You must play at least one card from your hand (or draw instead)."
-	# Normally unreachable (staging enforces the cap), but the cap can be
-	# lowered mid-turn from the settings dialog.
-	if max_plays_per_turn > 0 and cards_played_this_turn() > max_plays_per_turn:
-		return "You can only play %d cards in a turn — return some to your hand." \
-			% max_plays_per_turn
+	# Normally unreachable (staging enforces the cap and energy), but the cap
+	# can be lowered mid-turn from the settings dialog.
+	var over := _over_budget_error(p)
+	if over != "":
+		return over
 	for c in p.hand:
 		if not _hand_snapshot.has(c):
 			return "Cards from the table cannot be taken into your hand."
@@ -763,7 +874,17 @@ func _commit_error(p: PlayerState) -> String:
 			+ "built only from your own hand."
 	return ""
 
-## Draw draw_per_turn cards (or pass if the stock is empty) and end the turn.
+## Why the staged turn has played more than the play cap or energy allows, or "".
+func _over_budget_error(p: PlayerState) -> String:
+	if max_plays_per_turn > 0 and cards_played_this_turn() > max_plays_per_turn:
+		return "You can only play %d cards in a turn — return some to your hand." \
+			% max_plays_per_turn
+	if energy_on() and energy_spent() > p.max_energy:
+		return "Not enough energy — return some cards to your hand."
+	return ""
+
+## Draw draw_per_turn cards from the player's own deck (or pass if it is empty)
+## and end the turn.
 ##
 ## A staged table rearrangement that plays no card from the hand — the
 ## signature Machiavelli "shuffle the felt" move, which the Cute Slime uses to
@@ -783,7 +904,7 @@ func draw_and_end_turn() -> void:
 	for _i in draw_per_turn:
 		if max_hand_size > 0 and p.hand.size() >= max_hand_size:
 			break
-		var card := deck.draw()
+		var card := p.deck.draw()
 		if card == null:
 			break
 		p.hand.append(card)
@@ -799,26 +920,13 @@ func draw_and_end_turn() -> void:
 			return
 	_advance()
 
-# --- Mechanic-driven turns (Riichi) ------------------------------------------
+# --- Mechanic-driven turns ---------------------------------------------------
 # Primitives a designed enemy uses to drive a turn that isn't an ordinary
-# play-or-draw: the Billionaire's Riichi draws one card and either wins on it
-# (tsumo) or discards it face-up. Centralized here so pass/advance/round
+# play-or-draw (see Enemy.wants_control). Centralized here so pass/advance/round
 # bookkeeping stays in one place.
 
-## Draw one card off the top of the stock (folding the discards back in first
-## when the stock is dry), returning it without placing it in any hand. Lets a
-## mechanic inspect the draw before deciding its fate. null only when the stock
-## and the discard pile are both empty.
-func draw_from_stock() -> Card:
-	return deck.draw()
-
-## Send a card to the face-up discard pile and announce it.
-func send_to_discard(p: PlayerState, card: Card) -> void:
-	deck.discard(card)
-	card_discarded.emit(p, card)
-
 ## End the game with these winners — the win path for mechanics that go out
-## outside the ordinary empty-hand check (the Billionaire's tsumo and ron).
+## outside the ordinary empty-hand check.
 func win_now(winners: Array) -> void:
 	_end_game(winners)
 
@@ -828,8 +936,8 @@ func advance_after_action() -> void:
 	_consecutive_passes = 0
 	_advance()
 
-## Register a pass for the current player (stock and discards both dry), ending
-## the game if this completes a full round of passes.
+## Register a pass for the current player (nothing they can draw), ending the
+## game if this completes a full round of passes.
 func pass_turn() -> void:
 	var p := current_player()
 	_consecutive_passes += 1
@@ -933,6 +1041,7 @@ func _restore_locks(locks: Dictionary) -> void:
 
 func _begin_turn() -> void:
 	var p := current_player()
+	_refill_energy(p)
 	_hand_snapshot = p.hand.duplicate()
 	_undo_stack.clear()
 	_meter_spent_this_turn = false

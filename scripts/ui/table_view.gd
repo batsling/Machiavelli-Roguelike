@@ -40,50 +40,42 @@ func refresh_seats() -> void:
 		backs.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seat.add_child(backs)
 		_ui.opponent_backs[p.player_id] = backs
-	_ui.stock_label.text = "Stock: %d" % gm.deck.size()
+	_ui.stock_label.text = "Your deck: %d" % gm.players[0].deck.size()
+	_ui.stock_label.tooltip_text = "Cards left in your own deck — you only ever draw from it."
 	_ui.round_label.text = "Round %d" % gm.round_number
+	_refresh_lives()
 	_refresh_stock_top()
-	_refresh_discards()
 
-## The face-up discard pile beside the stock: a count and the most recent few
-## discards shown face up (out of play until the stock recycles them). Hidden
-## entirely until something has been discarded.
-func _refresh_discards() -> void:
-	_ui._clear_children(_ui.discard_slot)
-	var pile := _ui.gm.deck.discards
-	if pile.is_empty():
+## Lives and map progress in the top bar during a run; hidden in sandbox.
+func _refresh_lives() -> void:
+	var run := _ui.run
+	var in_run := _ui.game_mode == MainUI.Mode.ROGUE and run != null
+	_ui.lives_label.visible = in_run
+	if not in_run:
 		return
-	var lbl := Label.new()
-	lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	lbl.text = "Discard: %d" % pile.size()
-	lbl.tooltip_text = "Face-up discard pile — out of play until the stock runs " \
-		+ "dry and the pile is shuffled back in."
-	_ui.discard_slot.add_child(lbl)
-	# Show up to the last three discards face up, newest last (a discard is public,
-	# so it always shows its face — glass or not).
-	var start := maxi(0, pile.size() - 3)
-	for i in range(start, pile.size()):
-		var face := CardRenderer.make_card_face(pile[i])
-		face.tooltip_text = "Discarded — out of play until the stock recycles."
-		_ui.discard_slot.add_child(face)
+	var hearts := ""
+	for i in maxi(run.start_lives, run.lives):
+		hearts += "♥" if i < run.lives else "♡"
+	var node_no := run.active_node.row + 1 if run.active_node != null else run.cleared_count()
+	_ui.lives_label.text = "%s   Node %d/%d" % [hearts, node_no, run.rows.size()]
+	_ui.lives_label.tooltip_text = "Lives left — losing a match costs one."
 
-## Show the top card of the stock beside the count when its status is public: a
-## glass top shows its face (everyone sees the next draw), and a slimed top shows
-## a back with the splotch (everyone sees the next draw is stuck, but not what it
-## is). A plain top stays hidden.
+## Show the top card of your own deck beside the count when its status is
+## public: a glass top shows its face (everyone sees your next draw), and a
+## slimed top shows a back with the splotch. A plain top stays hidden.
 func _refresh_stock_top() -> void:
 	_ui._clear_children(_ui.stock_top_slot)
-	var top := _ui.gm.deck.peek()
+	var top := _ui.gm.players[0].deck.peek()
 	if top == null:
 		return
 	if top.is_glass():
 		var face := CardRenderer.make_glass_face(top, UITheme.BACK_SIZE_TOP)
-		face.tooltip_text = "Top of the stock is glass — everyone can see " \
-			+ "the next card drawn."
+		face.tooltip_text = "The top of your deck is glass — everyone can see " \
+			+ "your next draw."
 		_ui.stock_top_slot.add_child(face)
 	elif top.is_sticky():
 		var back := CardRenderer.make_card_back(UITheme.BACK_SIZE_TOP, top)
-		back.tooltip_text = "Top of the stock is slimed — the next card drawn is stuck."
+		back.tooltip_text = "The top of your deck is slimed — your next draw is stuck."
 		_ui.stock_top_slot.add_child(back)
 
 func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
@@ -110,17 +102,21 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	if is_current:
 		lbl.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	row.add_child(lbl)
-	# A declared Riichi is public: badge the seat so the table knows his hand is
-	# frozen and he is drawing for the win.
-	if p.declared_riichi:
-		var badge := Label.new()
-		badge.text = "RIICHI"
-		badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		badge.add_theme_font_size_override("font_size", 12)
-		badge.add_theme_color_override("font_color", Color(1, 0.35, 0.35))
-		badge.tooltip_text = "Hand frozen — drawing for the win, and claiming any " \
-			+ "card played that lets him go out."
-		row.add_child(badge)
+	# Their own deck (they draw only from it) and, when energy is on, the energy
+	# they have this turn — or will have on their next one.
+	var extra := Label.new()
+	extra.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	extra.add_theme_font_size_override("font_size", 13)
+	extra.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
+	extra.text = "deck %d" % p.deck.size()
+	if gm.energy_on():
+		if is_current:
+			extra.text += " · ⚡%d/%d" % [gm.energy_left(), p.max_energy]
+		else:
+			extra.text += " · ⚡%d next turn" % gm.upcoming_energy(p)
+	extra.tooltip_text = "Cards left in their deck, and their energy (each card " \
+		+ "costs 1)."
+	row.add_child(extra)
 	# "Info" button beside the name tag: the opponent's mechanic and AI brain.
 	var info_btn := Button.new()
 	info_btn.text = "Info"
@@ -597,6 +593,7 @@ func refresh_hand() -> void:
 		sb.set_border_width_all(2)
 	_ui.hand_panel.add_theme_stylebox_override("panel", sb)
 	_refresh_hand_meter()
+	_refresh_energy()
 	_ui._clear_children(_ui.hand_box)
 	var hand := gm.players[0].hand
 	if gm.players[0].has_opened:
@@ -635,6 +632,35 @@ func _refresh_hand_meter() -> void:
 	var bar := CardRenderer.make_meter_bar(gm.projected_meter(gm.players[0]), gm.meter_max)
 	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_ui.hand_meter_slot.add_child(bar)
+
+## Your energy in the hand header: "Energy 2/4" and a pip per point, spent
+## pips dimmed. On your turn it counts down as you play cards from hand (and
+## back up when you take them back); between turns it shows the full ceiling
+## your next turn starts with. Empty when energy is off.
+func _refresh_energy() -> void:
+	_ui._clear_children(_ui.energy_slot)
+	var gm := _ui.gm
+	if not gm.energy_on() or gm.players.is_empty():
+		return
+	var me := gm.players[0]
+	var ceiling := gm.upcoming_energy(me)
+	var left := gm.energy_left() if gm.current_player() == me else ceiling
+	var tag := Label.new()
+	tag.text = "Energy %d/%d" % [left, ceiling]
+	tag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tag.add_theme_color_override("font_color", UITheme.COL_ENERGY)
+	tag.tooltip_text = "Each card you play from hand costs 1 energy. Rearranging " \
+		+ "the table is free. Energy refills every turn (+1 each turn) and " \
+		+ "never carries over."
+	tag.mouse_filter = Control.MOUSE_FILTER_STOP
+	_ui.energy_slot.add_child(tag)
+	for i in ceiling:
+		var pip := Label.new()
+		pip.text = "●" if i < left else "○"
+		pip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		pip.add_theme_color_override("font_color",
+			UITheme.COL_ENERGY if i < left else UITheme.COL_ENERGY_SPENT)
+		_ui.energy_slot.add_child(pip)
 
 ## Card buttons are both click-to-select toggles and drag sources. Cards on the
 ## table (meld != null) are also drop targets for their own group, and are

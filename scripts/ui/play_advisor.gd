@@ -28,6 +28,9 @@ func lays_off_onto(c: Card, meld: CardSet, open: bool) -> bool:
 		return false
 	if not open and not gm.is_own_staged_meld(meld):
 		return false
+	var single: Array[Card] = [c]
+	if not _affordable(single):
+		return false
 	var candidate: Array[Card] = meld.cards.duplicate()
 	candidate.append(c)
 	return Rules.is_valid_meld(candidate)
@@ -40,14 +43,14 @@ func play_hints(c: Card, open: bool) -> Dictionary:
 	for meld in gm.board.melds:
 		if lays_off_onto(c, meld, open):
 			targets[meld] = true
-	return {"meld_targets": targets, "new_group": forms_new_group(c)}
+	return {"meld_targets": targets, "new_group": not affordable_new_group(c).is_empty()}
 
 ## True when `c` can be played this instant with no rearranging — a lay-off onto
 ## some existing group, or a fresh group from naturals in hand. Carries no
 ## turn gate: the caller combines it with "is it my turn" (it drives the green
 ## cap, which only ever shows on your own turn).
 func playable_now(c: Card, open: bool) -> bool:
-	if forms_new_group(c):
+	if not affordable_new_group(c).is_empty():
 		return true
 	for meld in gm.board.melds:
 		if lays_off_onto(c, meld, open):
@@ -62,10 +65,40 @@ func auto_play_target(c: Card, open: bool) -> Dictionary:
 	for meld in gm.board.melds:
 		if lays_off_onto(c, meld, open):
 			return {"meld": meld}
-	var group := new_group_cards_for(c)
+	var group := affordable_new_group(c)
 	if not group.is_empty():
 		return {"new_group": group}
 	return {}
+
+## The fresh group `c` completes with naturals in hand (new_group_cards_for),
+## cut down to what the current player's energy can pay for: the whole group
+## when it is affordable, else the first valid stretch of it that still holds
+## `c` and fits, or [] when none does (a group needs three cards). With energy
+## off this is just new_group_cards_for.
+func affordable_new_group(c: Card) -> Array[Card]:
+	var group := new_group_cards_for(c)
+	if group.is_empty() or _affordable(group):
+		return group
+	var none: Array[Card] = []
+	var budget := gm.energy_left()
+	if budget < 3:
+		return none
+	var ordered := Rules.display_order(group)
+	for start in ordered.size() - budget + 1:
+		var part: Array[Card] = ordered.slice(start, start + budget)
+		if part.has(c) and Rules.is_valid_meld(part) and _affordable(part):
+			return part
+	return none
+
+## True when the current player can pay for playing `cards` from hand this turn
+## (always true while energy is off).
+func _affordable(cards: Array[Card]) -> bool:
+	if not gm.energy_on():
+		return true
+	var cost := 0
+	for c in cards:
+		cost += c.cost
+	return cost <= gm.energy_left()
 
 ## True when `c` plus other naturals already in the hand make a valid new group —
 ## a set of its rank across distinct suits, or a run of its suit. Plays that
