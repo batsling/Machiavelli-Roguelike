@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="LocationData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/location_data.gd" id="1_loc"]
+
+[resource]
+script = ExtResource("1_loc")
+id = &"gift"
+title = "Gift"
+kind = "on_reveal"
+text = "Choose 2 cards to give your opponent."
+order = 1

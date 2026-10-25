@@ -155,9 +155,9 @@ var round_label: Label
 var lives_label: Label
 var stock_label: Label
 var stock_top_slot: HBoxContainer
-## The match's events (see MatchEvent), between the top bar and the felt.
-var events_row: HBoxContainer
-## "Confirm (1/2)" — settles the event choice you owe (Cycle, Gift).
+## The match's locations (see MatchLocation), between the top bar and the felt.
+var locations_row: HBoxContainer
+## "Confirm (1/2)" — settles the location choice you owe (Cycle, Gift).
 var choice_btn: Button
 var status_label: Label
 var log_box: RichTextLabel
@@ -211,7 +211,7 @@ func _ready() -> void:
 	gm.cards_drawn.connect(_on_cards_drawn)
 	gm.player_passed.connect(_on_player_passed)
 	gm.game_over.connect(_on_game_over)
-	gm.event_revealed.connect(_on_event_revealed)
+	gm.location_revealed.connect(_on_location_revealed)
 	gm.cards_discarded.connect(_on_cards_discarded)
 	gm.cards_given.connect(_on_cards_given)
 	gm.coins_gained.connect(_on_coins_gained)
@@ -244,7 +244,7 @@ func _new_game() -> void:
 		gm.energy_cap = settings.rogue_energy_cap
 		gm.max_plays_per_turn = 0
 		gm.meter_max = 0
-		gm.event_deck = MatchEvent.draw(settings.rogue_events)
+		gm.location_deck = MatchLocation.draw(settings.rogue_locations)
 		gm.setup(["You", current_enemy.display_name], settings.rogue_start_hand_size, -1,
 			settings.rogue_jokers, [null, current_enemy.build_deck(settings.rogue_jokers)])
 		gm.draw_per_turn = settings.rogue_draw_per_turn
@@ -268,7 +268,7 @@ func _new_game() -> void:
 		for i in settings.enemy_count:
 			names.append(ENEMY_NAMES[i])
 		gm.start_energy = 0
-		gm.event_deck = []
+		gm.location_deck = []
 		gm.setup(names, settings.start_hand_size, -1, settings.include_jokers)
 		gm.draw_per_turn = settings.draw_per_turn
 		gm.max_hand_size = settings.max_hand_size
@@ -296,9 +296,9 @@ func _new_game() -> void:
 	if not combo_start:
 		_log("Opening rule: lay down a valid group from your own hand before "
 			+ "you can touch other groups on the table.")
-	if not gm.event_deck.is_empty() or not gm.revealed_events.is_empty():
-		_log("Events: one is revealed at the start of rounds %s. Each affects "
-			% ", ".join(gm.event_rounds.map(func(r: int) -> String: return str(r)))
+	if not gm.location_deck.is_empty() or not gm.revealed_locations.is_empty():
+		_log("Locations: one is revealed at the start of rounds %s. Each affects "
+			% ", ".join(gm.location_rounds.map(func(r: int) -> String: return str(r)))
 			+ "every player — on reveal effects on each player's turn that round, "
 			+ "ongoing effects for the rest of the match.")
 	_prompt_pending_choice()
@@ -461,9 +461,9 @@ func _refresh_buttons() -> void:
 	choice_btn.visible = choosing
 	if choosing:
 		var need: int = gm.pending_choice()["count"]
-		var event: MatchEvent = gm.pending_choice()["event"]
+		var location: MatchLocation = gm.pending_choice()["location"]
 		var picked := _selected_hand_cards().size()
-		choice_btn.text = "Confirm %s (%d/%d)" % [event.title, picked, need]
+		choice_btn.text = "Confirm %s (%d/%d)" % [location.title, picked, need]
 		choice_btn.disabled = picked != need
 	return_btn.disabled = not human_turn or not gm.can_return_to_hand(selected)
 	undo_action_btn.disabled = not human_turn or not gm.can_undo_action()
@@ -1201,11 +1201,11 @@ func _run_ai_turns() -> void:
 			if gen != game_generation:
 				return
 			continue
-		# An event may ask this enemy for a choice before it plays.
+		# A location may ask this enemy for a choice before it plays.
 		if gm.has_pending_choice():
-			var event: MatchEvent = gm.pending_choice()["event"]
-			GreedyAI.resolve_event_choice(gm)
-			_log("%s resolved %s." % [enemy.display_name, event.title])
+			var location: MatchLocation = gm.pending_choice()["location"]
+			GreedyAI.resolve_location_choice(gm)
+			_log("%s resolved %s." % [enemy.display_name, location.title])
 			_refresh()
 		while true:
 			var move: Dictionary = GreedyAI.plan_move(gm, profile, enemy_def)
@@ -1242,16 +1242,16 @@ func _run_ai_turns() -> void:
 		_prompt_pending_choice()
 	_refresh()
 
-# --- Events -------------------------------------------------------------------
+# --- Locations -------------------------------------------------------------------
 
-## When you owe an event a choice, say so in the status line.
+## When you owe a location a choice, say so in the status line.
 func _prompt_pending_choice() -> void:
 	if not gm.has_pending_choice() or gm.current_player() != gm.players[0]:
 		return
-	var event: MatchEvent = gm.pending_choice()["event"]
+	var location: MatchLocation = gm.pending_choice()["location"]
 	var need: int = gm.pending_choice()["count"]
 	_set_status("%s: %s Click %d card%s in your hand, then press Confirm."
-		% [event.title, event.text, need, "" if need == 1 else "s"])
+		% [location.title, location.text, need, "" if need == 1 else "s"])
 
 ## The selected cards that are in your hand (a choice picks only from the hand).
 func _selected_hand_cards() -> Array[Card]:
@@ -1272,15 +1272,15 @@ func _on_choice_confirm_pressed() -> void:
 		+ "or click to select, then use \"+ New group\".")
 	_refresh()
 
-## Log the event and its combo, and light the combo up in gold like an enemy
+## Log the location and its combo, and light the combo up in gold like an enemy
 ## move, so the new group on the felt is easy to spot.
-func _on_event_revealed(event: MatchEvent) -> void:
-	_log("[b]Event revealed — %s[/b] (%s): %s Its combo joins the table: %s."
-		% [event.title, event.kind_label(), event.text, event.combo_label()])
-	for c in event.combo:
+func _on_location_revealed(location: MatchLocation) -> void:
+	_log("[b]Location revealed — %s[/b] (%s): %s Its combo joins the table: %s."
+		% [location.title, location.kind_label(), location.text, location.combo_label()])
+	for c in location.combo:
 		highlighted[c] = true
 
-## Event discards are public (they go face up to the deck's discard pile).
+## Location discards are public (they go face up to the deck's discard pile).
 func _on_cards_discarded(p: PlayerState, cards: Array[Card]) -> void:
 	_log("%s discarded %s." % [p.display_name, _join_card_labels(cards)])
 
