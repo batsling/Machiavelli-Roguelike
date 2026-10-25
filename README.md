@@ -58,7 +58,8 @@ this project.
   one valid group built *only* from your own hand, you may not add cards to
   other groups or take cards from them. Runs deal **starting combos** by default:
   every player begins with a random valid three-card group from their own deck
-  on the table, which counts as opening.
+  on the table, which counts as opening. Each starting combo's grip strip is
+  labelled (**Your start**, **Scrap Drone's start**) until it is changed.
 - **Max hand size** (optional): drawing stops at the cap, so a draw on a full
   hand is a pass.
 - **Winning a match.** First to empty their hand wins. A player who cannot draw
@@ -82,9 +83,13 @@ Every location affects **every player**, not just whoever's turn it is:
 
 Every location also brings a **combo**: a random valid three-card group (a set or
 a run) made of fresh cards from outside both players' decks. It lands on the
-table the moment the location is revealed, lit in gold, and anyone may build on it
-or borrow from it like any other group (after opening). The location panel names
-its combo.
+table the moment the location is revealed, flying in from the location's panel and
+lit in gold, and anyone may build on it or borrow from it like any other group
+(after opening). The location panel names its combo, and the group's grip strip
+reads **<Location> combo** until it is changed. The round-1 location is revealed
+as the match is dealt, so a run's opening table holds three groups: your starting
+combo, the enemy's, and that location's combo; the next two arrive on rounds 3
+and 5.
 
 Locations used to be called events; *events* will be something else.
 Names, kinds and rule text come from the **Locations** sheet of
@@ -125,10 +130,11 @@ Click the lit node to play a 1v1 match against its enemy. When the match ends:
   Either way the button becomes **New run**.
 
 During a match the top bar shows your lives and which node you are on, the hand
-header shows your energy (`Energy 2/4` plus a pip per point), and each enemy's
-name chip shows their deck size and energy. Mid-match the action row offers
-**Restart run**; **Menu** keeps the run, and **Resume** returns to the match,
-or to the map between matches.
+header shows your energy (`Energy 2/4` plus a pip per point), each enemy's
+name chip shows their energy, and every player's deck sits beside their cards
+(yours at the left of your hand). The **☰ Menu** in the top-left corner offers
+**Settings**, **Restart run** and **Main menu** (which keeps the run; **Resume**
+returns to the match, or to the map between matches).
 
 The enemies (`Enemy.roster()`), all plain opponents with standard decks:
 
@@ -151,13 +157,15 @@ new model.
 Open the project in Godot 4.6 and press Run (`F5`). The main menu offers
 **Resume** (once a game or run exists), **New run**, **Vanilla sandbox** (a
 free-play game against 1–3 AIs with no energy or lives, handy for testing),
-**Settings** and **Quit**. In game, the **Menu** button brings you back here
-without losing the game in progress.
+**Settings** and **Quit**. In game, the **☰ Menu** in the top-left corner holds
+**Settings**, **Restart run** (**New game** in the sandbox) and **Main menu**, which
+brings you back here without losing the game in progress.
 
 You sit at the bottom; opponents sit around the table showing the backs of
 their cards. The top-left corner shows the **round** counter (one lap of the
 table). Each opponent's name chip carries an **Info** button with its
-description and AI.
+description and AI, and their deck sits beside their card backs with the
+cards left (its top card face up when that card is public: glass, Open Decks).
 
 On your turn:
 
@@ -171,11 +179,13 @@ On your turn:
    opened.
 3. Cards you laid down this turn can go back: drag them onto your hand, or select
    them and press **Return to hand** (this refunds their energy).
-4. **End turn** validates the table and commits. **Undo action** takes back just
+4. **End turn** validates the table and commits; it lights up once you have
+   played at least one card from your hand. **Undo action** takes back just
    the last staged move; **Undo turn** puts the whole turn back.
-5. **Draw & end turn** if you can't or won't play. A partial or invalid staged
-   play is abandoned first, but a *valid* table rearrangement that laid no card
-   from your hand is kept.
+5. If you can't or won't play, click **your deck** (the **Draw** pile at the left
+   of your hand) to draw and end your turn. A partial or invalid staged play is
+   abandoned first, but a *valid* table rearrangement that laid no card from
+   your hand is kept.
 
 Right-clicking anything that isn't a re-pointable joker clears the selection.
 
@@ -327,10 +337,10 @@ Scripts are grouped by layer: `scripts/engine/` (rules and game state, no UI),
   for the run
 - `map_screen.gd` — `MapScreen`: the run map, built in code; emits
   `node_chosen` and `menu_requested`
-- `main_ui_builder.gd` — builds the widget tree once (table, hand, action row,
-  lives label, energy slot, map, menu, dialogs)
-- `table_view.gd` — renders seats (deck size, energy), the felt, the hand and
-  its energy pips
+- `main_ui_builder.gd` — builds the widget tree once (☰ Menu, table, hand with
+  your Draw pile, action row, lives label, energy slot, map, menu, dialogs)
+- `table_view.gd` — renders seats (energy, each opponent's deck pile), the felt
+  (with starting/location combo labels), the hand and its energy pips
 - `play_advisor.gd` — "what can this hand card do right now": hover hints, the
   green cap and double-click play, all energy-aware
 - `menu_screen.gd`, `settings_dialog.gd`, `game_settings.gd`, `card_renderer.gd`,

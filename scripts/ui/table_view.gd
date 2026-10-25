@@ -10,6 +10,9 @@ extends RefCounted
 ## refresh_seats / refresh_board / refresh_hand from its _refresh().
 
 var _ui: MainUI
+## MatchLocation -> its panel in the locations row, rebuilt each refresh, so a
+## revealed location's combo can fly onto the felt from it.
+var location_panels := {}
 
 func setup(ui: MainUI) -> void:
 	_ui = ui
@@ -36,12 +39,19 @@ func refresh_seats() -> void:
 		var chip := _make_player_chip(p, player_index)
 		chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seat.add_child(chip)
+		# Their hand with their own deck beside it: to the right of the cards in
+		# the seat opposite you, underneath them in a side seat.
+		var hand_row: BoxContainer = HBoxContainer.new() if i == 0 else VBoxContainer.new()
+		hand_row.add_theme_constant_override("separation", 10)
+		hand_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		seat.add_child(hand_row)
 		var backs := _make_card_backs(p, player_index, i == 0)
 		backs.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		seat.add_child(backs)
+		hand_row.add_child(backs)
+		hand_row.add_child(_make_opponent_deck(p, UITheme.BACK_SIZE_TOP if i == 0
+			else UITheme.BACK_SIZE_SIDE))
 		_ui.opponent_backs[p.player_id] = backs
-	_ui.stock_label.text = "Your deck: %d" % gm.players[0].deck.size()
-	_ui.stock_label.tooltip_text = "Cards left in your own deck — you only ever draw from it."
+	_refresh_draw_pile()
 	_ui.round_label.text = "Round %d" % gm.round_number
 	_refresh_lives()
 	_refresh_stock_top()
@@ -53,13 +63,16 @@ func refresh_seats() -> void:
 func _refresh_locations() -> void:
 	var gm := _ui.gm
 	_ui._clear_children(_ui.locations_row)
+	location_panels.clear()
 	var upcoming := gm.upcoming_locations()
 	_ui.locations_row.visible = not gm.revealed_locations.is_empty() or not upcoming.is_empty()
 	for e in gm.revealed_locations:
 		var live := e.is_ongoing() or e.revealed_round == gm.round_number
-		_ui.locations_row.add_child(_make_location_panel(e.title, e.kind_label(),
+		var panel := _make_location_panel(e.title, e.kind_label(),
 			"%s Combo: %s" % [e.text, e.combo_label()],
-			UITheme.COL_CHIP_ACTIVE if live else Color(1, 1, 1, 0.15), live))
+			UITheme.COL_CHIP_ACTIVE if live else Color(1, 1, 1, 0.15), live)
+		_ui.locations_row.add_child(panel)
+		location_panels[e] = panel
 	for slot: Dictionary in upcoming:
 		_ui.locations_row.add_child(_make_location_panel("?", "Face down",
 			"Revealed at the start of round %d, with a combo for the table." % slot["round"],
@@ -113,7 +126,53 @@ func _refresh_lives() -> void:
 	_ui.lives_label.tooltip_text = "Lives left — losing a match costs one. Coins " \
 		+ "carry over the run."
 
-## Show the top card of your own deck beside the count when its status is
+## Your deck pile beside the hand, which is also the Draw button: the cards
+## left, and what clicking it does.
+func _refresh_draw_pile() -> void:
+	var gm := _ui.gm
+	var me := gm.players[0]
+	var n := gm.draw_count()
+	_ui.draw_btn.text = "Draw\n%d left" % me.deck.size()
+	_ui.draw_btn.tooltip_text = "Your deck — you only ever draw from it. Click to " \
+		+ "draw %d card%s and end your turn (any cards you laid this turn go back to " \
+		% [n, "" if n == 1 else "s"] + "your hand)."
+	if not me.deck.discards.is_empty():
+		_ui.draw_btn.tooltip_text += "\n%d in its discard pile, shuffled back in " \
+			% me.deck.discards.size() + "when it runs dry."
+
+## An opponent's deck beside their cards: a face-down pile — or its top card,
+## when that card's status is public (glass, Open Decks) — over the cards left.
+func _make_opponent_deck(p: PlayerState, back_size: Vector2) -> Control:
+	var gm := _ui.gm
+	var top := p.deck.peek()
+	var pile: Control
+	if top != null and top.is_glass():
+		pile = CardRenderer.make_glass_face(top, back_size)
+	elif top != null and gm.top_is_public(top):
+		pile = CardRenderer.make_card_face(top)
+	else:
+		pile = CardRenderer.make_card_back(back_size, top)
+	pile.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	pile.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 2)
+	box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	box.mouse_filter = Control.MOUSE_FILTER_STOP
+	box.add_child(pile)
+	var count := Label.new()
+	count.text = "deck %d" % p.deck.size()
+	count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	count.add_theme_font_size_override("font_size", 12)
+	count.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
+	count.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(count)
+	box.tooltip_text = "%s's deck: %d left — they only ever draw from it." \
+		% [p.display_name, p.deck.size()]
+	if top != null and gm.top_is_public(top):
+		box.tooltip_text += " Its top card is face up: %s." % top.label()
+	return box
+
+## Show the top card of your own deck beside the pile when its status is
 ## public: a glass top (or any top while Open Decks is in force) shows its face
 ## (everyone sees your next draw), and a slimed top shows a back with the
 ## splotch. A plain top stays hidden.
@@ -161,24 +220,19 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	if is_current:
 		lbl.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
 	row.add_child(lbl)
-	# Their own deck (they draw only from it) and, when energy is on, the energy
-	# they have this turn — or will have on their next one.
-	var extra := Label.new()
-	extra.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	extra.add_theme_font_size_override("font_size", 13)
-	extra.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
-	extra.text = "deck %d" % p.deck.size()
-	var top := p.deck.peek()
-	if gm.top_is_public(top):
-		extra.text += " (top %s)" % top.label()
+	# When energy is on, the energy they have this turn — or will have on their
+	# next one. (Their deck sits beside their cards.)
 	if gm.energy_on():
+		var extra := Label.new()
+		extra.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		extra.add_theme_font_size_override("font_size", 13)
+		extra.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 		if is_current:
-			extra.text += " · ⚡%d/%d" % [gm.energy_left(), p.max_energy]
+			extra.text = "⚡%d/%d" % [gm.energy_left(), p.max_energy]
 		else:
-			extra.text += " · ⚡%d next turn" % gm.upcoming_energy(p)
-	extra.tooltip_text = "Cards left in their deck, and their energy (each card " \
-		+ "costs 1)."
-	row.add_child(extra)
+			extra.text = "⚡%d next turn" % gm.upcoming_energy(p)
+		extra.tooltip_text = "Their energy (each card costs 1)."
+		row.add_child(extra)
 	# "Info" button beside the name tag: the opponent's mechanic and AI brain.
 	var info_btn := Button.new()
 	info_btn.text = "Info"
@@ -386,8 +440,17 @@ func _make_move_handle(panel: Control, melds: Array[CardSet]) -> Control:
 	dots.text = "⠿"
 	dots.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	dots.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	dots.clip_text = true
 	dots.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
 	dots.add_theme_font_size_override("font_size", 11)
+	# Name where an untouched starting or location combo came from, so the
+	# groups dealt at the start of a match are told apart.
+	var origin := group_origin(melds)
+	if origin != "":
+		dots.text = "⠿ %s" % origin
+		if _is_location_combo(melds):
+			dots.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
+		handle.tooltip_text = "%s — drag to move this group around the felt" % origin
 	dots.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dots.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	handle.add_child(dots)
@@ -396,6 +459,37 @@ func _make_move_handle(panel: Control, melds: Array[CardSet]) -> Control:
 				and event.button_index == MOUSE_BUTTON_LEFT:
 			_ui.begin_group_drag(panel, melds))
 	return handle
+
+## Where a lone group came from while it is still exactly as it was dealt: a
+## location's combo ("Extra Draw combo"), or a player's starting combo ("Your
+## start", "Scrap Drone's start"). "" for anything else, or once it changes.
+func group_origin(melds: Array[CardSet]) -> String:
+	if melds.size() != 1:
+		return ""
+	var gm := _ui.gm
+	var cards := melds[0].cards
+	for e in gm.revealed_locations:
+		if _same_cards(cards, e.combo):
+			return "%s combo" % e.title
+	for player_id: int in gm.starting_combos:
+		if _same_cards(cards, gm.starting_combos[player_id]):
+			return "Your start" if player_id == 0 \
+				else "%s's start" % gm.players[player_id].display_name
+	return ""
+
+func _is_location_combo(melds: Array[CardSet]) -> bool:
+	for e in _ui.gm.revealed_locations:
+		if melds.size() == 1 and _same_cards(melds[0].cards, e.combo):
+			return true
+	return false
+
+static func _same_cards(a: Array, b: Array) -> bool:
+	if a.size() != b.size() or a.is_empty():
+		return false
+	for c in a:
+		if not b.has(c):
+			return false
+	return true
 
 func _make_meld_panel(meld: CardSet) -> PanelContainer:
 	var gm := _ui.gm

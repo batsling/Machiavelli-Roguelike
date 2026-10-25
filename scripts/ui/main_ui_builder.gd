@@ -29,13 +29,14 @@ func build(ui: MainUI) -> void:
 	ui.game_root.offset_bottom = -10
 	ui.add_child(ui.game_root)
 
-	# Top row: the first enemy's seat, centered directly opposite you, with your
-	# deck count tucked into the corner.
+	# Top row: the game menu and match status in the top-left corner, then the
+	# first enemy's seat (with their deck beside their cards) centered opposite you.
 	var top_bar := HBoxContainer.new()
 	top_bar.add_theme_constant_override("separation", 8)
 	ui.game_root.add_child(top_bar)
-	# Round counter tucked into the top-left corner: one round is a full lap of
-	# the table (every player takes a turn), ticking up when play returns to you.
+	_build_game_menu(ui, top_bar)
+	# Round counter: one round is a full lap of the table (every player takes a
+	# turn), ticking up when play returns to you.
 	ui.round_label = Label.new()
 	ui.round_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	ui.round_label.add_theme_font_size_override("font_size", 18)
@@ -55,17 +56,6 @@ func build(ui: MainUI) -> void:
 	var top_pad_right := Control.new()
 	top_pad_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(top_pad_right)
-	# Deck corner: how many cards are left in your own deck, plus its top card
-	# when that card's status is public (a glass top shows your next draw).
-	var stock_box := HBoxContainer.new()
-	stock_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	stock_box.add_theme_constant_override("separation", 6)
-	top_bar.add_child(stock_box)
-	ui.stock_label = Label.new()
-	ui.stock_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	stock_box.add_child(ui.stock_label)
-	ui.stock_top_slot = HBoxContainer.new()
-	stock_box.add_child(ui.stock_top_slot)
 
 	# Locations: the match's rule cards, face up once revealed and face down (with
 	# the round they turn up on) until then. TableView fills it; hidden when the
@@ -203,11 +193,25 @@ func build(ui: MainUI) -> void:
 	sort_suit_btn.pressed.connect(ui._on_sort_suit_pressed)
 	sort_row.add_child(sort_suit_btn)
 
+	# Your deck sits at the left end of the hand, and it is the Draw button: if
+	# you won't (or can't) play, click it to draw and end your turn. Its top card
+	# shows beside it when that card's status is public (a glass top shows your
+	# next draw). TableView fills the pile's count each refresh.
+	var hand_row := HBoxContainer.new()
+	hand_row.add_theme_constant_override("separation", 10)
+	hand_col.add_child(hand_row)
+	ui.draw_btn = _make_deck_pile_button()
+	ui.draw_btn.pressed.connect(ui._on_draw_pressed)
+	hand_row.add_child(ui.draw_btn)
+	ui.stock_top_slot = HBoxContainer.new()
+	ui.stock_top_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hand_row.add_child(ui.stock_top_slot)
 	ui.hand_box = HFlowContainer.new()
+	ui.hand_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ui.hand_box.add_theme_constant_override("h_separation", 4)
 	ui.hand_box.add_theme_constant_override("v_separation", 4)
-	hand_col.add_child(ui.hand_box)
-	for zone: Control in [ui.hand_panel, hand_col, hand_top, ui.hand_title, ui.hand_box]:
+	hand_row.add_child(ui.hand_box)
+	for zone: Control in [ui.hand_panel, hand_col, hand_top, hand_row, ui.hand_title, ui.hand_box]:
 		zone.set_drag_forwarding(Callable(), ui._can_drop_on_hand, ui._drop_on_hand)
 		zone.gui_input.connect(ui._on_background_gui_input)
 
@@ -245,32 +249,20 @@ func build(ui: MainUI) -> void:
 	ui.reset_btn.pressed.connect(ui._on_reset_pressed)
 	actions.add_child(ui.reset_btn)
 
+	# Ending the turn needs a card played from your hand; with nothing to play,
+	# draw from your deck (the pile beside your hand) instead.
 	ui.end_turn_btn = Button.new()
 	ui.end_turn_btn.text = "End turn"
 	ui.end_turn_btn.pressed.connect(ui._on_end_turn_pressed)
 	actions.add_child(ui.end_turn_btn)
 
-	ui.draw_btn = Button.new()
-	ui.draw_btn.text = "Draw & end turn"
-	ui.draw_btn.pressed.connect(ui._on_draw_pressed)
-	actions.add_child(ui.draw_btn)
-
-	ui.settings_btn = Button.new()
-	ui.settings_btn.text = "Settings"
-	ui.settings_btn.tooltip_text = "Sandbox and roguelike-run rules"
-	ui.settings_btn.pressed.connect(ui._on_settings_pressed)
-	actions.add_child(ui.settings_btn)
-
+	# Once a match is over: Back to map / New run / New game. Mid-match restarts
+	# live in the game menu instead.
 	ui.new_game_btn = Button.new()
 	ui.new_game_btn.text = "New game"
+	ui.new_game_btn.visible = false
 	ui.new_game_btn.pressed.connect(ui._on_new_game_pressed)
 	actions.add_child(ui.new_game_btn)
-
-	var menu_btn := Button.new()
-	menu_btn.text = "Menu"
-	menu_btn.tooltip_text = "Back to the main menu — the game is kept"
-	menu_btn.pressed.connect(ui._show_menu)
-	actions.add_child(menu_btn)
 
 	ui.status_label = Label.new()
 	ui.status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -299,6 +291,50 @@ func build(ui: MainUI) -> void:
 	_build_menu(ui)
 	_build_settings_dialog(ui)
 	_build_enemy_info_dialog(ui)
+
+## The ☰ Menu button in the top-left corner: Settings, restarting (the run, or
+## a new sandbox game) and the main menu, kept out of the action row.
+func _build_game_menu(ui: MainUI, parent: Control) -> void:
+	ui.game_menu_btn = MenuButton.new()
+	ui.game_menu_btn.text = "☰ Menu"
+	ui.game_menu_btn.flat = false
+	ui.game_menu_btn.focus_mode = Control.FOCUS_NONE
+	ui.game_menu_btn.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	ui.game_menu_btn.tooltip_text = "Settings, restart, and the main menu"
+	var popup := ui.game_menu_btn.get_popup()
+	popup.add_item("Settings", MainUI.GameMenu.SETTINGS)
+	popup.add_item("Restart run", MainUI.GameMenu.RESTART)
+	popup.add_separator()
+	popup.add_item("Main menu", MainUI.GameMenu.MAIN_MENU)
+	popup.id_pressed.connect(ui._on_game_menu_id_pressed)
+	parent.add_child(ui.game_menu_btn)
+
+## Your deck as a face-down pile you click to draw: a card back with the cards
+## left (and the action) written on it.
+func _make_deck_pile_button() -> Button:
+	var pile := Button.new()
+	pile.custom_minimum_size = UITheme.CARD_SIZE
+	pile.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	pile.focus_mode = Control.FOCUS_NONE
+	pile.add_theme_font_size_override("font_size", 15)
+	var states := {
+		"normal": UITheme.COL_CARD_BACK,
+		"hover": UITheme.COL_CARD_BACK.lightened(0.18),
+		"pressed": UITheme.COL_CARD_BACK.darkened(0.2),
+		"disabled": UITheme.COL_CARD_BACK.darkened(0.35),
+	}
+	for state: String in states:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = states[state]
+		sb.border_color = UITheme.COL_CHIP_ACTIVE if state == "hover" \
+			else UITheme.COL_CARD_BACK_EDGE
+		sb.set_border_width_all(2)
+		sb.set_corner_radius_all(6)
+		pile.add_theme_stylebox_override(state, sb)
+	for state in ["font_color", "font_hover_color", "font_pressed_color"]:
+		pile.add_theme_color_override(state, Color.WHITE)
+	pile.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.45))
+	return pile
 
 ## A plain centered seat column (an opponent's name chip + card backs go here).
 func _make_seat() -> VBoxContainer:

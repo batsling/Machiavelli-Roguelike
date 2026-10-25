@@ -92,11 +92,36 @@ func _init() -> void:
 	if not ui.lives_label.visible or ui.lives_label.text.find("Node 1/3") == -1:
 		printerr("the top bar should show lives and 'Node 1/3', got '%s'" % ui.lives_label.text)
 		ok = false
-	if ui.settings_btn.disabled:
-		printerr("settings button should stay enabled during a run (roguelike tab)")
+	var popup: PopupMenu = ui.game_menu_btn.get_popup()
+	if popup.is_item_disabled(popup.get_item_index(MainUI.GameMenu.SETTINGS)):
+		printerr("Settings in the game menu should stay enabled during a run (roguelike tab)")
 		ok = false
-	if ui.new_game_btn.text != "Restart run":
-		printerr("mid-match the button should read Restart run, got '%s'" % ui.new_game_btn.text)
+	if popup.get_item_text(popup.get_item_index(MainUI.GameMenu.RESTART)) != "Restart run":
+		printerr("mid-match the game menu should offer Restart run")
+		ok = false
+	if ui.new_game_btn.visible:
+		printerr("Back to map / New run should only show once the match is over")
+		ok = false
+	# Draw lives on your deck pile; End turn waits for a card played from hand.
+	if ui.draw_btn.text.find("%d left" % gm.players[0].deck.size()) == -1:
+		printerr("the deck pile should show the cards left, reads '%s'" % ui.draw_btn.text)
+		ok = false
+	if not ui.end_turn_btn.disabled and not gm.has_pending_choice():
+		printerr("End turn should be disabled until a card is played from hand")
+		ok = false
+	# The groups dealt at the start say where they came from.
+	var origins := PackedStringArray()
+	for m: CardSet in gm.board.melds:
+		origins.append(ui._table.group_origin([m] as Array[CardSet]))
+	var want_origins := ["%s combo" % gm.revealed_locations[0].title, "Your start",
+		"%s's start" % gm.players[1].display_name]
+	for o in want_origins:
+		if not origins.has(o):
+			printerr("the dealt groups should be labelled %s, got %s" % [want_origins, origins])
+			ok = false
+			break
+	if not ui._table.location_panels.has(gm.revealed_locations[0]):
+		printerr("a revealed location's panel should be registered for its combo's flight")
 		ok = false
 
 	# --- Locations: three per match, one face up at the deal ------------------------
@@ -122,7 +147,7 @@ func _init() -> void:
 		printerr("Confirm should enable at 2/2, reads '%s'" % ui.choice_btn.text)
 		ok = false
 	ui._on_choice_confirm_pressed()
-	if gm.has_pending_choice() or ui.choice_btn.visible or ui.end_turn_btn.disabled \
+	if gm.has_pending_choice() or ui.choice_btn.visible or ui.draw_btn.disabled \
 			or gm.players[0].hand.size() != hand_before:
 		printerr("Confirm should discard 2, draw 2 and hand the turn back")
 		ok = false

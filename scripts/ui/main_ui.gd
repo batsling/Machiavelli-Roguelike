@@ -45,9 +45,15 @@ extends Control
 ## (table cards are greyed out — except cards you played this turn, which stay
 ## movable so you can always take them back). The same rule binds the AI.
 ##
-## The table only has to be valid when you press "End turn". "Undo action"
-## takes back the last staged move; "Undo turn" puts the whole turn back. If
-## you can't (or won't) play, "Draw & end turn".
+## The table only has to be valid when you press "End turn", which needs at
+## least one card played from your hand. "Undo action" takes back the last
+## staged move; "Undo turn" puts the whole turn back. If you can't (or won't)
+## play, click your deck (the pile at the left of your hand) to draw, which ends
+## your turn. Each opponent's deck sits beside their cards the same way.
+##
+## The ☰ Menu button in the top-left corner holds Settings, Restart run (or New
+## game in the sandbox) and Main menu. Once a match is over the action row offers
+## Back to map / New run / New game.
 ##
 ## Enemy turns play out visibly: each move the AI makes is applied one at a
 ## time, its cards fly from where they were (the enemy's hidden hand or their
@@ -94,6 +100,8 @@ extends Control
 ## once the turn ends the choice is final.
 
 enum Mode { SANDBOX, ROGUE }
+## The items of the ☰ Menu in the top-left corner.
+enum GameMenu { SETTINGS, RESTART, MAIN_MENU }
 
 const AI_THINK_DELAY := 0.6
 const AI_MOVE_DELAY := 0.5
@@ -153,7 +161,7 @@ var seat_right: VBoxContainer
 var round_label: Label
 ## Lives and map progress in the top bar during a run (hidden in sandbox).
 var lives_label: Label
-var stock_label: Label
+## The public top card of your deck (glass, slimed, Open Decks), beside the pile.
 var stock_top_slot: HBoxContainer
 ## The match's locations (see MatchLocation), between the top bar and the felt.
 var locations_row: HBoxContainer
@@ -177,9 +185,12 @@ var return_btn: Button
 var undo_action_btn: Button
 var reset_btn: Button
 var end_turn_btn: Button
+## Your deck pile beside the hand: click it to draw and end your turn.
 var draw_btn: Button
-var settings_btn: Button
+## Shown once a match is over: Back to map / New run / New game.
 var new_game_btn: Button
+## The ☰ Menu in the top-left corner (GameMenu items).
+var game_menu_btn: MenuButton
 var sort_board_btn: Button
 var randomize_board_btn: Button
 var settings_dialog: SettingsDialog
@@ -202,6 +213,9 @@ var _advisor: PlayAdvisor
 ## The in-progress freeform group drag, or {} when nothing is being dragged. Set
 ## by a panel's move handle (TableView), followed and finished in _input.
 var _group_drag := {}
+## Locations revealed since the last refresh whose combos have yet to fly onto
+## the felt from their location panel.
+var _location_flights: Array[MatchLocation] = []
 
 func _ready() -> void:
 	gm = GameManager.new()
@@ -226,6 +240,7 @@ func _ready() -> void:
 
 func _new_game() -> void:
 	game_generation += 1
+	_location_flights.clear()
 	selected.clear()
 	highlighted.clear()
 	ai_running = false
@@ -454,6 +469,8 @@ func _refresh() -> void:
 	_table.refresh_board()
 	_table.refresh_hand()
 	_refresh_buttons()
+	if not _location_flights.is_empty():
+		_fly_location_combos()
 
 func _refresh_buttons() -> void:
 	var human_turn := _is_human_turn()
@@ -468,26 +485,33 @@ func _refresh_buttons() -> void:
 	return_btn.disabled = not human_turn or not gm.can_return_to_hand(selected)
 	undo_action_btn.disabled = not human_turn or not gm.can_undo_action()
 	reset_btn.disabled = not human_turn or not gm.can_undo_action()
-	end_turn_btn.disabled = not human_turn or choosing
+	end_turn_btn.disabled = not human_turn or choosing or gm.cards_played_this_turn() == 0
+	end_turn_btn.tooltip_text = "Commit your turn" if not end_turn_btn.disabled \
+		else "Play at least one card from your hand to end your turn — " \
+		+ "or click your deck to draw instead"
 	draw_btn.disabled = not human_turn or choosing
 	# Table tidy-ups need at least two groups to do anything, and never while the
 	# enemies' cards are still flying around.
 	var can_tidy := not ai_running and gm.board.melds.size() > 1
 	sort_board_btn.disabled = not can_tidy
 	randomize_board_btn.disabled = not can_tidy
+	var popup := game_menu_btn.get_popup()
+	var restart := popup.get_item_index(GameMenu.RESTART)
+	var settings_item := popup.get_item_index(GameMenu.SETTINGS)
 	if game_mode == Mode.ROGUE:
-		if _rogue_match_live() or run == null:
-			new_game_btn.text = "Restart run"
-		elif run.is_over():
+		popup.set_item_text(restart, "Restart run")
+		popup.set_item_tooltip(settings_item, "Roguelike run rules (apply from the next "
+			+ "match) — the vanilla tab never touches a run")
+		if run == null or run.is_over():
 			new_game_btn.text = "New run"
 		else:
 			new_game_btn.text = "Back to map"
-		settings_btn.tooltip_text = "Roguelike run rules (apply from the next " \
-			+ "match) — the vanilla tab never touches a run"
 	else:
+		popup.set_item_text(restart, "New game")
+		popup.set_item_tooltip(settings_item,
+			"Enemy AI, enemy count, draw count, hand size, caps, jokers and starting combos")
 		new_game_btn.text = "New game"
-		settings_btn.tooltip_text = \
-			"Enemy AI, enemy count, draw count, hand size, caps, jokers and starting combos"
+	new_game_btn.visible = gm.is_game_over
 	if selected.is_empty():
 		selection_label.text = ""
 	else:
@@ -970,6 +994,20 @@ func _on_new_game_pressed() -> void:
 	else:
 		_show_map()
 
+## The ☰ Menu: Settings, restart (the whole run, or a fresh sandbox game) and
+## back to the main menu (the game is kept).
+func _on_game_menu_id_pressed(id: int) -> void:
+	match id:
+		GameMenu.SETTINGS:
+			_on_settings_pressed()
+		GameMenu.RESTART:
+			if game_mode == Mode.ROGUE:
+				_on_play_rogue_pressed()
+			else:
+				_new_game()
+		GameMenu.MAIN_MENU:
+			_show_menu()
+
 ## "Sort": tidy the freeform felt back into a readable arrangement. Straights
 ## come first — by colour, then by their starting rank — and sets after, by
 ## rank; any group that is momentarily invalid (mid-rearrange) keeps its place
@@ -1272,13 +1310,38 @@ func _on_choice_confirm_pressed() -> void:
 		+ "or click to select, then use \"+ New group\".")
 	_refresh()
 
-## Log the location and its combo, and light the combo up in gold like an enemy
-## move, so the new group on the felt is easy to spot.
+## Log the location and its combo, light the combo up in gold like an enemy
+## move, and queue it to fly onto the felt from its location panel on the next
+## refresh, so the new group visibly arrives on the turn it is revealed.
 func _on_location_revealed(location: MatchLocation) -> void:
 	_log("[b]Location revealed — %s[/b] (%s): %s Its combo joins the table: %s."
 		% [location.title, location.kind_label(), location.text, location.combo_label()])
 	for c in location.combo:
 		highlighted[c] = true
+	_location_flights.append(location)
+
+## Fly each newly revealed location's combo from its panel in the locations row
+## to its group on the felt. Waits for the table to lay out first; a reveal
+## that happens while the table isn't on screen (dealt behind the map) still
+## flies once it is, and is dropped if a new game starts meanwhile.
+func _fly_location_combos() -> void:
+	var gen := game_generation
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if gen != game_generation or not game_root.visible or _location_flights.is_empty():
+		return
+	var cards: Array[Card] = []
+	var sources := {}
+	for location in _location_flights:
+		var panel: Control = _table.location_panels.get(location)
+		if panel == null or not is_instance_valid(panel):
+			continue
+		var from := panel.get_global_rect().get_center() - UITheme.BOARD_CARD_SIZE / 2.0
+		for c in location.combo:
+			cards.append(c)
+			sources[c] = from
+	_location_flights.clear()
+	await animator.animate(cards, sources, card_nodes)
 
 ## Location discards are public (they go face up to the deck's discard pile).
 func _on_cards_discarded(p: PlayerState, cards: Array[Card]) -> void:

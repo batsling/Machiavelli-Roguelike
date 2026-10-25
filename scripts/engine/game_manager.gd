@@ -112,6 +112,9 @@ var location_deck: Array[MatchLocation] = []
 var location_rounds: Array[int] = [1, 3, 5]
 ## Locations turned face up this match, in reveal order.
 var revealed_locations: Array[MatchLocation] = []
+## Each player's starting combo (deal_starting_melds): player_id -> the cards it
+## laid, so the table can name where a group came from. Empty without them.
+var starting_combos := {}
 # The choice the current player owes an on-reveal location this turn, or {} for
 # none: {"location": MatchLocation, "count": int}. Staging, committing and drawing
 # wait until resolve_choice settles it.
@@ -154,6 +157,7 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 	_consecutive_passes = 0
 	_pending_choice = {}
 	revealed_locations.clear()
+	starting_combos.clear()
 	for e in location_deck:
 		e.revealed_round = 0
 		e.combo.clear()
@@ -219,6 +223,7 @@ func deal_starting_melds() -> void:
 		for c in pulled:
 			meld.add_card(c)
 		board.melds.append(meld)
+		starting_combos[p.player_id] = pulled
 		p.has_opened = true
 	board_changed.emit()
 
