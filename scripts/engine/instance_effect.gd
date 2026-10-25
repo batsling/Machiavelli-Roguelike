@@ -30,7 +30,8 @@ extends RefCounted
 ##   draw_bonus N                rule: draw N more cards whenever you draw
 ##   coins_per_card N            rule: +N coins per card played from hand
 ##   open_decks                  rule: the top card of every deck is face up
-##   destroy combo random        a random group on the table goes to the discard pile
+##   destroy combo random        a random group on the table (never the instance's own
+##                               combo) goes to the discard pile
 ## PICK is `random` or `choose` followed by a count, or `all`. FILTER narrows the
 ## cards: rank=7 (or A, J, Q, K), suit=hearts, joker, natural. `random` picks
 ## within one instance never pick the same card twice ("2 other random cards").

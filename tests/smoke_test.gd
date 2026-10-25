@@ -1660,16 +1660,23 @@ func _test_instances() -> bool:
 		ok = false
 	gm.free()
 
-	# Black Hole: a random group (its own combo included) goes to the discard piles.
+	# Black Hole: a random group — never its own combo — goes to the discard piles.
 	gm = _held_instance_gm(&"black_hole")
 	gm.deal_starting_melds()
 	var before_cards := _cards_in_game(gm) + 3
 	var discards_before := gm.players[0].deck.discards.size() + gm.players[1].deck.discards.size()
 	gm.reveal_next_instance()
 	var discards_after := gm.players[0].deck.discards.size() + gm.players[1].deck.discards.size()
+	var own := gm.revealed_instances[0].combo
 	if gm.board.melds.size() != 2 or discards_after != discards_before + 3 \
-			or _cards_in_game(gm) != before_cards:
-		printerr("instances: Black Hole should send one whole group to the discard piles")
+			or _cards_in_game(gm) != before_cards or gm.board.meld_of(own[0]) == null:
+		printerr("instances: Black Hole should send one other whole group to the discard piles")
+		ok = false
+	gm.free()
+	# Alone on the table (round 1 of a run), its own combo survives.
+	gm = _instance_gm([&"black_hole"])
+	if gm.board.melds.size() != 1 or gm.players[0].deck.discards.size() != 0:
+		printerr("instances: Black Hole with no other group should destroy nothing")
 		ok = false
 	for c in gm.players[0].deck.discards + gm.players[1].deck.discards:
 		if c.deck_owner == MatchInstance.NO_OWNER:

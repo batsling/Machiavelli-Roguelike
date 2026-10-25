@@ -38,7 +38,7 @@ Every instance affects **every player**, the same way, on their own turn.
 | `draw_bonus N` | Rule: draw N more cards whenever you draw. | `draw_bonus 1` |
 | `coins_per_card N` | Rule: +N coins for each card you play from hand. | `coins_per_card 1` |
 | `open_decks` | Rule: the top card of every deck is face up. | `open_decks` |
-| `destroy combo random` | A random group on the table goes to the discard pile(s). | `destroy combo random` |
+| `destroy combo random` | A random group on the table — never the instance's own combo — goes to the discard pile(s). Nothing happens when no other group is on the table. | `destroy combo random` |
 
 **PICK** says which hand cards:
 

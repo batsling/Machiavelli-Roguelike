@@ -1366,10 +1366,19 @@ func _draw_jokers(p: PlayerState, n: int) -> void:
 ## and is theirs from then on.
 func _run_table_commands(e: MatchInstance) -> void:
 	for eff in e.effects:
-		if eff.verb != InstanceEffect.Verb.DESTROY_COMBO or board.melds.is_empty():
+		if eff.verb != InstanceEffect.Verb.DESTROY_COMBO:
+			continue
+		# Any group on the table but the one holding this instance's own combo —
+		# it lands just before the destroy, and taking it would do nothing. With
+		# no other group on the table, nothing is destroyed.
+		var targets: Array[CardSet] = []
+		for m in board.melds:
+			if not e.combo.any(func(c: Card) -> bool: return m.cards.has(c)):
+				targets.append(m)
+		if targets.is_empty():
 			continue
 		var rng := players[0].deck.rng
-		var meld: CardSet = board.melds[rng.randi_range(0, board.melds.size() - 1)]
+		var meld: CardSet = targets[rng.randi_range(0, targets.size() - 1)]
 		var gone: Array[Card] = meld.cards.duplicate()
 		board.melds.erase(meld)
 		for c in gone:
