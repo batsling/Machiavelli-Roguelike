@@ -13,6 +13,9 @@ extends Resource
 @export var max_energy: int = 0
 # How many turns this player has started this game; drives max_energy.
 @export var turns_taken: int = 0
+# Coins earned this match (the Coin Rush event, for now). A run banks the
+# player's coins when the match ends (RunState.coins).
+@export var coins: int = 0
 # Ultimate-meter charge: rises each time this player commits a hand (see
 # GameManager._charge_meter) toward the game's meter_max, and holds there once
 # full. Zero at the start of every game. Off (meter_max 0) in a roguelike run.

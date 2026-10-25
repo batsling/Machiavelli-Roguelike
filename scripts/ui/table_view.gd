@@ -45,6 +45,50 @@ func refresh_seats() -> void:
 	_ui.round_label.text = "Round %d" % gm.round_number
 	_refresh_lives()
 	_refresh_stock_top()
+	_refresh_events()
+
+## The match's events: a face-up panel per revealed event (an on-reveal event
+## dims once its round is over) and a face-down panel per event still to come,
+## naming the round it turns up on. Hidden when the match has no events.
+func _refresh_events() -> void:
+	var gm := _ui.gm
+	_ui._clear_children(_ui.events_row)
+	var upcoming := gm.upcoming_events()
+	_ui.events_row.visible = not gm.revealed_events.is_empty() or not upcoming.is_empty()
+	for e in gm.revealed_events:
+		var live := e.is_ongoing() or e.revealed_round == gm.round_number
+		_ui.events_row.add_child(_make_event_panel(e.title, e.kind_label(), e.text,
+			UITheme.COL_CHIP_ACTIVE if live else Color(1, 1, 1, 0.15), live))
+	for slot: Dictionary in upcoming:
+		_ui.events_row.add_child(_make_event_panel("?", "Face down",
+			"Revealed at the start of round %d." % slot["round"], Color(1, 1, 1, 0.15), false))
+
+func _make_event_panel(title: String, kind: String, body: String, edge: Color,
+		live: bool) -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = UITheme.EVENT_PANEL_SIZE
+	var sb := CardRenderer.panel_style(UITheme.COL_CHIP_BG, 8)
+	sb.border_color = edge
+	sb.set_border_width_all(2)
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.tooltip_text = "%s (%s): %s" % [title, kind, body]
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 0)
+	panel.add_child(col)
+	var head := Label.new()
+	head.text = "%s · %s" % [title, kind]
+	head.add_theme_font_size_override("font_size", 14)
+	head.add_theme_color_override("font_color",
+		UITheme.COL_CHIP_ACTIVE if live else Color(1, 1, 1, 0.5))
+	col.add_child(head)
+	var text := Label.new()
+	text.text = body
+	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	text.custom_minimum_size = Vector2(UITheme.EVENT_PANEL_SIZE.x - 16, 0)
+	text.add_theme_font_size_override("font_size", 12)
+	text.add_theme_color_override("font_color", Color(1, 1, 1, 0.85 if live else 0.45))
+	col.add_child(text)
+	return panel
 
 ## Lives and map progress in the top bar during a run; hidden in sandbox.
 func _refresh_lives() -> void:
@@ -57,18 +101,31 @@ func _refresh_lives() -> void:
 	for i in maxi(run.start_lives, run.lives):
 		hearts += "♥" if i < run.lives else "♡"
 	var node_no := run.active_node.row + 1 if run.active_node != null else run.cleared_count()
-	_ui.lives_label.text = "%s   Node %d/%d" % [hearts, node_no, run.rows.size()]
-	_ui.lives_label.tooltip_text = "Lives left — losing a match costs one."
+	# Coins banked this run, plus whatever this match has earned so far (it is
+	# banked when the match ends).
+	var coins := run.coins
+	if run.active_node != null and not _ui.gm.players.is_empty():
+		coins += _ui.gm.players[0].coins
+	_ui.lives_label.text = "%s   Node %d/%d   %d coin%s" % [hearts, node_no,
+		run.rows.size(), coins, "" if coins == 1 else "s"]
+	_ui.lives_label.tooltip_text = "Lives left — losing a match costs one. Coins " \
+		+ "carry over the run."
 
 ## Show the top card of your own deck beside the count when its status is
-## public: a glass top shows its face (everyone sees your next draw), and a
-## slimed top shows a back with the splotch. A plain top stays hidden.
+## public: a glass top (or any top while Open Decks is in force) shows its face
+## (everyone sees your next draw), and a slimed top shows a back with the
+## splotch. A plain top stays hidden.
 func _refresh_stock_top() -> void:
 	_ui._clear_children(_ui.stock_top_slot)
 	var top := _ui.gm.players[0].deck.peek()
 	if top == null:
 		return
-	if top.is_glass():
+	if _ui.gm.top_is_public(top) and not top.is_glass():
+		var open := CardRenderer.make_card_face(top)
+		open.mouse_filter = Control.MOUSE_FILTER_STOP
+		open.tooltip_text = "Open Decks — the top of your deck is face up: your next draw."
+		_ui.stock_top_slot.add_child(open)
+	elif top.is_glass():
 		var face := CardRenderer.make_glass_face(top, UITheme.BACK_SIZE_TOP)
 		face.tooltip_text = "The top of your deck is glass — everyone can see " \
 			+ "your next draw."
@@ -109,6 +166,9 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	extra.add_theme_font_size_override("font_size", 13)
 	extra.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 	extra.text = "deck %d" % p.deck.size()
+	var top := p.deck.peek()
+	if gm.top_is_public(top):
+		extra.text += " (top %s)" % top.label()
 	if gm.energy_on():
 		if is_current:
 			extra.text += " · ⚡%d/%d" % [gm.energy_left(), p.max_energy]
@@ -215,7 +275,8 @@ func refresh_board() -> void:
 	# The "+ New group" click target only appears while cards are selected;
 	# drags can always land on empty felt instead. It (and the hover hint) tuck
 	# into a free patch of felt like any group, but keep no lasting spot.
-	if not _ui.selected.is_empty() and _ui._is_human_turn():
+	# While you owe an event a choice, selecting picks cards for it — no zone.
+	if not _ui.selected.is_empty() and _ui._is_human_turn() and not _ui.gm.has_pending_choice():
 		var zone := _make_new_group_zone()
 		_ui.board_flow.add_child(zone)
 		_place_panel(zone, [], placed, width)

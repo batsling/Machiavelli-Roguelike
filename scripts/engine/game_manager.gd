@@ -22,6 +22,11 @@ extends Node
 ##    own meld unlocks table play immediately (even mid-turn), and once a
 ##    turn containing such a meld is committed the player stays open for the
 ##    rest of the game. This applies to every player, human and AI.
+##  - Events (optional, see MatchEvent): rule cards in event_deck are revealed
+##    one at the start of each round listed in event_rounds and affect every
+##    player — once on each player's turn of the reveal round (on reveal) or for
+##    the rest of the match (ongoing). A choice an event asks for is a pending
+##    choice the current player resolves (resolve_choice) before playing.
 ##  - First player to empty their hand wins. A player who cannot draw (their
 ##    deck is empty or their hand is at the cap) passes; if every player passes
 ##    in a full round, the game ends and whoever holds the fewest cards wins
@@ -45,6 +50,14 @@ signal cards_drawn(player: PlayerState, cards: Array[Card])
 signal turn_committed(player: PlayerState, cards_played: int)
 signal player_passed(player: PlayerState)
 signal game_over(winners: Array)
+## An event was turned face up (see MatchEvent).
+signal event_revealed(event: MatchEvent)
+## Cards left a player's hand for their deck's discard pile because of an event.
+signal cards_discarded(player: PlayerState, cards: Array[Card])
+## A player handed cards from their hand to another player's hand (the Gift event).
+signal cards_given(giver: PlayerState, receiver: PlayerState, cards: Array[Card])
+## A player earned coins (the Coin Rush event).
+signal coins_gained(player: PlayerState, amount: int)
 ## Fired when a committed hand charges a player's ultimate meter. `amount` is
 ## how much the meter actually rose (0 is never emitted), and `now_full` is
 ## true on the charge that first fills it, so the UI can announce it.
@@ -89,6 +102,18 @@ var meter_per_card := false
 var start_energy := 0
 var energy_per_turn := 1
 var energy_cap := 10
+## Events still face down, in reveal order. Set before setup (like the energy
+## rules); setup resets every event to face down. Empty = no events (sandbox).
+var event_deck: Array[MatchEvent] = []
+## The rounds an event is revealed on, one per round in order; the next face-down
+## event turns up at the start of each listed round.
+var event_rounds: Array[int] = [1, 3, 5]
+## Events turned face up this match, in reveal order.
+var revealed_events: Array[MatchEvent] = []
+# The choice the current player owes an on-reveal event this turn, or {} for
+# none: {"event": MatchEvent, "count": int}. Staging, committing and drawing
+# wait until resolve_choice settles it.
+var _pending_choice := {}
 
 # How many copies of each natural card ("rank,suit") exist across every deck
 # and hand at the deal. With per-player decks this depends on what each player
@@ -125,6 +150,10 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 	round_number = 1
 	is_game_over = false
 	_consecutive_passes = 0
+	_pending_choice = {}
+	revealed_events.clear()
+	for e in event_deck:
+		e.revealed_round = 0
 	for i in player_names.size():
 		var p := PlayerState.new()
 		p.player_id = i
@@ -574,7 +603,9 @@ func swap_joker(hand_card: Card, joker: Card, meld: CardSet) -> String:
 	var p := current_player()
 	# Collect the first reason (if any) the swap is illegal, then bail once.
 	var err := ""
-	if not joker.is_joker or joker.joker_rank == 0:
+	if has_pending_choice():
+		err = _pending_choice_error()
+	elif not joker.is_joker or joker.joker_rank == 0:
 		err = "That card is not a joker with a known value."
 	elif not meld.cards.has(joker):
 		err = "That joker is not in that group."
@@ -677,9 +708,12 @@ func _staged_open_meld_exists() -> bool:
 			return true
 	return false
 
-## Why moving these cards would overrun the turn's play cap or energy (only the
-## cards leaving the hand count), or "" when the turn can afford them.
-func _budget_error(cards_to_move: Array[Card]) -> String:
+## Why moving these cards is blocked right now — an event choice is still owed,
+## or they would overrun the turn's play cap or energy (only the cards leaving
+## the hand count) — or "" when the move may go ahead.
+func _stage_block_error(cards_to_move: Array[Card]) -> String:
+	if has_pending_choice():
+		return _pending_choice_error()
 	var p := current_player()
 	var from_hand := 0
 	var cost := 0
@@ -712,7 +746,7 @@ func _stage_error(cards_to_move: Array[Card], dest: CardSet) -> String:
 			for c in m.cards:
 				if batch.has(c) and not _shaped_this_turn.has(c):
 					return "That card is sealed inside a picture."
-	var budget_err := _budget_error(cards_to_move)
+	var budget_err := _stage_block_error(cards_to_move)
 	if budget_err != "":
 		return budget_err
 	if current_player_is_open():
@@ -767,24 +801,32 @@ func upcoming_energy(p: PlayerState) -> int:
 		return 0
 	if p == current_player() and not is_game_over:
 		return p.max_energy
-	var ceiling := start_energy + p.turns_taken * energy_per_turn
-	return mini(ceiling, energy_cap) if energy_cap > 0 else ceiling
+	return _energy_ceiling(p.turns_taken + 1) + _ongoing_energy_bonus()
 
 func _energy_error(cost: int) -> String:
 	return "Not enough energy — that costs %d and you have %d left this turn." \
 		% [cost, energy_left()]
 
 ## Set the current player's energy ceiling as their turn begins: start_energy on
-## their first turn, energy_per_turn more each turn after, capped at energy_cap.
+## their first turn, energy_per_turn more each turn after, capped at energy_cap,
+## plus any event bonus (Overcharge's +1 while it is in force, Surge's +3 on its
+## reveal turn — bonuses may go past the cap).
 func _refill_energy(p: PlayerState) -> void:
 	p.turns_taken += 1
 	if not energy_on():
 		p.max_energy = 0
 		return
-	var ceiling := start_energy + (p.turns_taken - 1) * energy_per_turn
-	if energy_cap > 0:
-		ceiling = mini(ceiling, energy_cap)
-	p.max_energy = ceiling
+	p.max_energy = _energy_ceiling(p.turns_taken) + _ongoing_energy_bonus()
+	if _revealed_this_round(MatchEvent.Id.SURGE):
+		p.max_energy += MatchEvent.SURGE_ENERGY
+
+## The base energy ceiling on a player's `turn`-th turn (1 = their first).
+func _energy_ceiling(turn: int) -> int:
+	var ceiling := start_energy + (turn - 1) * energy_per_turn
+	return mini(ceiling, energy_cap) if energy_cap > 0 else ceiling
+
+func _ongoing_energy_bonus() -> int:
+	return 1 if is_event_active(MatchEvent.Id.OVERCHARGE) else 0
 
 # --- Ending the turn --------------------------------------------------------
 
@@ -804,6 +846,9 @@ func commit_turn() -> String:
 	var played := cards_played_this_turn()
 	turn_committed.emit(p, played)
 	_charge_meter(p, played)
+	if played > 0 and _revealed_this_round(MatchEvent.Id.COIN_RUSH):
+		p.coins += played
+		coins_gained.emit(p, played)
 	if p.hand.is_empty():
 		_end_game([p])
 		return ""
@@ -856,13 +901,14 @@ func spend_meter() -> void:
 ## Why the current turn can't be committed, or "" if it is legal. Split out so
 ## commit_turn keeps a single success path (the guard clauses live here).
 func _commit_error(p: PlayerState) -> String:
+	# An owed event choice comes first. Overrunning the cap or energy is normally
+	# unreachable (staging enforces both), but the cap can be lowered mid-turn
+	# from the settings dialog.
+	var blocked := _commit_block_error(p)
+	if blocked != "":
+		return blocked
 	if cards_played_this_turn() <= 0:
 		return "You must play at least one card from your hand (or draw instead)."
-	# Normally unreachable (staging enforces the cap and energy), but the cap
-	# can be lowered mid-turn from the settings dialog.
-	var over := _over_budget_error(p)
-	if over != "":
-		return over
 	for c in p.hand:
 		if not _hand_snapshot.has(c):
 			return "Cards from the table cannot be taken into your hand."
@@ -874,8 +920,11 @@ func _commit_error(p: PlayerState) -> String:
 			+ "built only from your own hand."
 	return ""
 
-## Why the staged turn has played more than the play cap or energy allows, or "".
-func _over_budget_error(p: PlayerState) -> String:
+## Why the staged turn can't commit yet — an event choice is still owed, or it
+## has played more than the play cap or energy allows — or "".
+func _commit_block_error(p: PlayerState) -> String:
+	if has_pending_choice():
+		return _pending_choice_error()
 	if max_plays_per_turn > 0 and cards_played_this_turn() > max_plays_per_turn:
 		return "You can only play %d cards in a turn — return some to your hand." \
 			% max_plays_per_turn
@@ -892,6 +941,9 @@ func _over_budget_error(p: PlayerState) -> String:
 ## player can rework the board and still draw. Any other staging (a partial
 ## play, or a table left invalid mid-edit) is abandoned first, as before.
 func draw_and_end_turn() -> void:
+	# An event's choice comes first; the driver resolves it (resolve_choice).
+	if has_pending_choice():
+		return
 	if cards_played_this_turn() != 0 or not _kept_rearrangement():
 		reset_turn()
 	else:
@@ -901,7 +953,7 @@ func draw_and_end_turn() -> void:
 		_undo_stack.clear()
 	var p := current_player()
 	var drawn: Array[Card] = []
-	for _i in draw_per_turn:
+	for _i in draw_count():
 		if max_hand_size > 0 and p.hand.size() >= max_hand_size:
 			break
 		var card := p.deck.draw()
@@ -919,6 +971,154 @@ func draw_and_end_turn() -> void:
 			_end_game(_fewest_cards_winners())
 			return
 	_advance()
+
+# --- Events -------------------------------------------------------------------
+# See MatchEvent. Rule changes are read where they apply (energy refill, draw
+# count, commit, the AI's view of deck tops); the turn-start effects and the
+# pending choices live here.
+
+## True while an ongoing event of this id is face up.
+func is_event_active(id: MatchEvent.Id) -> bool:
+	for e in revealed_events:
+		if e.id == id and e.is_ongoing():
+			return true
+	return false
+
+## Events still face down, each paired with the round it turns up on:
+## [{"event": MatchEvent, "round": int}], in order. Rounds past the end of
+## event_rounds never come, so those events are left out.
+func upcoming_events() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for i in event_deck.size():
+		var slot := revealed_events.size() + i
+		if slot < event_rounds.size():
+			out.append({"event": event_deck[i], "round": event_rounds[slot]})
+	return out
+
+## Cards a player draws when they draw: draw_per_turn, +1 while Extra Draw is in
+## force.
+func draw_count() -> int:
+	return draw_per_turn + (1 if is_event_active(MatchEvent.Id.EXTRA_DRAW) else 0)
+
+## True when `card` — the top of some player's deck — can be seen by everyone:
+## a glass card always, any card while Open Decks is in force.
+func top_is_public(card: Card) -> bool:
+	return card != null and (card.is_glass() or is_event_active(MatchEvent.Id.OPEN_DECKS))
+
+## Turn the next face-down event up right now and apply it to the current player
+## as if it had been revealed at the start of their turn (other players get it on
+## their turn this round). Returns false when there is nothing left to reveal or
+## the current player has already staged moves. Rounds in event_rounds reveal on
+## their own; this is for effects (and tests) that reveal one early.
+func reveal_next_event() -> bool:
+	if event_deck.is_empty() or not _undo_stack.is_empty():
+		return false
+	var e := _reveal(event_deck.pop_front())
+	var p := current_player()
+	_apply_reveal(p, e)
+	if e.id == MatchEvent.Id.SURGE and energy_on():
+		p.max_energy += MatchEvent.SURGE_ENERGY
+	elif e.id == MatchEvent.Id.OVERCHARGE and energy_on():
+		p.max_energy += 1
+	_hand_snapshot = p.hand.duplicate()
+	board_changed.emit()
+	return true
+
+func has_pending_choice() -> bool:
+	return not _pending_choice.is_empty()
+
+## The choice the current player owes an event before playing, or {} for none:
+## {"event": MatchEvent, "count": int} — pick `count` cards from hand.
+func pending_choice() -> Dictionary:
+	return _pending_choice
+
+## Settle the current player's pending choice with these hand cards (exactly
+## the count it asks for). Cycle discards them and draws as many; Gift hands
+## them to the next player. Returns "" on success or the reason it is refused.
+func resolve_choice(cards: Array[Card]) -> String:
+	if not has_pending_choice():
+		return "There is no event choice to make."
+	var p := current_player()
+	var e: MatchEvent = _pending_choice["event"]
+	var count: int = _pending_choice["count"]
+	var unique := {}
+	for c in cards:
+		if not p.hand.has(c):
+			return "Choose cards from your hand."
+		unique[c] = true
+	if unique.size() != count:
+		return "Choose exactly %d card%s." % [count, "" if count == 1 else "s"]
+	_pending_choice = {}
+	for c in cards:
+		p.hand.erase(c)
+	if e.id == MatchEvent.Id.GIFT:
+		var receiver := players[(turn_index + 1) % players.size()]
+		receiver.hand.append_array(cards)
+		cards_given.emit(p, receiver, cards)
+	else:
+		for c in cards:
+			p.deck.discard(c)
+		cards_discarded.emit(p, cards)
+		var drawn: Array[Card] = []
+		for _i in cards.size():
+			var c := p.deck.draw()
+			if c == null:
+				break
+			p.hand.append(c)
+			drawn.append(c)
+		if not drawn.is_empty():
+			cards_drawn.emit(p, drawn)
+	_hand_snapshot = p.hand.duplicate()
+	board_changed.emit()
+	return ""
+
+func _pending_choice_error() -> String:
+	var e: MatchEvent = _pending_choice["event"]
+	return "Resolve the %s event first: %s" % [e.title, e.text]
+
+func _reveal(e: MatchEvent) -> MatchEvent:
+	e.revealed_round = round_number
+	revealed_events.append(e)
+	event_revealed.emit(e)
+	return e
+
+## True when an on-reveal event of this id was revealed this round — its "this
+## turn" covers every player's turn in the round.
+func _revealed_this_round(id: MatchEvent.Id) -> bool:
+	for e in revealed_events:
+		if e.id == id and not e.is_ongoing() and e.revealed_round == round_number:
+			return true
+	return false
+
+## Event effects at the start of `p`'s turn: a new round may turn the next event
+## up, Attrition discards a random card, and an event revealed this round asks
+## for its choice. A choice never takes a player's last card, so no event can end
+## a match on its own (and Attrition leaves a one-card hand alone).
+func _start_of_turn_events(p: PlayerState) -> void:
+	if turn_index == 0 and not event_deck.is_empty() \
+			and revealed_events.size() < event_rounds.size() \
+			and event_rounds[revealed_events.size()] <= round_number:
+		_reveal(event_deck.pop_front())
+	if is_event_active(MatchEvent.Id.ATTRITION) and p.hand.size() > 1:
+		var lost := p.hand[p.deck.rng.randi_range(0, p.hand.size() - 1)]
+		p.hand.erase(lost)
+		p.deck.discard(lost)
+		var discarded: Array[Card] = [lost]
+		cards_discarded.emit(p, discarded)
+	for e in revealed_events:
+		if not e.is_ongoing() and e.revealed_round == round_number:
+			_apply_reveal(p, e)
+
+## The once-per-player part of an on-reveal event that needs the player: Cycle
+## and Gift queue a choice (Surge and Coin Rush are read where they apply).
+func _apply_reveal(p: PlayerState, e: MatchEvent) -> void:
+	var count := 0
+	if e.id == MatchEvent.Id.CYCLE:
+		count = mini(MatchEvent.CHOICE_COUNT, p.hand.size())
+	elif e.id == MatchEvent.Id.GIFT:
+		count = mini(MatchEvent.CHOICE_COUNT, p.hand.size() - 1)
+	if count > 0:
+		_pending_choice = {"event": e, "count": count}
 
 # --- Mechanic-driven turns ---------------------------------------------------
 # Primitives a designed enemy uses to drive a turn that isn't an ordinary
@@ -1041,6 +1241,8 @@ func _restore_locks(locks: Dictionary) -> void:
 
 func _begin_turn() -> void:
 	var p := current_player()
+	_pending_choice = {}
+	_start_of_turn_events(p)
 	_refill_energy(p)
 	_hand_snapshot = p.hand.duplicate()
 	_undo_stack.clear()

@@ -75,6 +75,7 @@ static func take_turn(gm: GameManager, profile: AIProfile = null,
 	if enemy != null and enemy.wants_control(gm):
 		enemy.run_controlled_turn(gm)
 		return
+	resolve_event_choice(gm)
 	while true:
 		var move := plan_move(gm, profile, enemy)
 		if move.is_empty():
@@ -790,7 +791,7 @@ static func _worth_holding(gm: GameManager, c: Card, rest: Array[Card]) -> bool:
 		return true
 	var partners: Array[Card] = rest.duplicate()
 	var top := gm.current_player().deck.peek()
-	if top != null and top.is_glass() and not top.is_joker:
+	if gm.top_is_public(top) and not top.is_joker:
 		partners.append(top)
 	for o in partners:
 		if o == c or o.is_joker:
@@ -983,7 +984,7 @@ static func _glass_copies_in_other_hands(gm: GameManager, rank: int, suit: Strin
 ## public knowledge of the next card anyone draws.
 static func _glass_top_matches(gm: GameManager, rank: int, suit: String) -> bool:
 	var top := gm.current_player().deck.peek()
-	return top != null and top.is_glass() and not top.is_joker \
+	return gm.top_is_public(top) and not top.is_joker \
 		and top.rank == rank and top.suit == suit
 
 ## Copies the current player could still realistically obtain: the unseen
@@ -1040,6 +1041,39 @@ static func _seems_important(c: Card, hand: Array[Card]) -> bool:
 		if o.suit == c.suit and absi(o.rank - c.rank) <= 1:
 			return true
 	return false
+
+## Settle the current player's pending event choice (Cycle's discards, Gift's
+## gifts), if any, by giving up the cards it can best spare: the ones with the
+## fewest partners in hand (jokers never, while anything else is left). Returns
+## the chosen cards (empty when there was no choice).
+static func resolve_event_choice(gm: GameManager) -> Array[Card]:
+	var chosen: Array[Card] = []
+	if not gm.has_pending_choice():
+		return chosen
+	var hand := gm.current_player().hand
+	var ranked: Array[Card] = hand.duplicate()
+	ranked.sort_custom(func(a: Card, b: Card) -> bool:
+		return _spare_score(a, hand) < _spare_score(b, hand))
+	chosen.assign(ranked.slice(0, gm.pending_choice()["count"]))
+	var err := gm.resolve_choice(chosen)
+	if err != "":
+		push_warning("GreedyAI could not resolve an event choice (%s)" % err)
+	return chosen
+
+## How much a hand card is worth keeping: 100 for a joker, else one point per
+## other hand card it could group with (same rank in another suit, or the same
+## suit within two ranks). Lower = easier to give up.
+static func _spare_score(c: Card, hand: Array[Card]) -> int:
+	if c.is_joker:
+		return 100
+	var score := 0
+	for o in hand:
+		if o == c or o.is_joker:
+			continue
+		if (o.rank == c.rank and o.suit != c.suit) \
+				or (o.suit == c.suit and absi(o.rank - c.rank) <= 2):
+			score += 1
+	return score
 
 ## Importance for a pair lay-off is judged against the hand WITHOUT the pair:
 ## two cards that only back each other up are fine to play together.

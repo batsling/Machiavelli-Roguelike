@@ -28,6 +28,8 @@ class MapNode:
 
 var lives := DEFAULT_LIVES
 var start_lives := DEFAULT_LIVES
+## Coins banked over the run: each match adds the player's coins when it ends.
+var coins := 0
 ## rows[r] holds the nodes of row r, left to right.
 var rows: Array = []
 ## The node being fought right now (between begin and record_win/record_loss),

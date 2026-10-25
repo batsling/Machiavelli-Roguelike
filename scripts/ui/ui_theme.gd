@@ -59,6 +59,7 @@ const COL_OPP_HAND_BG := Color(0.06, 0.14, 0.10, 0.96)  # backing of the enlarge
 const COL_ENERGY := Color(0.40, 0.78, 1.0)        # an energy pip you can still spend
 const COL_ENERGY_SPENT := Color(1, 1, 1, 0.22)    # an energy pip spent this turn
 const COL_LIFE := Color(0.92, 0.33, 0.36)         # the hearts of your remaining lives
+const EVENT_PANEL_SIZE := Vector2(230, 56)        # one event card in the events row
 
 # --- Ultimate meter -----------------------------------------------------------
 const COL_METER_TRACK := Color(0, 0, 0, 0.38)      # empty channel behind the fill
