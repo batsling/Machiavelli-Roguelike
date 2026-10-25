@@ -102,6 +102,11 @@ var meter_per_card := false
 ## at energy_cap (0 = no cap). Energy refills to the ceiling every turn — unspent
 ## energy is lost.
 var start_energy := 0
+## The opening rule (classic Machiavelli): until a player has laid a valid group
+## built only from their own hand, they may not add to or take from other groups.
+## Off by default — anyone may work the whole table from their first turn — and
+## kept as a switch so an item or enemy can bring it back.
+var opening_rule := false
 var energy_per_turn := 1
 var energy_cap := 10
 ## Locations still face down, in reveal order. Set before setup (like the energy
@@ -697,7 +702,10 @@ func set_joker_stand_in(joker: Card, meld: CardSet, rank: int, suit: String) -> 
 ## True when the current player may rearrange the table: either they opened on
 ## an earlier turn, or a valid new meld built purely from their own hand is
 ## staged on the table right now.
+## Always true while the opening rule is off.
 func current_player_is_open() -> bool:
+	if not opening_rule:
+		return true
 	return current_player().has_opened or _staged_open_meld_exists()
 
 ## True for a meld made entirely of cards the current player has played from
@@ -925,7 +933,7 @@ func _commit_error(p: PlayerState) -> String:
 	for m in board.melds:
 		if not m.is_valid():
 			return "Invalid group on the table: %s" % _meld_text(m)
-	if not p.has_opened and not _staged_open_meld_exists():
+	if opening_rule and not p.has_opened and not _staged_open_meld_exists():
 		return "To open you must lay down at least one valid group " \
 			+ "built only from your own hand."
 	return ""

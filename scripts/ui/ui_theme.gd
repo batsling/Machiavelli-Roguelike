@@ -60,8 +60,9 @@ const COL_ENERGY := Color(0.40, 0.78, 1.0)        # an energy pip you can still 
 const COL_ENERGY_SPENT := Color(1, 1, 1, 0.22)    # an energy pip spent this turn
 const COL_LIFE := Color(0.92, 0.33, 0.36)         # the hearts of your remaining lives
 const LOCATION_PANEL_SIZE := Vector2(210, 78)        # one location card in the locations column
-const SIDE_PANEL_WIDTH := 300.0                      # the status + log panel on the right
-const COL_SIDE_PANEL := Color(0.05, 0.16, 0.10)      # its backing, a shade under the felt
+const LOG_PANEL_WIDTH := 340.0                       # the log laid over the left of the screen
+const LOG_PANEL_TOP := 64.0                          # its top edge, just under the top bar
+const COL_LOG_PANEL := Color(0.05, 0.14, 0.09, 0.97) # its backing, a near-opaque dark felt
 const PRIMARY_BUTTON_SIZE := Vector2(190, 48)        # End turn (and Back to map after a match)
 
 # --- Ultimate meter -----------------------------------------------------------

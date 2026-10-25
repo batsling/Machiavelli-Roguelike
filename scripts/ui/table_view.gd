@@ -215,7 +215,7 @@ func _make_player_chip(p: PlayerState, player_index: int) -> PanelContainer:
 	var lbl := Label.new()
 	lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var marker := "▶ " if is_current else ""
-	var opened := "" if p.has_opened else " · not open"
+	var opened := "" if p.has_opened or not gm.opening_rule else " · not open"
 	lbl.text = "%s%s — %d cards%s" % [marker, p.display_name, p.hand.size(), opened]
 	if is_current:
 		lbl.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
@@ -847,7 +847,7 @@ func refresh_hand() -> void:
 	_refresh_energy()
 	_ui._clear_children(_ui.hand_box)
 	var hand := gm.players[0].hand
-	if gm.players[0].has_opened:
+	if gm.players[0].has_opened or not gm.opening_rule:
 		_ui.hand_title.text = "Your hand (%d)" % hand.size()
 	else:
 		_ui.hand_title.text = "Your hand (%d) — not open yet: lay down a valid group " % hand.size() \

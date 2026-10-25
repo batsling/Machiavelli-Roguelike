@@ -54,12 +54,13 @@ this project.
   While a joker you placed this turn still has a choice (a set of three missing
   two suits, a spare joker on either end of a run), right-click it to re-point
   it; the choice is final when your turn ends.
-- **Opening rule** (everyone, human and AI): until you have laid down at least
-  one valid group built *only* from your own hand, you may not add cards to
-  other groups or take cards from them. A run deals no starting combos: its
-  table starts with only the round-1 location's combo. The sandbox can deal
-  **starting combos** (off by default): every player begins with a random valid
-  three-card group from their own deck on the table, which counts as opening,
+- **No opening rule.** Classic Machiavelli makes you lay a group built only from
+  your own hand before you may touch the rest of the table; here everyone may
+  work the whole table from their first turn. The rule is kept as a switch
+  (`GameManager.opening_rule`, off) for a future item or enemy to bring back.
+- **Starting combos.** A run deals none: its table starts with only the round-1
+  location's combo. The sandbox can deal them (off by default): every player
+  begins with a random valid three-card group from their own deck on the table,
   labelled **Your start** / **Rosso's start** until it is changed.
 - **Max hand size** (optional): drawing stops at the cap, so a draw on a full
   hand is a pass.
@@ -109,7 +110,7 @@ the rules themselves are code.
 
 Discards go face up to the owner's deck's discard pile, which is shuffled
 back in when that deck runs dry. When a location asks you to choose cards, the
-status line (top of the side panel) says so and a **Confirm** button appears: click the cards in your
+status line (across the top of the table) says so and a **Confirm** button appears: click the cards in your
 hand, then Confirm. Ending the turn and drawing wait until you do. Enemies pick
 the cards they can best spare. To stop locations ending a match by themselves,
 Gift never takes your last card and Attrition skips a one-card hand.
@@ -133,7 +134,7 @@ During a match the top bar shows your lives and which node you are on, the hand
 header shows your energy (`Energy 2/4` plus a pip per point), each enemy's
 name chip shows their energy, and every player's deck sits beside their cards
 (yours at the right of your hand, beside **End turn**). The locations stand in a
-column left of the felt. The **☰ Menu** in the top-left corner offers
+column left of the felt. The **☰ Menu** in the top-right corner offers
 **Settings**, **Restart run** and **Main menu** (which keeps the run; **Resume**
 returns to the match, or to the map between matches).
 
@@ -158,7 +159,7 @@ new model.
 Open the project in Godot 4.6 and press Run (`F5`). The main menu offers
 **Resume** (once a game or run exists), **New run**, **Vanilla sandbox** (a
 free-play game against 1–3 AIs with no energy or lives, handy for testing),
-**Settings** and **Quit**. In game, the **☰ Menu** in the top-left corner holds
+**Settings** and **Quit**. In game, the **☰ Menu** in the top-right corner holds
 **Settings**, **Restart run** (**New game** in the sandbox) and **Main menu**, which
 brings you back here without losing the game in progress.
 
@@ -167,9 +168,10 @@ their cards. The top-left corner shows the **round** counter (one lap of the
 table). Each opponent's name chip carries an **Info** button with its
 description and AI, and their deck sits beside their card backs with the
 cards left (its top card face up when that card is public: glass, Open Decks).
-The **side panel** on the right holds the status line (what to do now, boxed
-in gold) over the game log; **▶** folds it to a slim strip to give the table
-the room, **◀** opens it again.
+The status line (what to do now) runs across the top of the table in gold. The
+**Log** button in the top-left corner lays the game log over the left side of
+the screen, above your hand, without moving anything; press it again (or **✕**)
+to hide it.
 
 On your turn:
 
@@ -179,8 +181,7 @@ On your turn:
    whole selection.
 2. Clicking works too: click cards to select them (they turn blue), then click a
    group's **+** button or the **+ New group** zone. Valid groups sit quietly on
-   the felt; invalid ones outline red. Table cards are greyed out until you've
-   opened.
+   the felt; invalid ones outline red.
 3. Cards you laid down this turn can go back: drag them onto your hand, or select
    them and press **Return to hand** (this refunds their energy).
 4. **End turn** (the big gold button right of your hand) validates the table
@@ -203,7 +204,7 @@ header's **Sort** and **Randomize** re-place the groups as a centered block
 the table and your hand.
 
 Your hand keeps whatever order you give it (drag a card onto another to slot
-it before or after), with two small sort buttons at its left edge: **A–K** (by rank) and **♥♠** (by
+it before or after), with two small sort buttons at its right edge, by your deck: **A–K** (by rank) and **♥♠** (by
 suit). A card you
 can play this instant, with no rearranging and within your energy, wears a
 slim **green cap**; hovering it spotlights where it goes, and **double-clicking**
@@ -347,7 +348,7 @@ Scripts are grouped by layer: `scripts/engine/` (rules and game state, no UI),
   `node_chosen` and `menu_requested`
 - `main_ui_builder.gd` — builds the widget tree once (☰ Menu, locations column,
   table, hand with its sort icons, your Draw pile and turn controls, the
-  status/log side panel, map, menu, dialogs)
+  log overlay, map, menu, dialogs)
 - `table_view.gd` — renders seats (energy, each opponent's deck pile), the felt
   (centered placement, starting/location combo labels), the hand and its
   energy pips

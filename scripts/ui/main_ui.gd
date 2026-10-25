@@ -40,10 +40,11 @@ extends Control
 ## Right-clicking anywhere (a card, the felt, the hand) clears the selection;
 ## on a joker you placed this turn the stand-in menu takes precedence.
 ##
-## Opening rule: until you have laid down at least one valid group built only
-## from your own hand, you cannot add to other groups or take cards from them
-## (table cards are greyed out — except cards you played this turn, which stay
-## movable so you can always take them back). The same rule binds the AI.
+## Opening rule (off for now — GameManager.opening_rule, kept for a future item):
+## until you have laid down at least one valid group built only from your own
+## hand, you cannot add to other groups or take cards from them (table cards are
+## greyed out — except cards you played this turn, which stay movable so you can
+## always take them back). The same rule binds the AI.
 ##
 ## The table only has to be valid when you press "End turn", which needs at
 ## least one card played from your hand. "Undo action" takes back the last
@@ -152,7 +153,7 @@ var opponent_backs := {}
 # the Settings dialog edits it and _new_game reads it.
 var settings := GameSettings.new()
 
-## The whole match screen: the table column plus the side panel.
+## The whole match screen: seats, felt and hand (the log lies over it).
 var game_root: HBoxContainer
 var menu_layer: MenuScreen
 var map_layer: MapScreen
@@ -166,11 +167,9 @@ var lives_label: Label
 var stock_top_slot: HBoxContainer
 ## The match's locations (see MatchLocation), between the top bar and the felt.
 var locations_row: VBoxContainer
-## The side panel on the right (status line over the log), and its fold button.
-var side_panel: PanelContainer
-var side_title: Label
-var side_body: VBoxContainer
-var side_toggle_btn: Button
+## The game log, laid over the left of the screen while the Log button is down.
+var log_panel: PanelContainer
+var log_btn: Button
 ## "Confirm (1/2)" — settles the location choice you owe (Cycle, Gift).
 var choice_btn: Button
 var status_label: Label
@@ -306,17 +305,13 @@ func _new_game() -> void:
 	if combo_start:
 		# Dealt after the enemy's mechanics so combo cards keep their effects.
 		gm.deal_starting_melds()
-		_set_status("Your turn. Drag cards to the table (or click to select) — "
-			+ "your starting combo already opened you.")
-		_log("Starting combos: every player begins with a random group on the "
-			+ "table and counts as opened — the whole table is playable from turn one.")
-	else:
-		_set_status("Your turn. Drag cards to the table (or click to select) — "
-			+ "open by laying down a valid group from your hand.")
+		_log("Starting combos: every player begins with a random group on the table.")
+	_set_status("Your turn. Drag cards to the table (or click to select) — "
+		+ "or click your deck to draw.")
 	if jokers_in:
 		_log("Jokers (★) count as any card. A joker in a valid group shows what "
 			+ "it stands for — drop the real card on it to swap the joker into your hand.")
-	if not combo_start:
+	if gm.opening_rule and not combo_start:
 		_log("Opening rule: lay down a valid group from your own hand before "
 			+ "you can touch other groups on the table.")
 	if not gm.location_deck.is_empty() or not gm.revealed_locations.is_empty():
@@ -360,6 +355,7 @@ func _enemy_info_text(player_index: int) -> String:
 	return "\n\n".join(lines)
 
 func _show_menu() -> void:
+	log_btn.button_pressed = false
 	menu_layer.show_menu(not gm.players.is_empty() or run != null)
 	map_layer.visible = false
 	game_root.visible = false
@@ -377,6 +373,7 @@ func _show_game() -> void:
 
 ## Show the run map (between matches).
 func _show_map() -> void:
+	log_btn.button_pressed = false
 	menu_layer.visible = false
 	game_root.visible = false
 	map_layer.show_run(run)
@@ -482,6 +479,8 @@ func _refresh() -> void:
 	_table.refresh_board()
 	_table.refresh_hand()
 	_refresh_buttons()
+	if log_panel.visible:
+		_fit_log_panel.call_deferred()
 	if not _location_flights.is_empty():
 		_fly_location_combos()
 
@@ -1007,19 +1006,16 @@ func _on_new_game_pressed() -> void:
 	else:
 		_show_map()
 
-## Fold the side panel down to a slim strip (or open it back up), giving the
-## table the room.
-func _on_side_toggle_pressed() -> void:
-	var open := not side_body.visible
-	side_body.visible = open
-	side_title.visible = open
-	side_panel.custom_minimum_size.x = UITheme.SIDE_PANEL_WIDTH if open else 0.0
-	side_toggle_btn.text = "▶" if open else "◀"
-	side_toggle_btn.tooltip_text = "Hide the log" if open else "Show the status and log"
-	if not ai_running:
-		# The felt changed width: re-place any group now past its edge.
-		await get_tree().process_frame
-		_refresh()
+## The Log button: lay the log over the left of the screen, its bottom kept
+## just above your hand so the hand and turn buttons stay clear, or hide it.
+func _on_log_toggled(open: bool) -> void:
+	log_panel.visible = open
+	if open:
+		_fit_log_panel()
+
+func _fit_log_panel() -> void:
+	var view_h := get_viewport_rect().size.y
+	log_panel.offset_bottom = -(view_h - hand_panel.get_global_rect().position.y) - 8.0
 
 ## The ☰ Menu: Settings, restart (the whole run, or a fresh sandbox game) and
 ## back to the main menu (the game is kept).

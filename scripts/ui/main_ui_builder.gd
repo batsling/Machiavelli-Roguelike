@@ -20,8 +20,8 @@ func build(ui: MainUI) -> void:
 	# Paint the whole window in dark felt instead of the engine's gray.
 	RenderingServer.set_default_clear_color(UITheme.COL_FELT_DARK)
 
-	# The screen: the table column (seats, felt, hand) with the status and log in
-	# a collapsible side panel on the right.
+	# The screen: one column of seats, felt and hand. The log opens over its left
+	# side (see _build_log_panel) rather than taking room from it.
 	ui.game_root = HBoxContainer.new()
 	ui.game_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ui.game_root.add_theme_constant_override("separation", 10)
@@ -35,12 +35,20 @@ func build(ui: MainUI) -> void:
 	main_col.add_theme_constant_override("separation", 6)
 	ui.game_root.add_child(main_col)
 
-	# Top row: the game menu and match status in the top-left corner, then the
-	# first enemy's seat (with their deck beside their cards) centered opposite you.
+	# Top row: the log button and match status in the top-left corner, the first
+	# enemy's seat (with their deck beside their cards) centered opposite you, and
+	# the game menu in the top-right corner.
 	var top_bar := HBoxContainer.new()
 	top_bar.add_theme_constant_override("separation", 8)
 	main_col.add_child(top_bar)
-	_build_game_menu(ui, top_bar)
+	ui.log_btn = Button.new()
+	ui.log_btn.text = "Log"
+	ui.log_btn.toggle_mode = true
+	ui.log_btn.focus_mode = Control.FOCUS_NONE
+	ui.log_btn.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	ui.log_btn.tooltip_text = "Show the game log over the left of the table"
+	ui.log_btn.toggled.connect(ui._on_log_toggled)
+	top_bar.add_child(ui.log_btn)
 	# Round counter: one round is a full lap of the table (every player takes a
 	# turn), ticking up when play returns to you.
 	ui.round_label = Label.new()
@@ -62,6 +70,7 @@ func build(ui: MainUI) -> void:
 	var top_pad_right := Control.new()
 	top_pad_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(top_pad_right)
+	_build_game_menu(ui, top_bar)
 
 	# Middle row: the locations, left seat, the felt, right seat (hidden until a
 	# 4th player).
@@ -100,12 +109,15 @@ func build(ui: MainUI) -> void:
 	var table_top := HBoxContainer.new()
 	table_top.add_theme_constant_override("separation", 8)
 	table_col.add_child(table_top)
-	var table_title := Label.new()
-	table_title.text = "Table"
-	table_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	table_title.add_theme_font_size_override("font_size", 15)
-	table_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	table_top.add_child(table_title)
+	# The status line — what to do right now — heads the table, where the eye
+	# already is.
+	ui.status_label = Label.new()
+	ui.status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ui.status_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ui.status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ui.status_label.add_theme_font_size_override("font_size", 16)
+	ui.status_label.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE)
+	table_top.add_child(ui.status_label)
 	# Suit highlighter: hovering a suit outlines those cards everywhere in play
 	# (hand and table) and fades the rest.
 	var highlight_hint := Label.new()
@@ -195,7 +207,12 @@ func build(ui: MainUI) -> void:
 	var hand_row := HBoxContainer.new()
 	hand_row.add_theme_constant_override("separation", 8)
 	hand_col.add_child(hand_row)
-	# Hand sort buttons, small icons at the hand's left edge: the hand keeps
+	ui.hand_box = HFlowContainer.new()
+	ui.hand_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ui.hand_box.add_theme_constant_override("h_separation", 4)
+	ui.hand_box.add_theme_constant_override("v_separation", 4)
+	hand_row.add_child(ui.hand_box)
+	# Hand sort buttons, small icons at the hand's right edge: the hand keeps
 	# whatever order you give it, but these lay it out the two plain ways players
 	# read a hand — by rank (increasing, left to right) or by suit (reds then
 	# blacks, rank order within). Jokers sort last.
@@ -209,11 +226,6 @@ func build(ui: MainUI) -> void:
 	sort_col.add_child(_make_sort_icon("♥♠",
 		"Sort your hand by suit, reds then blacks (jokers last)",
 		ui._on_sort_suit_pressed))
-	ui.hand_box = HFlowContainer.new()
-	ui.hand_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ui.hand_box.add_theme_constant_override("h_separation", 4)
-	ui.hand_box.add_theme_constant_override("v_separation", 4)
-	hand_row.add_child(ui.hand_box)
 	for zone: Control in [ui.hand_panel, hand_col, hand_top, hand_row, ui.hand_title,
 			ui.selection_label, ui.hand_box]:
 		zone.set_drag_forwarding(Callable(), ui._can_drop_on_hand, ui._drop_on_hand)
@@ -273,7 +285,7 @@ func build(ui: MainUI) -> void:
 	ui.return_btn.pressed.connect(ui._on_return_pressed)
 	controls.add_child(ui.return_btn)
 
-	_build_side_panel(ui)
+	_build_log_panel(ui)
 
 	# Overlay for the flying-card animations; never intercepts the mouse.
 	ui.anim_layer = Control.new()
@@ -293,48 +305,45 @@ func build(ui: MainUI) -> void:
 	_build_settings_dialog(ui)
 	_build_enemy_info_dialog(ui)
 
-## The side panel on the right: the status line (what to do now) over the game
-## log, with a button that folds the panel down to a slim strip to give the
-## table the room.
-func _build_side_panel(ui: MainUI) -> void:
-	ui.side_panel = PanelContainer.new()
-	ui.side_panel.custom_minimum_size = Vector2(UITheme.SIDE_PANEL_WIDTH, 0)
-	ui.side_panel.add_theme_stylebox_override("panel",
-		CardRenderer.panel_style(UITheme.COL_SIDE_PANEL, 10))
-	ui.game_root.add_child(ui.side_panel)
+## The game log, opened by the Log button: a panel laid over the left side of
+## the screen (below the top bar, above your hand) so opening it never squeezes
+## the table, and the hand and turn buttons stay clear. Hidden until opened;
+## MainUI keeps its bottom edge above the hand.
+func _build_log_panel(ui: MainUI) -> void:
+	ui.log_panel = PanelContainer.new()
+	ui.log_panel.visible = false
+	ui.log_panel.anchor_left = 0
+	ui.log_panel.anchor_right = 0
+	ui.log_panel.anchor_top = 0
+	ui.log_panel.anchor_bottom = 1
+	ui.log_panel.offset_left = 10
+	ui.log_panel.offset_right = 10 + UITheme.LOG_PANEL_WIDTH
+	ui.log_panel.offset_top = UITheme.LOG_PANEL_TOP
+	ui.log_panel.offset_bottom = -200
+	var sb := CardRenderer.panel_style(UITheme.COL_LOG_PANEL, 10)
+	sb.border_color = Color(1, 1, 1, 0.18)
+	sb.set_border_width_all(1)
+	sb.shadow_color = Color(0, 0, 0, 0.45)
+	sb.shadow_size = 12
+	ui.log_panel.add_theme_stylebox_override("panel", sb)
+	ui.add_child(ui.log_panel)
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 8)
-	ui.side_panel.add_child(col)
+	ui.log_panel.add_child(col)
 	var head := HBoxContainer.new()
 	col.add_child(head)
-	ui.side_title = Label.new()
-	ui.side_title.text = "Log"
-	ui.side_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ui.side_title.add_theme_font_size_override("font_size", 15)
-	ui.side_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	head.add_child(ui.side_title)
-	ui.side_toggle_btn = Button.new()
-	ui.side_toggle_btn.text = "▶"
-	ui.side_toggle_btn.tooltip_text = "Hide the log"
-	ui.side_toggle_btn.focus_mode = Control.FOCUS_NONE
-	ui.side_toggle_btn.pressed.connect(ui._on_side_toggle_pressed)
-	head.add_child(ui.side_toggle_btn)
-	ui.side_body = VBoxContainer.new()
-	ui.side_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	ui.side_body.add_theme_constant_override("separation", 8)
-	col.add_child(ui.side_body)
-	# The status line: what to do right now, boxed in gold at the top.
-	var status_box := PanelContainer.new()
-	var sb := CardRenderer.panel_style(UITheme.COL_CHIP_BG, 8)
-	sb.border_color = UITheme.COL_CHIP_ACTIVE
-	sb.set_border_width_all(1)
-	status_box.add_theme_stylebox_override("panel", sb)
-	ui.side_body.add_child(status_box)
-	ui.status_label = Label.new()
-	ui.status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	ui.status_label.custom_minimum_size = Vector2(UITheme.SIDE_PANEL_WIDTH - 40, 0)
-	ui.status_label.add_theme_font_size_override("font_size", 15)
-	status_box.add_child(ui.status_label)
+	var title := Label.new()
+	title.text = "Log"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", 15)
+	title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	head.add_child(title)
+	var close := Button.new()
+	close.text = "✕"
+	close.tooltip_text = "Hide the log"
+	close.focus_mode = Control.FOCUS_NONE
+	close.pressed.connect(func() -> void: ui.log_btn.button_pressed = false)
+	head.add_child(close)
 	ui.log_box = RichTextLabel.new()
 	ui.log_box.bbcode_enabled = true
 	ui.log_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -342,7 +351,7 @@ func _build_side_panel(ui: MainUI) -> void:
 	ui.log_box.fit_content = false
 	ui.log_box.add_theme_font_size_override("normal_font_size", 14)
 	ui.log_box.add_theme_font_size_override("bold_font_size", 14)
-	ui.side_body.add_child(ui.log_box)
+	col.add_child(ui.log_box)
 
 ## A small icon button for the hand's sort column.
 func _make_sort_icon(text: String, tip: String, on_press: Callable) -> Button:

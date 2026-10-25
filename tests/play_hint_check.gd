@@ -79,6 +79,7 @@ func _init() -> void:
 			ok = false
 
 	# --- The opening rule gates lay-offs --------------------------------------
+	ui.gm.opening_rule = true
 	ui.gm.players[0].has_opened = false
 	ui.hint_meld_targets.clear()
 	ui.hint_new_group = false

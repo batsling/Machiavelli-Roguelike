@@ -149,8 +149,10 @@ func _init() -> void:
 		ok = false
 
 	# --- Energy gates the green playable cap -------------------------------------
-	# A run deals no starting combos, so open the player by hand for the lay-off.
-	gm.players[0].has_opened = true
+	# No opening rule: a player who has never laid a group may still work the table.
+	if gm.opening_rule or gm.players[0].has_opened or not gm.current_player_is_open():
+		printerr("the opening rule should be off: the table is open from turn one")
+		ok = false
 	var run_meld := CardSet.new()
 	run_meld.cards.assign([_card(5, "hearts"), _card(6, "hearts"), _card(7, "hearts")])
 	gm.board.melds.append(run_meld)
