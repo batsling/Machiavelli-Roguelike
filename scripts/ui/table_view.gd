@@ -17,45 +17,85 @@ var instance_panels := {}
 func setup(ui: MainUI) -> void:
 	_ui = ui
 
-## Seat opponents around the table: players[1] opposite you, players[2] on the
-## left, players[3] on the right. Unused seats collapse.
+## Seat opponents around the table in turn order, going clockwise from you
+## (you sit at the bottom): one enemy sits opposite you; two sit left, then
+## opposite; three sit left, opposite, then right. Unused seats collapse.
 func refresh_seats() -> void:
 	var gm := _ui.gm
 	# Rebuilding the seats frees the card backs any open hand reveal was tied to,
 	# so drop the reveal; re-entering a seat brings it back.
 	_ui._hide_opponent_hand()
 	_ui.opponent_backs.clear()
-	var seats: Array = [_ui.seat_top, _ui.seat_left, _ui.seat_right]
 	var seated_players := mini(gm.players.size(), MainUI.MAX_PLAYERS)
-	for i in seats.size():
-		var seat: VBoxContainer = seats[i]
+	var order := clockwise_seats(seated_players - 1)
+	for seat: VBoxContainer in [_ui.seat_top, _ui.seat_left, _ui.seat_right]:
 		_ui._clear_children(seat)
-		var player_index := i + 1
-		if player_index >= seated_players:
-			seat.visible = false
-			continue
-		seat.visible = true
+		seat.visible = order.has(seat)
+	for k in order.size():
+		var seat: VBoxContainer = order[k]
+		var player_index := k + 1
+		var top := seat == _ui.seat_top
 		var p := gm.players[player_index]
 		var chip := _make_player_chip(p, player_index)
 		chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seat.add_child(chip)
 		# Their hand with their own deck beside it: to the right of the cards in
 		# the seat opposite you, underneath them in a side seat.
-		var hand_row: BoxContainer = HBoxContainer.new() if i == 0 else VBoxContainer.new()
+		var hand_row: BoxContainer = HBoxContainer.new() if top else VBoxContainer.new()
 		hand_row.add_theme_constant_override("separation", 10)
 		hand_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seat.add_child(hand_row)
-		var backs := _make_card_backs(p, player_index, i == 0)
+		var backs := _make_card_backs(p, player_index, top)
 		backs.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		hand_row.add_child(backs)
-		hand_row.add_child(_make_opponent_deck(p, UITheme.BACK_SIZE_TOP if i == 0
+		hand_row.add_child(_make_opponent_deck(p, UITheme.BACK_SIZE_TOP if top
 			else UITheme.BACK_SIZE_SIDE))
 		_ui.opponent_backs[p.player_id] = backs
 	_refresh_draw_pile()
 	_ui.round_label.text = "Round %d" % gm.round_number
+	_refresh_turn_order()
 	_refresh_lives()
 	_refresh_stock_top()
 	_refresh_instances()
+
+## The seats for `enemies` opponents, in turn order (clockwise from your seat at
+## the bottom).
+func clockwise_seats(enemies: int) -> Array:
+	match enemies:
+		0:
+			return []
+		1:
+			return [_ui.seat_top]
+		2:
+			return [_ui.seat_left, _ui.seat_top]
+	return [_ui.seat_left, _ui.seat_top, _ui.seat_right]
+
+## The round's turn order in the top bar — Instances (when the match has them),
+## You, then each enemy clockwise — with whoever is acting now lit in gold.
+func _refresh_turn_order() -> void:
+	var gm := _ui.gm
+	_ui._clear_children(_ui.turn_order_row)
+	var steps: Array[Dictionary] = []
+	if gm.has_instance_turn():
+		steps.append({"name": "Instances", "now": _ui.instance_phase_running})
+	for p in gm.players:
+		steps.append({"name": "You" if p == gm.players[0] else p.display_name,
+			"now": not _ui.instance_phase_running and not gm.is_game_over
+				and p == gm.current_player()})
+	for i in steps.size():
+		if i > 0:
+			var arrow := Label.new()
+			arrow.text = "→"
+			arrow.add_theme_color_override("font_color", Color(1, 1, 1, 0.35))
+			_ui.turn_order_row.add_child(arrow)
+		var step := Label.new()
+		step.text = steps[i]["name"]
+		step.add_theme_font_size_override("font_size", 15)
+		step.add_theme_color_override("font_color", UITheme.COL_CHIP_ACTIVE
+			if steps[i]["now"] else Color(1, 1, 1, 0.45))
+		_ui.turn_order_row.add_child(step)
+	_ui.turn_order_row.tooltip_text = "One round: the instances' turn, then yours, " \
+		+ "then each enemy's, clockwise around the table."
 
 ## The match's instances: a face-up panel per revealed instance (a Reveal instance
 ## dims once its round is over) and a face-down panel per instance still to come,
@@ -66,6 +106,17 @@ func _refresh_instances() -> void:
 	instance_panels.clear()
 	var upcoming := gm.upcoming_instances()
 	_ui.instances_row.visible = not gm.revealed_instances.is_empty() or not upcoming.is_empty()
+	# A heading that lights up while the instances take their turn.
+	var head := Label.new()
+	var acting := _ui.instance_phase_running
+	head.text = "▶ Instances' turn" if acting else "Instances"
+	head.add_theme_font_size_override("font_size", 16 if acting else 14)
+	head.add_theme_color_override("font_color",
+		UITheme.COL_CHIP_ACTIVE if acting else Color(1, 1, 1, 0.5))
+	head.tooltip_text = "The instances take the first turn of every round, " \
+		+ "before yours: the next one turns up on its round."
+	head.mouse_filter = Control.MOUSE_FILTER_STOP
+	_ui.instances_row.add_child(head)
 	for e in gm.revealed_instances:
 		var live := e.is_ongoing() or e.revealed_round == gm.round_number
 		var panel := _make_instance_panel(e.title, e.kind_label(),

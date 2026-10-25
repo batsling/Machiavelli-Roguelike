@@ -76,6 +76,15 @@ up at the start of round 1 and the next at rounds 3, 5, 7 and 9, so at most five
 are in play. They stand in a column left of the table: face up once revealed (a
 Reveal instance dims after its round), face down with their round until then.
 
+**A round** is the **instances' turn**, then **your turn**, then each enemy's
+turn, clockwise around the table. On the instances' turn, any Ongoing
+instance's table effect happens and the next instance turns up if this is its
+round; the column heading lights **▶ Instances' turn**, the status line says
+what happened, and a new instance's combo flies onto the table before you get
+the table. The top bar spells the order out (**Instances → You → Scrap Drone**)
+with whoever is acting lit in gold. A game with no instances (the sandbox)
+skips that turn.
+
 Every instance affects **every player**, not just whoever's turn it is:
 
 - **Reveal** instances act on each player's turn of the round they are revealed
@@ -186,8 +195,10 @@ free-play game against 1–3 AIs with no energy or lives, handy for testing),
 brings you back here without losing the game in progress.
 
 You sit at the bottom; opponents sit around the table showing the backs of
-their cards. The top-left corner shows the **round** counter (one lap of the
-table). Each opponent's name chip carries an **Info** button with its
+their cards, seated clockwise in turn order: one enemy sits opposite you; with
+more (sandbox), the next sits on your left, then opposite, then on your right.
+The top-left corner shows the **round** counter and the round's turn order
+(**Instances → You → …** — instances only in a run), the one acting lit in gold. Each opponent's name chip carries an **Info** button with its
 description and AI, and their deck sits beside their card backs with the
 cards left (its top card face up when that card is public: glass, Open Decks).
 The status line (what to do now) runs across the top of the table in gold. The

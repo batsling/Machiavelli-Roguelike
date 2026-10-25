@@ -1407,6 +1407,37 @@ func _test_instances() -> bool:
 		ok = false
 	gm.free()
 
+	# Round order: the instances' turn opens every round, before the first
+	# player's turn — even in rounds where nothing turns up. No instances, no turn.
+	var order: Array[String] = []
+	var ordered := GameManager.new()
+	ordered.start_energy = 3
+	ordered.instance_deck = [MatchInstance.named(&"surge"), MatchInstance.named(&"gift")] \
+		as Array[MatchInstance]
+	ordered.instance_rounds = [1, 3] as Array[int]
+	ordered.instance_turn_played.connect(func(r: int, e: MatchInstance) -> void:
+		order.append("I%d:%s" % [r, e.title if e != null else "-"]))
+	ordered.turn_started.connect(func(p: PlayerState) -> void: order.append(p.display_name))
+	ordered.setup(["P0", "P1"], 13, 5)
+	for _t in 5:
+		if ordered.has_pending_choice():
+			GreedyAI.resolve_instance_choice(ordered)
+		ordered.draw_and_end_turn()
+	if order != ["I1:Surge", "P0", "P1", "I2:-", "P0", "P1", "I3:Gift", "P0", "P1"]:
+		printerr("instances: rounds should run instances, P0, P1 — got %s" % str(order))
+		ok = false
+	ordered.free()
+	var no_turn := false
+	var sandbox := GameManager.new()
+	sandbox.instance_turn_played.connect(func(_r: int, _e: MatchInstance) -> void: no_turn = true)
+	sandbox.setup(["P0", "P1"], 13, 5)
+	sandbox.draw_and_end_turn()
+	sandbox.draw_and_end_turn()
+	if no_turn or sandbox.has_instance_turn():
+		printerr("instances: a game with no instances should have no instances' turn")
+		ok = false
+	sandbox.free()
+
 	# Cycle: a choice of 2 that blocks play until resolved, then discard 2, draw 2.
 	gm = _instance_gm([&"cycle"])
 	var p0 := gm.players[0]

@@ -19,9 +19,11 @@ extends Control
 ## and apply from the next match; vanilla sandbox settings never touch a run.
 ##
 ## Table layout: you sit at the bottom; opponents sit around the table showing
-## the backs of their cards. The first enemy sits directly opposite you at the
-## top, the second on the left, and a fourth player (when one exists) sits on
-## the right — at most 4 seats in total. Backs overlap more as a hand grows so
+## the backs of their cards, seated clockwise in turn order (TableView.
+## clockwise_seats): one enemy sits opposite you at the top; with two, the first
+## sits on the left and the second at the top; with three, left, top, right —
+## at most 4 seats in total. A round runs the instances' turn (when the match
+## has instances), then you, then each enemy clockwise. Backs overlap more as a hand grows so
 ## every seat always fits on screen. A card whose status shows through its back —
 ## a glass card (see-through, shown face-up) or a slimed one (its green splotch
 ## on the back) — is readable right in the seat and on top of your deck; when an
@@ -143,6 +145,15 @@ var hint_meld_targets := {}
 var hint_new_group := false
 var hover_hint_card: Card = null
 var ai_running := false
+## True while the instances' turn is being shown at the start of a round (see
+## _play_instance_turn): the board is on screen but no one may act yet.
+var instance_phase_running := false
+## How long the instances' turn stays on screen (seconds) — longer when an
+## instance turns up, so its combo can fly in. 0 skips the pause (tests).
+var instance_turn_time := 1.4
+# The instances' turn the engine just played and the UI has yet to show:
+# {"round": int, "revealed": MatchInstance or null}, or {}.
+var _pending_instance_turn := {}
 # Bumped on every new game so a suspended AI coroutine from the previous game
 # notices on resume and bails out instead of acting on the fresh state.
 var game_generation := 0
@@ -167,6 +178,8 @@ var seat_right: VBoxContainer
 var round_label: Label
 ## Lives and map progress in the top bar during a run (hidden in sandbox).
 var lives_label: Label
+## The round's turn order in the top bar, the one acting now lit (TableView).
+var turn_order_row: HBoxContainer
 ## The public top card of your deck (glass, slimed, Open Decks), beside the pile.
 var stock_top_slot: HBoxContainer
 ## The match's instances (see MatchInstance), between the top bar and the felt.
@@ -242,6 +255,7 @@ func _ready() -> void:
 	gm.player_passed.connect(_on_player_passed)
 	gm.game_over.connect(_on_game_over)
 	gm.instance_revealed.connect(_on_instance_revealed)
+	gm.instance_turn_played.connect(_on_instance_turn_played)
 	gm.cards_discarded.connect(_on_cards_discarded)
 	gm.cards_given.connect(_on_cards_given)
 	gm.coins_gained.connect(_on_coins_gained)
@@ -260,6 +274,8 @@ func _ready() -> void:
 func _new_game() -> void:
 	game_generation += 1
 	_instance_flights.clear()
+	_pending_instance_turn = {}
+	instance_phase_running = false
 	selected.clear()
 	highlighted.clear()
 	ai_running = false
@@ -324,8 +340,6 @@ func _new_game() -> void:
 		# Dealt after the enemy's mechanics so combo cards keep their effects.
 		gm.deal_starting_melds()
 		_log("Starting combos: every player begins with a random group on the table.")
-	_set_status("Your turn. Drag cards to the table (or click to select) — "
-		+ "or click your deck to draw.")
 	if jokers_in:
 		_log("Jokers (★) count as any card. A joker in a valid group shows what "
 			+ "it stands for — drop the real card on it to swap the joker into your hand.")
@@ -336,9 +350,50 @@ func _new_game() -> void:
 		_log("Instances: one is revealed at the start of rounds %s. Each affects "
 			% ", ".join(gm.instance_rounds.map(func(r: int) -> String: return str(r)))
 			+ "every player — Reveal effects on each player's turn that round, "
-			+ "ongoing effects for the rest of the match.")
+			+ "ongoing effects for the rest of the match. Each round opens with "
+			+ "the instances' turn, then yours, then each enemy's, clockwise.")
+	_refresh()
+	_start_human_turn("Your turn. Drag cards to the table (or click to select) — "
+		+ "or click your deck to draw.")
+
+## Your turn is starting: first show the instances' turn that opened the round
+## (when there was one), then hand you the table with `status`.
+func _start_human_turn(status: String) -> void:
+	var gen := game_generation
+	await _play_instance_turn()
+	if gen != game_generation or gm.is_game_over:
+		return
+	_set_status(status)
 	_prompt_pending_choice()
 	_refresh()
+
+## Show the instances' turn the engine just played, before you act: the turn
+## order lights "Instances", the status line says what happened, and any
+## instance that turned up flies its combo in. Nobody can act until it is over.
+func _play_instance_turn() -> void:
+	if _pending_instance_turn.is_empty():
+		return
+	var info := _pending_instance_turn
+	_pending_instance_turn = {}
+	if instance_turn_time <= 0.0:
+		return
+	var gen := game_generation
+	var revealed: MatchInstance = info["revealed"]
+	instance_phase_running = true
+	_set_status("Instances' turn — round %d: %s" % [info["round"],
+		"%s is revealed." % revealed.title if revealed != null
+			else "nothing new turns up; the instances in play stay in force."])
+	_refresh()
+	await get_tree().create_timer(instance_turn_time if revealed != null
+		else instance_turn_time * 0.5).timeout
+	if gen != game_generation:
+		return
+	instance_phase_running = false
+
+func _on_instance_turn_played(round: int, revealed: MatchInstance) -> void:
+	_pending_instance_turn = {"round": round, "revealed": revealed}
+	if revealed == null:
+		_log("[b]Round %d — the instances' turn:[/b] nothing new turns up." % round)
 
 # --- Menu / dialogs / mode ----------------------------------------------------
 # The widget tree itself is assembled by MainUIBuilder at startup; what stays
@@ -693,7 +748,8 @@ func _prune_selection() -> void:
 			selected.remove_at(i)
 
 func _is_human_turn() -> bool:
-	return not gm.is_game_over and not ai_running and gm.current_player() == gm.players[0]
+	return not gm.is_game_over and not ai_running and not instance_phase_running \
+		and gm.current_player() == gm.players[0]
 
 ## Cards in your hand are always usable on your turn. Table cards unlock once
 ## you have opened — except cards in a group staged from your own hand this
@@ -1315,11 +1371,10 @@ func _run_ai_turns() -> void:
 			gm.draw_and_end_turn()
 		_refresh()
 	ai_running = false
-	if not gm.is_game_over:
-		_set_status("Your turn. Drag cards onto a group or empty felt — "
-			+ "or click to select, then use \"+ New group\".")
-		_prompt_pending_choice()
 	_refresh()
+	if not gm.is_game_over:
+		_start_human_turn("Your turn. Drag cards onto a group or empty felt — "
+			+ "or click to select, then use \"+ New group\".")
 
 # --- Instances -------------------------------------------------------------------
 
@@ -1362,8 +1417,9 @@ func _on_choice_confirm_pressed() -> void:
 ## move, and queue it to fly onto the felt from its instance panel on the next
 ## refresh, so the new group visibly arrives on the turn it is revealed.
 func _on_instance_revealed(instance: MatchInstance) -> void:
-	_log("[b]Instance revealed — %s[/b] (%s): %s Its combo joins the table: %s."
-		% [instance.title, instance.kind_label(), instance.text, instance.combo_label()])
+	_log("[b]Round %d — the instances' turn: %s is revealed[/b] (%s): %s "
+		% [gm.round_number, instance.title, instance.kind_label(), instance.text]
+		+ "Its combo joins the table: %s." % instance.combo_label())
 	for c in instance.combo:
 		highlighted[c] = true
 	_instance_flights.append(instance)

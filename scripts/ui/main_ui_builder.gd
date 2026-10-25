@@ -62,6 +62,13 @@ func build(ui: MainUI) -> void:
 	ui.lives_label.add_theme_font_size_override("font_size", 18)
 	ui.lives_label.add_theme_color_override("font_color", UITheme.COL_LIFE)
 	top_bar.add_child(ui.lives_label)
+	# The round's turn order (Instances → You → each enemy, clockwise), with
+	# whoever is acting lit; refresh_seats fills it.
+	ui.turn_order_row = HBoxContainer.new()
+	ui.turn_order_row.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	ui.turn_order_row.add_theme_constant_override("separation", 6)
+	ui.turn_order_row.mouse_filter = Control.MOUSE_FILTER_STOP
+	top_bar.add_child(ui.turn_order_row)
 	var top_pad_left := Control.new()
 	top_pad_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(top_pad_left)

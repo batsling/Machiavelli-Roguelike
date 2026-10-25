@@ -37,6 +37,8 @@ func _init() -> void:
 		ok = false
 
 	# --- The first match ---------------------------------------------------------
+	# Show the instances' turn without its pause, so checks run straight away.
+	ui.instance_turn_time = 0.0
 	# Known instances, so the checks below don't depend on a random draw.
 	for id: StringName in [&"surge", &"extra_draw", &"open_decks", &"jackpot", &"overcharge"]:
 		ui.next_instances.append(MatchInstance.named(id))
@@ -119,9 +121,18 @@ func _init() -> void:
 		printerr("a revealed instance's panel should be registered for its combo's flight")
 		ok = false
 
+	# --- The round: Instances, You, then the enemy --------------------------------
+	var steps := PackedStringArray()
+	for n in ui.turn_order_row.get_children():
+		if n is Label and (n as Label).text != "→":
+			steps.append((n as Label).text)
+	if steps != PackedStringArray(["Instances", "You", "Scrap Drone"]):
+		printerr("the turn order should read Instances → You → Scrap Drone, got %s" % steps)
+		ok = false
+
 	# --- Instances: five per match, one face up at the deal ------------------------
 	if gm.revealed_instances.size() != 1 or gm.upcoming_instances().size() != 4 \
-			or ui.instances_row.get_child_count() != 5 or not ui.instances_row.visible:
+			or ui.instances_row.get_child_count() != 6 or not ui.instances_row.visible:
 		printerr("a match should show 5 instances, 1 revealed at the deal")
 		ok = false
 	# Every hand card wears its energy cost; the discard pile and coin tag show.

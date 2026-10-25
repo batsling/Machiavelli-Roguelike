@@ -55,6 +55,9 @@ signal player_passed(player: PlayerState)
 signal game_over(winners: Array)
 ## An instance was turned face up (see MatchInstance).
 signal instance_revealed(instance: MatchInstance)
+## The instances took their turn, which opens every round (before the first
+## player): `revealed` is the instance that turned up, or null for none.
+signal instance_turn_played(round: int, revealed: MatchInstance)
 ## Cards left a player's hand for their deck's discard pile because of an instance.
 signal cards_discarded(player: PlayerState, cards: Array[Card])
 ## A player handed cards from their hand to another player's hand (the Gift instance).
@@ -80,8 +83,10 @@ const DEFAULT_HAND_SIZE := 13
 var players: Array[PlayerState] = []
 var board := Board.new()
 var turn_index := 0
-## The current round of play: every player takes one turn per round, and the
-## count ticks up each time play wraps back to the first player (turn_index 0).
+## The current round of play. A round is the instances' turn (when the match
+## has instances, see _instance_turn), then one turn per player in seat order —
+## you, then each enemy clockwise around the table. The count ticks up each time
+## play wraps back to the first player (turn_index 0).
 ## Starts at 1 the moment the game is dealt. This is the table's own round
 ## counter, distinct from the run's map progress (which enemy you face).
 var round_number := 1
@@ -200,6 +205,7 @@ func setup(player_names: Array, hand_size: int = DEFAULT_HAND_SIZE, seed_value: 
 			p.hand.append(c)
 		players.append(p)
 	_count_copies()
+	_instance_turn()
 	_begin_turn()
 
 func current_player() -> PlayerState:
@@ -1204,20 +1210,35 @@ func _reveal(e: MatchInstance) -> MatchInstance:
 	board_changed.emit()
 	return e
 
-## Instance effects at the start of `p`'s turn: a new round may turn the next
-## instance up (and runs every Ongoing instance's table commands), then each
-## Ongoing instance's player commands run, and each Reveal instance revealed this
-## round runs its player commands for `p`. A `choose` stops the run there as a
-## pending choice; the rest continues once it is resolved.
+## The instances' turn, which opens every round before the first player's turn:
+## every Ongoing instance's table commands run, then the next face-down
+## instance turns up if this round is on the schedule (running a Reveal
+## instance's table commands). Emits instance_turn_played — even in a round
+## where nothing turns up, so the UI can show the turn. A match with no
+## instances at all (the sandbox) has no instances' turn.
+func _instance_turn() -> void:
+	if instance_deck.is_empty() and revealed_instances.is_empty():
+		return
+	for e in revealed_instances:
+		if e.is_ongoing():
+			_run_table_commands(e)
+	var revealed: MatchInstance = null
+	if not instance_deck.is_empty() \
+			and revealed_instances.size() < instance_rounds.size() \
+			and instance_rounds[revealed_instances.size()] <= round_number:
+		revealed = _reveal(instance_deck.pop_front())
+	instance_turn_played.emit(round_number, revealed)
+
+## True when this match has instances, so each round opens with their turn.
+func has_instance_turn() -> bool:
+	return not instance_deck.is_empty() or not revealed_instances.is_empty()
+
+## Instance effects at the start of `p`'s turn (the instances' own turn has
+## already opened the round): each Ongoing instance's player commands run, and
+## each Reveal instance revealed this round runs its player commands for `p`. A
+## `choose` stops the run there as a pending choice; the rest continues once it
+## is resolved.
 func _start_of_turn_instances(p: PlayerState) -> void:
-	if turn_index == 0:
-		for e in revealed_instances:
-			if e.is_ongoing():
-				_run_table_commands(e)
-		if not instance_deck.is_empty() \
-				and revealed_instances.size() < instance_rounds.size() \
-				and instance_rounds[revealed_instances.size()] <= round_number:
-			_reveal(instance_deck.pop_front())
 	_instance_queue.clear()
 	for e in revealed_instances:
 		if e.is_ongoing() or e.revealed_round == round_number:
@@ -1339,9 +1360,10 @@ func _draw_jokers(p: PlayerState, n: int) -> void:
 	if not drawn.is_empty():
 		cards_drawn.emit(p, drawn)
 
-## An instance's table commands (destroy). Destroyed cards go to their deck's
-## discard pile; a combo card (from no one's deck) goes to the discard pile of
-## the player whose turn it is, and is theirs from then on.
+## An instance's table commands (destroy), run on the instances' turn.
+## Destroyed cards go to their deck's discard pile; a combo card (from no one's
+## deck) goes to the discard pile of the player who acts first in the round,
+## and is theirs from then on.
 func _run_table_commands(e: MatchInstance) -> void:
 	for eff in e.effects:
 		if eff.verb != InstanceEffect.Verb.DESTROY_COMBO or board.melds.is_empty():
@@ -1501,9 +1523,11 @@ func _advance() -> void:
 	if is_game_over:
 		return
 	turn_index = (turn_index + 1) % players.size()
-	# Wrapping back to the first player opens a fresh round of play.
+	# Wrapping back to the first player opens a fresh round of play, which
+	# starts with the instances' turn.
 	if turn_index == 0:
 		round_number += 1
+		_instance_turn()
 	_begin_turn()
 
 func _end_game(winners: Array) -> void:
